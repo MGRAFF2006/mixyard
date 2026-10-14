@@ -11,6 +11,7 @@ evidence=$(realpath "$evidence")
 docker image inspect mixyard-server-proof:local --format '{{.Id}}' > "$evidence/image-id"
 docker run --rm --name mixyard-server-proof-run --network none --cpus 2 --memory 1g \
   --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges --read-only \
+  --env "PROOF_SOURCE_REVISION=$(git rev-parse HEAD)" \
   --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,nosuid,nodev,size=256m \
   --tmpfs /private:rw,nosuid,nodev,size=8m,mode=0700,uid="$(id -u)",gid="$(id -g)" \
   --mount "type=bind,src=$PWD,dst=/work,readonly" \

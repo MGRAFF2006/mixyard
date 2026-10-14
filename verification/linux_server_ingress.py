@@ -19,8 +19,8 @@ INSTALL = BUILD / "install"
 CONFIG = ROOT / "verification/linux-server/pipewire.conf"
 
 
-def analyze(path, negative=False):
-    """Inspect every stored frame, including first/tails, without alignment/fitting."""
+def analyze(path, negative=False, phase="selected", expected_clock_id=None, sentinel_reproduced=True):
+    """All first/tail frames and packet metadata; never align, fit or trim."""
     path = Path(path)
     if not path.exists() or not Path(str(path) + ".json").exists():
         return {"status": "blocked", "reason": "missing PCM or packet trace"}
@@ -29,34 +29,45 @@ def analyze(path, negative=False):
     if len(data) % 8 or len(data) != meta["frames"] * 8:
         return {"status": "fail", "reason": "truncated or inconsistent PCM"}
     frames = list(struct.iter_unpack("<ff", data))
-    nonfinite = sum(not all(map(math.isfinite, frame)) for frame in frames)
-    forbidden = sum(abs(left) > .4 or abs(right) > .4 for left, right in frames)
-    allowed = sum(left == .125 and right == -.125 for left, right in frames)
-    silent = sum(left == 0 and right == 0 for left, right in frames)
-    other = len(frames) - allowed - silent
+    nonfinite = sum(not all(map(math.isfinite, f)) for f in frames)
+    forbidden = sum(f == (.75, -.75) for f in frames)
+    allowed = sum(f == (.125, -.125) for f in frames)
+    silent = sum(f == (0, 0) for f in frames)
+    other = len(frames) - allowed - silent - forbidden
     packets = meta["packets"]
-    gaps = sum(b["position"] != a["position"] + a["duration"]
-               for a, b in zip(packets, packets[1:]))
-    offset = 0
-    bad_trace = 0
+    clocks = {p["clock_id"] for p in packets}
+    bad_metadata = (meta.get("format") != "F32LE" or meta.get("wire_format") != "F32P" or
+                    meta.get("rate") != 48000 or meta.get("channels") != ["FL", "FR"] or
+                    meta.get("clock_scope") != "graph-driver" or meta.get("interleaved") is not True or
+                    len(clocks) != 1 or 4294967295 in clocks or
+                    (expected_clock_id is not None and clocks != {expected_clock_id}))
+    gaps = sum(b["position"] != a["position"] + a["duration"] for a, b in zip(packets, packets[1:]))
+    offset = bad_trace = 0
     for packet in packets:
-        bad_trace += packet["offset"] != offset or packet["frames"] != packet["duration"] or bool(packet["flags"])
+        bad_trace += (packet["offset"] != offset or packet["frames"] != packet["duration"] or
+                      not 0 < packet["duration"] <= 4096 or bool(packet["flags"]) or
+                      packet.get("clock_rate_num") != 1 or packet.get("clock_rate_denom") != 48000 or
+                      packet.get("chunk_flags") != [0, 0] or packet.get("source_frames") != packet["frames"])
         offset += packet["frames"]
     loss = any(value for key, value in meta["drops"].items() if key != "process_calls")
-    complete = bool(frames) and offset == len(frames) and not loss and not bad_trace and not gaps and meta["status"] == "RECORDED"
-    result = {"frames": len(frames), "allowed_frames": allowed, "silent_frames": silent,
+    complete = bool(frames) and offset == len(frames) and not loss and not bad_trace and not gaps and not bad_metadata and meta["status"] == "RECORDED"
+    result = {"phase": phase, "frames": len(frames), "allowed_frames": allowed, "silent_frames": silent,
               "forbidden_frames": forbidden, "other_frames": other, "nonfinite_frames": nonfinite,
               "first_frame": frames[0] if frames else None, "last_frame": frames[-1] if frames else None,
-              "position_gaps": gaps, "bad_packets": bad_trace, "drops": meta["drops"],
-              "format": {key: meta[key] for key in ("format", "wire_format", "rate", "channels")},
-              "clock_ids": sorted({p["clock_id"] for p in packets}), "complete": complete}
+              "position_gaps": gaps, "bad_packets": bad_trace, "bad_metadata": bad_metadata,
+              "drops": meta["drops"], "clock_ids": sorted(clocks), "complete": complete}
     if negative:
-        result["status"] = "fail" if forbidden else "blocked"
-        result["sentinel_reproduced"] = forbidden > 0 and nonfinite == 0
+        result["sentinel_reproduced"] = complete and forbidden > 0 and nonfinite == 0
+        result["status"] = "fail" if result["sentinel_reproduced"] else "blocked"
     else:
-        result["privacy"] = "fail" if forbidden or nonfinite else "pass" if complete else "blocked"
-        result["continuity"] = "pass" if complete and allowed == len(frames) else "fail" if frames else "blocked"
-        result["status"] = "fail" if forbidden or nonfinite or other or gaps else "pass" if complete else "blocked"
+        result["privacy"] = "fail" if forbidden or nonfinite or other else "pass" if complete and sentinel_reproduced else "blocked"
+        expected = silent if phase == "retired" else allowed
+        result["continuity"] = "pass" if complete and expected == len(frames) else "fail" if frames else "blocked"
+        result["status"] = ("fail" if result["privacy"] == "fail" or result["continuity"] == "fail" else
+                            "pass" if complete and sentinel_reproduced else "blocked")
+        if not sentinel_reproduced:
+            result["status"] = result["privacy"] = "blocked"
+            result["reason"] = "hostile forbidden sentinel not reproduced"
     return result
 
 
@@ -76,6 +87,7 @@ class Probe:
         self.children = []
         self.checks = []
         self.sequence = 0
+        self.processes = {}
         self.env = dict(os.environ, PATH=str(INSTALL / "bin") + ":" + os.environ["PATH"],
                         LD_LIBRARY_PATH=str(INSTALL / "lib"),
                         SPA_PLUGIN_DIR=str(INSTALL / "lib/spa-0.2"),
@@ -94,16 +106,24 @@ class Probe:
         with (self.evidence / (name + ".log")).open("w") as log:
             child = subprocess.Popen(list(map(str, args)), env=self.env, stdout=log, stderr=subprocess.STDOUT)
         self.children.append(child)
+        self.processes[child.pid] = {"name": name, "args": list(map(str, args)), "pid": child.pid, "termination_requested": False, "forced": False}
         return child
 
     def stop(self, child):
         if child.poll() is None:
+            self.processes[child.pid]["termination_requested"] = True
             child.send_signal(signal.SIGTERM)
             try:
                 child.wait(8)
             except subprocess.TimeoutExpired:
+                self.processes[child.pid]["forced"] = True
                 child.kill()
                 child.wait()
+        info = self.processes[child.pid]
+        info.update(returncode=child.returncode, signal=(-child.returncode if child.returncode < 0 else None))
+        log = self.evidence / (info["name"] + ".log")
+        info["log_sha256"] = hashlib.sha256(log.read_bytes()).hexdigest()
+        self.save("process-" + info["name"], info)
         return child.returncode
 
     def run(self, args):
@@ -144,7 +164,8 @@ class Probe:
         daemon = self.start([INSTALL / "bin/pipewire", "-c", path], name)
         wait(lambda: Path("/private/control.sock").exists() or daemon.poll() is not None, "daemon socket")
         if daemon.poll() is not None:
-            raise RuntimeError("daemon exited: " + (self.evidence / (name + ".log")).read_text()[-3000:])
+            code = self.stop(daemon)
+            raise RuntimeError(f"daemon exited returncode={code}: " + (self.evidence / (name + ".log")).read_text()[-3000:])
         return daemon, self.command("STATUS")
 
     def capture(self, state, name):
@@ -169,18 +190,48 @@ class Probe:
         time.sleep(.12)
         return child
 
+    def adjudicate(self, child, source, ingress, name, insecure=False):
+        code = self.stop(child)
+        events = []
+        for line in (self.evidence / (name + ".log")).read_text().splitlines():
+            try:
+                item = json.loads(line)
+                if isinstance(item, dict): events.append(item)
+            except ValueError:
+                pass  # PipeWire debug lines are retained in the full hashed log.
+        requested = any(e.get("event") == "link_requested" for e in events)
+        denied = [e for e in events if e.get("event") == "error" and
+                  e.get("result") in (-1, -2, -13) and e.get("where") in ("proxy", "core", "create-link")]
+        bound = any(e.get("event") == "link_bound" for e in events)
+        graph = self.graph(name + "-after")
+        visible = {o["id"] for o in graph}
+        unexpected = [o for o in graph if o["type"] == "PipeWire:Interface:Link" and
+                      str(o.get("info", {}).get("input-node-id")) == str(ingress["node_id"])]
+        status = "blocked" if insecure else "fail" if bound or unexpected else "pass" if requested and denied and ingress["node_id"] not in visible and ingress["port_id"] not in visible else "blocked"
+        self.checks.append({"case": name, "status": status, "source": source, "ingress": ingress,
+                            "request_confirmed": requested, "bound": bound, "denials": denied,
+                            "events": events, "returncode": code, "unexpected_links": unexpected,
+                            "reason": "insecure route judged by captured sentinel" if insecure else "specific denial required; no error-only success"})
+
     def execute(self):
         # Sentinel reproduction happens before any protected absence is scored.
         daemon, state = self.daemon(True, "insecure-negative")
-        selected = self.select(state["fixtures"][1])
+        selected = self.select(state["fixtures"][0])
         self.save("negative-selection", selected)
         capture, link, path = self.capture(state, "negative-sentinel")
+        hostile = self.attack(state["fixtures"][1], state["ingress"], "negative-numeric")
         time.sleep(.8)
+        self.save("negative-during", self.command("STATUS"))
+        self.graph("negative-hostile-graph")
         self.stop(capture); self.stop(link)
+        self.adjudicate(hostile, state["fixtures"][1], state["ingress"], "negative-numeric", insecure=True)
         negative = analyze(path, True)
         self.checks.append({"case": "insecure-sentinel-control", **negative})
         self.stop(daemon)
         wait(lambda: not Path("/private/control.sock").exists(), "negative unload")
+        if not negative.get("sentinel_reproduced"):
+            self.checks.append({"case": "protected-acceptance", "status": "blocked", "reason": "external hostile negative sentinel missing; no protected absence scored"})
+            return
 
         daemon, state = self.daemon(False, "protected")
         self.save("protected-initial", state)
@@ -214,15 +265,20 @@ class Probe:
         self.stop(capture); self.stop(link); self.stop(fanout); self.stop(fanlink)
         for label, pcm in (("protected-allframes", path), ("output-fanout", fanpath)):
             result = analyze(pcm)
+            result["phase_scope"] = "mixed selected/retired; phase qualification BLOCKED"
+            result["status"] = "fail" if result["status"] == "fail" else "blocked"
             if result.get("privacy") == "pass" and not negative.get("sentinel_reproduced"):
                 result["privacy"] = result["status"] = "blocked"
                 result["reason"] = "forbidden sentinel not reproduced"
             self.checks.append({"case": label, **result})
-        for child in attacks: self.stop(child)
+        for child in attacks:
+            self.adjudicate(child, state["fixtures"][1], state["ingress"], self.processes[child.pid]["name"])
         self.stop(wp)
         capture, link, path = self.capture(state, "reopen-allframes")
+        reopen = self.select(state["fixtures"][0])
+        self.save("reopen-selection", reopen)
         time.sleep(.4); self.stop(capture); self.stop(link)
-        self.checks.append({"case": "output-reopen", **analyze(path)})
+        self.checks.append({"case": "output-reopen", **analyze(path, sentinel_reproduced=negative.get("sentinel_reproduced", False))})
         stale = dict(state["fixtures"][0]); stale["port_serial"] += 1
         wrong = self.select(stale)
         self.checks.append({"case": "wrong-port-serial", "status": "pass" if wrong.get("status") == "error" else "fail", "reply": wrong})
@@ -248,6 +304,13 @@ def main():
     if not Path("/.dockerenv").exists() or os.geteuid() == 0 or Path("/dev/snd").exists():
         parser.error("requires unprivileged isolated container")
     probe = Probe(args.evidence)
+    executed = [ROOT / "adapters/linux/server-proof/module.c", ROOT / "verification/linux_server_ingress.py",
+                ROOT / "verification/linux-server/fixture.c", CONFIG,
+                BUILD / "modules/libpipewire-module-mixyard-server-proof.so", BUILD / "fixture",
+                INSTALL / "bin/pipewire", INSTALL / "lib/libpipewire-0.3.so.0.1609.0", BUILD / "source/build/config.h"]
+    probe.save("provenance", {"source_revision": os.environ.get("PROOF_SOURCE_REVISION", "UNKNOWN"),
+               "version": probe.run([INSTALL / "bin/pipewire", "--version"]).stdout,
+               "sha256": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in executed}})
     probe.save("resources", {"loadavg": Path("/proc/loadavg").read_text(), "cpu_stat": Path("/proc/stat").read_text(), "rtprio": resource.getrlimit(resource.RLIMIT_RTPRIO), "memlock": resource.getrlimit(resource.RLIMIT_MEMLOCK), "latency": "unknown", "clock_scope": "private dummy graph, no physical clocks"})
     error = None
     try:

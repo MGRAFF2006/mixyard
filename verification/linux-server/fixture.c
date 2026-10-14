@@ -379,7 +379,9 @@ static void start(struct fixture *f)
         }
         pw_proxy_add_listener(f->link, &f->link_proxy_hook, &link_proxy_events, f);
         pw_proxy_add_object_listener(f->link, &f->link_hook, &link_events, f);
-        puts("{\"event\":\"link_requested\",\"port_resolution\":\"global-id-then-local-id\"}");
+        printf("{\"event\":\"link_requested\",\"port_resolution\":\"global-id-then-local-id\","
+               "\"output_node\":%s,\"output_port\":%s,\"input_node\":%s,\"input_port\":%s}\n",
+               f->endpoints[0], f->endpoints[1], f->endpoints[2], f->endpoints[3]);
     } else {
         uint8_t storage[1024];
         struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(storage, sizeof(storage));

@@ -64,7 +64,7 @@ struct proof {
     uint32_t read, write; /* only accessed while holding the single shared data loop */
     atomic_uint_fast64_t generation, format_errors, discarded, captured, emitted;
     uint64_t next_generation;
-    bool insecure, creating, retiring, stopping, fixtures;
+    bool insecure, creating, retiring, stopping, fixtures, established;
     int fd;
     struct spa_source *socket_source;
     struct spa_source *fault_timer;
@@ -116,7 +116,7 @@ static int add_listener(void *data, struct spa_hook *h, const struct spa_node_ev
     struct node *n = data;
     struct spa_hook_list saved;
     spa_hook_list_isolate(&n->hooks, &saved, h, e, ud);
-    n->info.change_mask = SPA_NODE_CHANGE_MASK_FLAGS | SPA_NODE_CHANGE_MASK_PROPS;
+    n->info.change_mask = SPA_NODE_CHANGE_MASK_FLAGS;
     spa_node_emit_info(&n->hooks, &n->info);
     n->info.change_mask = 0;
     n->port_info.change_mask = SPA_PORT_CHANGE_MASK_FLAGS | SPA_PORT_CHANGE_MASK_PROPS |
@@ -199,16 +199,26 @@ static int set_port(void *data, enum spa_direction d, uint32_t port,
     struct node *n = data;
     if (!valid_port(n, d, port)) return -EINVAL;
     if (id != SPA_PARAM_Format) return -ENOENT;
-    if (pod && !fixed_format(pod)) { fault(n->proof); return -EINVAL; }
-    if (!(flags & SPA_NODE_PARAM_FLAG_TEST_ONLY)) {
-        if (atomic_load(&n->proof->generation) && n->kind < 2 && !pod) fault(n->proof);
-        n->formatted = pod != NULL;
-        if (!pod) { n->started = false; n->n_buffers = 0; }
-        n->params[1] = SPA_PARAM_INFO(SPA_PARAM_Format,
-            SPA_PARAM_INFO_WRITE | (n->formatted ? SPA_PARAM_INFO_READ : 0));
-        n->params[2] = SPA_PARAM_INFO(SPA_PARAM_Buffers, n->formatted ? SPA_PARAM_INFO_READ : 0);
-        port_emit(n);
-    }
+    if (flags & SPA_NODE_PARAM_FLAG_TEST_ONLY)
+        return pod && !fixed_format(pod) ? -EINVAL : 0;
+    /* impl-port frees negotiated storage on EVERY real Format application,
+     * including errors. Forget borrowed pointers before it can do so. */
+    bool was_formatted = n->formatted;
+    n->started = false;
+    n->formatted = false;
+    n->n_buffers = 0;
+    memset(n->buffers, 0, sizeof(n->buffers));
+    memset(n->outstanding, 0, sizeof(n->outstanding));
+    if (atomic_load(&n->proof->generation) &&
+        (was_formatted || !pod || n->proof->established)) fault(n->proof);
+    bool valid = !pod || fixed_format(pod);
+    if (!valid) fault(n->proof);
+    n->formatted = valid && pod != NULL;
+    n->params[1].flags = (n->params[1].flags ^ SPA_PARAM_INFO_SERIAL) & SPA_PARAM_INFO_SERIAL;
+    n->params[1].flags |= SPA_PARAM_INFO_WRITE | (n->formatted ? SPA_PARAM_INFO_READ : 0);
+    n->params[2] = SPA_PARAM_INFO(SPA_PARAM_Buffers, n->formatted ? SPA_PARAM_INFO_READ : 0);
+    port_emit(n);
+    if (!valid) return -EINVAL;
     return 0;
 }
 static bool buffer_valid(struct spa_buffer *b)
@@ -223,7 +233,11 @@ static int use_buffers(void *data, enum spa_direction d, uint32_t port, uint32_t
         struct spa_buffer **buffers, uint32_t count)
 {
     struct node *n = data;
-    if (!valid_port(n, d, port) || count > BUFFERS || (count && !n->formatted)) return -EINVAL;
+    if (!valid_port(n, d, port)) return -EINVAL;
+    n->n_buffers = 0;
+    n->started = false;
+    memset(n->buffers, 0, sizeof(n->buffers));
+    if (count > BUFFERS || (count && (!buffers || !n->formatted))) return -EINVAL;
     for (uint32_t i = 0; i < count; i++) if (!buffer_valid(buffers[i])) { fault(n->proof); return -EINVAL; }
     n->n_buffers = count;
     n->started = false;
@@ -359,6 +373,7 @@ static void retire(struct proof *p)
     atomic_store_explicit(&p->generation, 0, memory_order_release);
     if (p->retiring) return;
     p->retiring = true;
+    p->established = false;
     if (p->rtloop) pw_loop_locked(p->rtloop, clear_rt, 0, NULL, 0, p);
     remove_hook(&p->selected_node_hook);
     remove_hook(&p->selected_port_hook);
@@ -374,7 +389,7 @@ static void port_initialized(void *data)
 {
     struct node *n = data;
     if (n->kind == 0 && !n->proof->insecure) {
-        if (!n->port || !n->port->global || n->port->global->registered) { fault(n->proof); return; }
+        if (!n->port || !n->port->global || n->port->global->registered) { abort(); }
         n->port->global->permission_mask = 0;
     }
 }
@@ -393,7 +408,7 @@ static void node_initialized(void *data)
     struct node *n = data;
     if (n->kind == 0 && !n->proof->insecure) {
         struct pw_global *g = pw_impl_node_get_global(n->impl);
-        if (!g || g->registered) { fault(n->proof); return; }
+        if (!g || g->registered) { abort(); }
         g->permission_mask = 0;
     }
 }
@@ -403,7 +418,7 @@ static void node_port_init(void *data, struct pw_impl_port *port)
     /* port_added is too late: its global is already registered. */
     if (n->port || pw_impl_port_get_id(port) != 0 ||
         pw_impl_port_get_direction(port) != (enum pw_direction)direction(n)) {
-        fault(n->proof); return;
+        abort();
     }
     n->port = port;
     pw_impl_port_add_listener(port, &n->port_hook, &own_port_events, n);
@@ -475,17 +490,17 @@ static void selected_info(void *data, const struct pw_node_info *info)
 static void selected_port_info(void *data, const struct pw_port_info *info)
 {
     struct proof *p = data;
-    if (!p->creating && (info->change_mask & PW_PORT_CHANGE_MASK_PROPS)) retire(p);
+    if (p->creating) return;
+    if (info->change_mask & PW_PORT_CHANGE_MASK_PROPS) fault(p);
+    /* PARAMS also reports READ removal, for which 1.6.9 emits no param_changed.
+     * SERIAL toggles report same-format applications with otherwise equal flags. */
+    if (p->established && (info->change_mask & PW_PORT_CHANGE_MASK_PARAMS)) fault(p);
 }
 static void selected_param(void *data, uint32_t id)
 {
     struct proof *p = data;
-    /* Initial link negotiation installs the exact filtered format. Once the
-     * link has buffers, any subsequent format mutation revokes selection. */
-    bool initial_format = id == SPA_PARAM_Format && p->link &&
-        p->link->info.state >= PW_LINK_STATE_INIT && p->link->info.state <= PW_LINK_STATE_ALLOCATING;
-    if (!p->creating && !initial_format &&
-        (id == SPA_PARAM_Format || id == SPA_PARAM_EnumFormat)) retire(p);
+    if (!p->creating && p->established &&
+        (id == SPA_PARAM_Format || id == SPA_PARAM_EnumFormat)) fault(p);
 }
 static const struct pw_impl_node_events selected_node_events = {
     PW_VERSION_IMPL_NODE_EVENTS, .destroy = endpoint_destroy, .info_changed = selected_info,
@@ -501,7 +516,7 @@ static void link_initialized(void *data)
 {
     struct proof *p = data;
     struct pw_global *g = pw_impl_link_get_global(p->link);
-    if (!g || g->registered) { fault(p); return; }
+    if (!g || g->registered) abort();
     if (!p->insecure) g->permission_mask = 0;
 }
 static void link_destroyed(void *data)
@@ -515,9 +530,13 @@ static void link_unlinked(void *data, struct pw_impl_port *port)
 { atomic_store_explicit(&((struct proof *)data)->generation, 0, memory_order_release); }
 static void link_state(void *data, enum pw_link_state old, enum pw_link_state state, const char *error)
 {
-    /* Defer destruction out of the link's own state transition stack. */
-    if (state == PW_LINK_STATE_ERROR || state == PW_LINK_STATE_UNLINKED)
-        atomic_store_explicit(&((struct proof *)data)->generation, 0, memory_order_release);
+    struct proof *p = data;
+    /* Never destroy a link inside its own transition stack. Establishment is
+     * sticky until RETIRE; a later INIT is renegotiation, not first negotiation. */
+    if (p->established && state < PW_LINK_STATE_PAUSED) fault(p);
+    if (state == PW_LINK_STATE_PAUSED || state == PW_LINK_STATE_ACTIVE)
+        p->established = true;
+    if (state == PW_LINK_STATE_ERROR || state == PW_LINK_STATE_UNLINKED) fault(p);
 }
 static const struct pw_impl_link_events link_events = {
     PW_VERSION_IMPL_LINK_EVENTS, .initialized = link_initialized, .destroy = link_destroyed,

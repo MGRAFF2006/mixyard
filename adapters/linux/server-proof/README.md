@@ -55,8 +55,9 @@ This load audit does not call the module entry point or start a daemon.
 
 Transport limits: 4096 frames/block, eight queued blocks, sixteen SPA buffers,
 one shared data loop (checked at initialization). No clock is rewritten.
-FORMAT/IO/Start are synchronous; unsupported formats, quantum/rate changes,
-source/port/owner/link destruction and format loss close the generation. Queue
+FORMAT/IO/Start are synchronous; unsupported formats, invalid/oversized durations and rate changes,
+source/port/owner/link destruction and format loss close the generation. Durations from 1 through 4096 are accepted; quantum changes within that bound
+do not close selection. Queue
 and module PCM buffers are zeroed on retirement. Existing frames already read
 by consumers cannot be recalled. A consumer reopen that clears output format
 requires explicit re-selection. Output fanout is handled by PipeWire's normal
