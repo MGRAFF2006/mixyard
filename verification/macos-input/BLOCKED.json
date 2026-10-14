@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "prerequisites_not_execution",
+  "production_apply": false,
+  "native_HAL_PCM": "BLOCKED",
+  "producer_authentication": "BLOCKED",
+  "gates": [
+    {"id": "native_build", "prerequisite": "Hosted macOS build-check workflow result at exact source HEAD; compile/sign/ABI only, never HAL evidence."},
+    {"id": "authenticated_injection", "prerequisite": "Separately authorized disposable macOS guest, reviewed system-namespace private broker and per-build code requirement; unrelated producer, replay, malformed, disconnect and substitution tests. Release has no injection path."},
+    {"id": "sandbox_contract", "prerequisite": "Broker Mach service explicitly listed in AudioServerPlugIn_MachServices; system bootstrap service contract and exact code identity verified on native guest. No current service, helper or entitlement installed."},
+    {"id": "ad_hoc_HAL_acceptance", "prerequisite": "Explicit authorization to install exact signed bundle into disposable guest HAL directory and perform documented reboot or separately verified service reload. In-process dlopen/codesign do not pass this gate."},
+    {"id": "TCC", "prerequisite": "Consumer launched in authorized disposable guest with microphone usage description; permission granted through supported UI when required. No TCC bypass."},
+    {"id": "external_PCM", "prerequisite": "Separate explicit-UID IOProc consumer records complete startup, exact A/B and fanout first/final markers, unity/half gain, stereo frames, silence tail longer than ring, and forbidden sentinel absence; correlate effective frame/revision evidence. No trimming, alignment/gain fitting, or vacuous zero-only privacy PASS."},
+    {"id": "lifetime_restart", "prerequisite": "Actual HAL enumeration/names/UIDs, rename, slow reader isolation, close/reopen, abort/remove, producer crash/restart, fresh clock generation, audio-server reconstruction and consumer reopening on authorized guest."},
+    {"id": "real_product_workflow", "prerequisite": "Real microphone plus selected app -> independent call/record/headphone external PCM with consent and source provenance. No real microphone or application PCM accessed by this artifact."}
+  ]
+}
