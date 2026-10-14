@@ -104,7 +104,7 @@ def main(binary, cli, output):
         candidate = copy.deepcopy(config)
         candidate['sources'][0]['selector']['deviceUid'] = 'fixture:missing-profile-mic'
         candidate['sends'][0]['gain'] = 0.25
-        candidate['mixes'][0]['name'] = 'Saved mix ♥'; candidate['mixes'][0]['master']['gain'] = 0.5
+        candidate['mixes'][0]['name'] = 'Saved mix ♥'; candidate['mixes'][0]['master'] = {'gain': 0.5, 'mute': False}
         candidate['outputs'] = [o for o in candidate['outputs'] if o['id'] != 'headphones']
         candidate['mediaControls'] = []
         name = '../夜 / same name ♥'

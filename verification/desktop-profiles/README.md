@@ -59,6 +59,9 @@ bash verification/desktop-profiles/run-linux.sh \
   /path/to/release/mixyard-desktop /path/to/release/mixyard /path/to/evidence
 ```
 
+Build with `pnpm tauri build`; plain `cargo build` does not enable the production
+protocol and cannot qualify this run.
+
 The harness creates actual named drafts using the root CLI's **default** store in
 its temporary environment. The GUI reads that same store; no IPC fixture replaces
 it. It compares the actual native preview with CLI/core preview byte-content data,
@@ -79,3 +82,10 @@ Primary references checked before implementation:
 [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/) and
 [Rust bounded Read::take](https://doc.rust-lang.org/std/io/trait.Read.html#method.take).
 No dependency or upstream licensing change; new original source is MIT.
+
+The [committed local run manifest](linux-container-evidence.json) records the passing
+Linux release run, exact source/binary/raw hashes and free-byte guards. Raw evidence
+stays at the listed local cache paths and has not been uploaded. It preserves the
+failed plain-Cargo production-protocol attempt and the first harness-only missing
+optional master-field failure. Neither failed attempt counts as a native pass.
+The later manifest/docs commit does not change executed native/frontend source.
