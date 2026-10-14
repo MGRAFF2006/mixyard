@@ -32,6 +32,15 @@ The [scoped native manifest](../verification/desktop-native/linux-container-evid
 
 ## Compatibility and evidence
 
+The desktop additionally imports bounded schema-2 config/inventory content for
+read-only **Why silent / What is sharing** inspection through the unchanged core
+`diagnostics::inspect`. Revisions/platform/declared evidence and stale/imported
+status are explicit; every intended path is retained, while accepted dry-run
+coefficients remain separate from unknown applied/permission/consumer/live state.
+The lifecycle connection supplies no routing snapshots. No protocol, runtime,
+profile, core policy, discovery adapter or production-apply behavior changes.
+See the focused [inspection checks and evidence limits](../verification/desktop-inspection/README.md).
+
 | Present component | Runnable evidence / compatibility boundary | First complete workflow gate |
 | --- | --- | --- |
 | [Core](../src/main.rs) | Schema-2 config validation and routing/media plans against simulated inventories; no GUI dependencies | No audio execution or native dispatch |

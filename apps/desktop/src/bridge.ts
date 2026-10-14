@@ -1,5 +1,7 @@
 import { readConnection } from './runtime.ts'
 import type { ConnectionStatus } from './runtime.ts'
+import { readInspection } from './inspection.ts'
+import type { SnapshotInput } from './inspection.ts'
 export type ShellStatus = { schemaVersion: 1; connected: boolean; runtime: ConnectionStatus; trayCreated: boolean; platform: string }
 export const inDesktopShell = '__TAURI_INTERNALS__' in window
 
@@ -27,6 +29,11 @@ export async function shellStatus(): Promise<ShellStatus | null> {
 export async function runtimeAction(action: 'connect_runtime' | 'disconnect_runtime', instance?: string): Promise<ConnectionStatus> {
   if (!inDesktopShell) throw new Error('Connect requires the desktop shell. Start the runtime separately with the CLI.')
   return readConnection(await nativeInvoke(action, action === 'connect_runtime' ? { instance } : {}))
+}
+
+export async function inspectSnapshot(input: SnapshotInput) {
+  if (!inDesktopShell) throw new Error('Snapshot inspection requires the desktop Rust core. Browser preview has no native inspector; no fixture was substituted.')
+  return readInspection(await nativeInvoke<unknown>('inspect_snapshot', { request: input }))
 }
 
 export async function shellAction(action: 'hide_mixer' | 'quit_ui'): Promise<void> {

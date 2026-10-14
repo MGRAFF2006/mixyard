@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod connection;
+mod inspection;
 
 use connection::{Connection, ConnectionStatus};
 use serde::Serialize;
@@ -13,6 +14,17 @@ use tauri::{
 
 struct ShellState {
     tray_created: bool,
+}
+
+#[tauri::command]
+async fn inspect_snapshot(request: inspection::SnapshotRequest) -> Result<String, String> {
+    let admission = inspection::acquire()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
+        inspection::inspect(request)
+    })
+    .await
+    .map_err(|error| format!("Inspection worker failed: {error}"))?
 }
 
 #[derive(Serialize)]
@@ -177,6 +189,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            inspect_snapshot,
             shell_status,
             connect_runtime,
             disconnect_runtime,
