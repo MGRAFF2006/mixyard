@@ -1,10 +1,24 @@
 // SPDX-License-Identifier: MIT
 // Original Mixyard ingress scaffold. All calls require external serialization.
 #pragma once
+#if defined(_KERNEL_MODE)
+#include <ntddk.h>
+#else
 #include <stddef.h>
 #include <stdint.h>
+#endif
 
 namespace mixyard_input {
+#if defined(_KERNEL_MODE)
+// /kernel defines _KERNEL_MODE. Keep compiler/user CRT headers out of the driver.
+using uint8_t = UCHAR;
+using uint16_t = USHORT;
+using uint32_t = ULONG;
+using uint64_t = ULONGLONG;
+using uintptr_t = ULONG_PTR;
+using size_t = SIZE_T;
+#endif
+constexpr uint64_t max_u64 = ~uint64_t{0};
 constexpr uint32_t magic = 0x4958594d; // little-endian "MYXI"
 constexpr uint16_t version = 1;
 constexpr size_t header_bytes = 64;
@@ -73,7 +87,7 @@ struct Transport {
     Result begin(uintptr_t file, uint64_t new_epoch) {
         if (!file || !new_epoch) return Result::malformed;
         if (owner) return Result::unauthorized;
-        if (generation == UINT64_MAX) return Result::exhausted;
+        if (generation == max_u64) return Result::exhausted;
         clear();
         ++generation;
         epoch = new_epoch;
@@ -102,7 +116,7 @@ struct Transport {
         const uint64_t rev = load64(b + 32);
         if (!rev || rev < revision || load64(b + 40) != next_frame ||
             load64(b + 56) != next_sequence) return Result::out_of_order;
-        if (next_frame > UINT64_MAX - frames || next_sequence == UINT64_MAX)
+        if (next_frame > max_u64 - frames || next_sequence == max_u64)
             return Result::exhausted;
         for (size_t i = 0; i < frames * 2; ++i)
             if ((load32(b + header_bytes + i * 4) & 0x7f800000u) == 0x7f800000u)

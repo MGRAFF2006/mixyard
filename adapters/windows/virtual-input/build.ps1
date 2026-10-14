@@ -43,7 +43,16 @@ try {
     Run-Checked 'nuget' @('restore', (Join-Path $driver 'packages.config'), '-PackagesDirectory', $packages,
         '-Source', 'https://api.nuget.org/v3/index.json', '-NonInteractive', '-NoCache', '-DirectDownload')
     Require-Reserve
-    $msbuild = Join-Path $vs 'MSBuild/Current/Bin/MSBuild.exe'
+    # The pinned WDK ships x64 InfVerif DLLs, not the x86 DLLs 32-bit MSBuild loads.
+    $wdk = Join-Path $packages "Microsoft.Windows.WDK.x64.$kit/c"
+    $wdkBuildBin = Join-Path $wdk 'build/10.0.26100.0/bin'
+    $msbuild = Join-Path $vs 'MSBuild/Current/Bin/amd64/MSBuild.exe'
+    foreach ($required in @($msbuild, (Join-Path $wdkBuildBin 'x64/InfVerif.dll'),
+        (Join-Path $wdkBuildBin 'x64/InfVerifHlk.dll'))) {
+        if (!(Test-Path -LiteralPath $required -PathType Leaf)) { throw "BLOCKED: missing $required" }
+    }
+    # Keep task DLL resolution on this restored kit, in the build process only.
+    $env:PATH = "$wdkBuildBin;$env:PATH"
     Run-Checked $msbuild @((Join-Path $driver 'MixyardIngress.vcxproj'), '/m:2',
         '/p:Configuration=Release', '/p:Platform=x64', "/p:VCToolsVersion=$msvc",
         '/fl', "/flp:logfile=$build/msbuild.log;verbosity=normal")
@@ -56,7 +65,6 @@ try {
     Copy-Item (Join-Path $driver 'build/x64/Release/MixyardIngress.sys') $package -Force
     Copy-Item (Join-Path $driver 'MixyardIngress.inf') $package -Force
     Copy-Item (Join-Path $root '../../../LICENSE') $package -Force
-    $wdk = Join-Path $packages "Microsoft.Windows.WDK.x64.$kit/c"
     $infverif = Join-Path $wdk 'tools/10.0.26100.0/x64/infverif.exe'
     $inf2cat = Join-Path $wdk 'bin/10.0.26100.0/x86/Inf2Cat.exe'
     Run-Checked $infverif @('/w', '/v', (Join-Path $package 'MixyardIngress.inf'))

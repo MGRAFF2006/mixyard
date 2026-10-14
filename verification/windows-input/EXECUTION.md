@@ -36,14 +36,20 @@ does not inherit the EV-distribution prerequisite.
    file hash. Alternatively build with the documented existing VS/MSVC and pinned
    project-local kits. A missing package/build check blocks the experiment.
 3. **Only inside that authorized snapshot**, create an ephemeral local code-signing
-   test certificate using `New-SelfSignedCertificate -Type CodeSigningCert` in the
-   guest's local-machine certificate store. Keep its private key inside the guest;
-   export only its public `.cer` to the guest's Trusted Root/Trusted Publishers
-   stores. Use SDK `signtool sign /fd SHA256 /sha1 <guest-cert-thumbprint>` on the
+   test certificate using `New-SelfSignedCertificate -Type CodeSigningCert
+   -CertStoreLocation Cert:\LocalMachine\My` in the guest's local-machine store.
+   Keep its private key inside the guest; export only its public `.cer` to the
+   guest's local-machine Trusted Root/Trusted Publishers
+   stores. Use SDK `signtool sign /fd SHA256 /sm /s My /sha1 <guest-cert-thumbprint>` on the
    `.sys`, rerun pinned `Inf2Cat /driver:<package> /os:10_GE_X64` after that binary
-   modification, then sign the regenerated `.cat`. Retain hashes and verify both
-   signatures with `signtool verify /v /kp`; do not use old unsigned hashes as
-   signed artifact identities. This requires no external signing service.
+   modification, then sign the regenerated `.cat` with the same machine-store
+   options. Retain hashes and verify both signatures with `signtool verify /v /pa`;
+   do not use old unsigned hashes as signed artifact identities. Microsoft's
+   [store selection](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/signtool),
+   [test image verification](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/verifying-the-signature-of-a-test-signed-driver-file)
+   and [test catalog verification](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/verifying-the-signature-of-a-test-signed-catalog-file)
+   document this local test route. Signature verification does not prove guest
+   loading; that remains a separate gate. No external signing service is required.
 4. A guest operator must explicitly authorize test policy before executing
    `bcdedit /set testsigning on` and restarting **the disposable guest only**.
    If Secure Boot protects the setting, stop until its guest configuration is

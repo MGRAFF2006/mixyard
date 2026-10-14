@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 #pragma once
-#include <stdint.h>
+#include "../transport.hpp"
 
 // Include ntddk.h (kernel) or Windows.h + winioctl.h (user mode) first.
 namespace mixyard_input {

@@ -75,11 +75,11 @@ NTSTATUS Create(PDEVICE_OBJECT device, PIRP irp) {
     NTSTATUS status;
     if (state->transport.owner) {
         status = STATUS_SHARING_VIOLATION;
-    } else if (state->transport.generation == UINT64_MAX) {
+    } else if (state->transport.generation == mixyard_input::max_u64) {
         status = STATUS_INTEGER_OVERFLOW;
     } else {
         // Epoch is an admission identifier, not a running audio clock.
-        status = MapResult(state->transport.begin(reinterpret_cast<uintptr_t>(file),
+        status = MapResult(state->transport.begin(reinterpret_cast<ULONG_PTR>(file),
                                                   state->transport.generation + 1));
     }
     KeReleaseSpinLock(&state->lock, old_irql);
@@ -93,7 +93,7 @@ NTSTATUS Cleanup(PDEVICE_OBJECT device, PIRP irp) {
     KIRQL old_irql;
     KeAcquireSpinLock(&state->lock, &old_irql);
     // Failed opens and already-cleaned file objects cannot retire another owner.
-    if (state->transport.owner == reinterpret_cast<uintptr_t>(stack->FileObject) &&
+    if (state->transport.owner == reinterpret_cast<ULONG_PTR>(stack->FileObject) &&
         state->transport.owner != 0) {
         (void)state->transport.cleanup(state->transport.owner);
         RtlSecureZeroMemory(state->transport.packets, sizeof(state->transport.packets));
@@ -138,7 +138,7 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT device, PIRP irp) {
     KeAcquireSpinLock(&state->lock, &old_irql);
     NTSTATUS status = STATUS_ACCESS_DENIED;
     ULONG_PTR bytes = 0;
-    if (state->transport.owner == reinterpret_cast<uintptr_t>(stack->FileObject)) {
+    if (state->transport.owner == reinterpret_cast<ULONG_PTR>(stack->FileObject)) {
         if (code == ioctl_submit) {
             const Result result = state->transport.submit(state->transport.owner,
                                                          buffer, input_bytes);
