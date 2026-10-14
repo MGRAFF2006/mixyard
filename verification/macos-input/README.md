@@ -48,6 +48,24 @@ registry or unlimited endpoint capability is claimed. A stalled reader cannot
 drain another; overwritten/missing positions return zeros. The fixture buffer
 does not implement the future credited IPC broker.
 
+Post-change host notification errors do not roll back committed state.
+`StartIO`, `StopIO`, `RemoveDeviceClient` and performed retirement return success
+once their state transition commits; repeating the operation is not a recovery
+method. Failed notices and their most recent `OSStatus` are retained outside RT.
+Later lifecycle transitions retry a single bounded snapshot of pending notices.
+Fixture publication/rename return `MY_INPUT_COMMITTED_NOTIFY_PENDING` when they
+commit with notifications outstanding: the returned device ID, UID, names and
+consumed lifetime slot remain valid. Do not republish to recover. The fixture-only
+`MixyardInputTest_ReconcileNotifications` retries only outstanding host calls,
+reports their remaining count and retains the most recent error after recovery.
+One pass makes at most nine calls; the plugin device/owned-object lists share one
+call. Successful halves of device/stream rename notifications are not retried.
+Reentrant changes remain queued for a later pass, with no lock held across host
+callbacks. There is no background retry loop, production reconciliation control
+or restart persistence. The native harness includes failed start/stop/remove,
+fresh epochs, failed publication, each/both rename notices and failed retirement
+notices; local Linux source checks cannot establish that these assertions pass.
+
 All control, allocation, property access and notifications happen outside
 `DoIOOperation` and `GetZeroTimeStamp`; those callbacks only use bounded scans,
 lock-free atomics, host time and copies. No hardware-clock drift/adaptation proof

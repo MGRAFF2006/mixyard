@@ -102,6 +102,48 @@ OSStatus notifyRegistry() {
         {kAudioObjectPropertyOwnedObjects, kAudioObjectPropertyScopeGlobal, 0}};
     return host->PropertiesChanged(host, kAudioObjectPlugInObject, 2, a);
 }
+// Post-change notifications cannot undo a committed lifecycle transition. Keep
+// failures for bounded non-RT reconciliation, including partial dual notices.
+struct Notice { AudioObjectID id; AudioObjectPropertySelector selector; bool pending = false; };
+std::array<Notice, 9> notices{{
+    {kAudioObjectPlugInObject, kAudioPlugInPropertyDeviceList},
+    {2, kAudioDevicePropertyDeviceIsRunning}, {4, kAudioDevicePropertyDeviceIsRunning},
+    {2, kAudioDevicePropertyDeviceIsAlive}, {4, kAudioDevicePropertyDeviceIsAlive},
+    {2, kAudioObjectPropertyName}, {3, kAudioObjectPropertyName},
+    {4, kAudioObjectPropertyName}, {5, kAudioObjectPropertyName}}};
+bool flushingNotices = false; // registryMutex only; host callbacks may reenter
+OSStatus lastNoticeError = noErr;
+void queueNotice(AudioObjectID id, AudioObjectPropertySelector selector) {
+    // Caller holds registryMutex; only the fixed entries above can be queued.
+    for (auto &n : notices) if (n.id == id && n.selector == selector) n.pending = true;
+}
+bool flushNotices() {
+    std::array<bool, 9> selected{};
+    {
+        std::lock_guard<std::mutex> guard(registryMutex);
+        if (flushingNotices) return false;
+        flushingNotices = true;
+        for (unsigned i = 0; i < notices.size(); ++i) {
+            selected[i] = notices[i].pending;
+            notices[i].pending = false;
+        }
+    }
+    // One snapshot only: never spin on a failing/reentrant host. Clear before
+    // calling out so a newer change to the same property cannot be lost.
+    for (unsigned i = 0; i < notices.size(); ++i) if (selected[i]) {
+        const auto &n = notices[i];
+        const OSStatus status = n.id == kAudioObjectPlugInObject ? notifyRegistry() : notify(n.id, n.selector);
+        if (status) {
+            std::lock_guard<std::mutex> guard(registryMutex);
+            notices[i].pending = true;
+            lastNoticeError = status;
+        }
+    }
+    std::lock_guard<std::mutex> guard(registryMutex);
+    flushingNotices = false;
+    for (const auto &n : notices) if (n.pending) return false;
+    return true;
+}
 bool createEndpoint(Endpoint &e, const char *uuid, const char *name) {
     char uid[80]{};
     std::snprintf(uid, sizeof(uid), "%s%s", uidPrefix, uuid);
@@ -196,8 +238,10 @@ OSStatus removeClient(AudioServerPlugInDriverRef d, AudioObjectID id,
             if (changed) e->producer.store(0);
         }
         if (r->bundle) { CFRelease(r->bundle); r->bundle = nullptr; }
+        if (changed) queueNotice(id, kAudioDevicePropertyDeviceIsRunning);
     }
-    return changed ? notify(id, kAudioDevicePropertyDeviceIsRunning) : noErr;
+    (void)flushNotices(); // removal committed; failures remain queued, never returned as removal failure
+    return noErr;
 }
 OSStatus finishChange(AudioServerPlugInDriverRef d, AudioObjectID id, UInt64 action,
                       void *info, bool perform) {
@@ -208,13 +252,16 @@ OSStatus finishChange(AudioServerPlugInDriverRef d, AudioObjectID id, UInt64 act
         if (!e) return kAudioHardwareBadObjectError;
         if (info || !action || e->pending != action) return kAudioHardwareIllegalOperationError;
         e->pending = 0;
-        if (perform) e->alive.store(false);
+        if (perform) {
+            e->alive.store(false);
+            queueNotice(id, kAudioDevicePropertyDeviceIsAlive);
+            queueNotice(kAudioObjectPlugInObject, kAudioPlugInPropertyDeviceList);
+        }
         // Abort retains the endpoint, but admission revoked at request is never restored.
     }
     if (!perform) return noErr;
-    const OSStatus a = notify(id, kAudioDevicePropertyDeviceIsAlive);
-    const OSStatus b = notifyRegistry();
-    return a ? a : b;
+    (void)flushNotices(); // retirement committed; reconcile notices without repeating its action token
+    return noErr;
 }
 OSStatus performChange(AudioServerPlugInDriverRef d, AudioObjectID id, UInt64 a, void *p) {
     return finishChange(d, id, a, p, true);
@@ -496,8 +543,10 @@ OSStatus startIO(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 client) 
             changed = true;
         }
         r->observed.store(false); r->running.store(true); e->running.fetch_add(1);
+        if (changed) queueNotice(id, kAudioDevicePropertyDeviceIsRunning);
     }
-    return changed ? notify(id, kAudioDevicePropertyDeviceIsRunning) : noErr;
+    (void)flushNotices(); // IO started; failed post-change notices remain queued
+    return noErr;
 }
 OSStatus stopIO(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 client) {
     if (!valid(d)) return kAudioHardwareBadObjectError;
@@ -510,8 +559,10 @@ OSStatus stopIO(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 client) {
         if (!r || !r->running.exchange(false)) return kAudioHardwareIllegalOperationError;
         changed = e->running.fetch_sub(1) == 1;
         if (changed) e->producer.store(0);
+        if (changed) queueNotice(id, kAudioDevicePropertyDeviceIsRunning);
     }
-    return changed ? notify(id, kAudioDevicePropertyDeviceIsRunning) : noErr;
+    (void)flushNotices(); // IO stopped; failed post-change notices remain queued
+    return noErr;
 }
 OSStatus zeroTime(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 client,
                   Float64 *sample, UInt64 *time, UInt64 *seed) {
@@ -696,8 +747,9 @@ extern "C" int MixyardInputTest_PublishEndpoint(const char *uuid, const char *na
         if (i == endpointLimit) return MY_INPUT_CAPACITY;
         if (!createEndpoint(endpoints[i], uuid, name)) return MY_INPUT_INVALID;
         *out = deviceID(i);
+        queueNotice(kAudioObjectPlugInObject, kAudioPlugInPropertyDeviceList);
     }
-    return notifyRegistry() ? MY_INPUT_HOST_ERROR : MY_INPUT_OK;
+    return flushNotices() ? MY_INPUT_OK : MY_INPUT_COMMITTED_NOTIFY_PENDING;
 }
 extern "C" int MixyardInputTest_Rename(AudioObjectID id, const char *name) {
     if (!validName(name)) return MY_INPUT_INVALID;
@@ -709,10 +761,19 @@ extern "C" int MixyardInputTest_Rename(AudioObjectID id, const char *name) {
         CFStringRef n = CFStringCreateWithCString(nullptr, name, kCFStringEncodingUTF8);
         if (!n) return MY_INPUT_INVALID;
         CFRelease(e->name); e->name = n;
+        queueNotice(id, kAudioObjectPropertyName);
+        queueNotice(id + 1, kAudioObjectPropertyName);
     }
-    const OSStatus a = notify(id, kAudioObjectPropertyName);
-    const OSStatus b = notify(id + 1, kAudioObjectPropertyName);
-    return a || b ? MY_INPUT_HOST_ERROR : MY_INPUT_OK;
+    return flushNotices() ? MY_INPUT_OK : MY_INPUT_COMMITTED_NOTIFY_PENDING;
+}
+extern "C" int MixyardInputTest_ReconcileNotifications(uint32_t *pending, OSStatus *lastError) {
+    if (!pending || !lastError) return MY_INPUT_INVALID;
+    const bool complete = flushNotices();
+    std::lock_guard<std::mutex> guard(registryMutex);
+    *pending = 0;
+    for (const auto &n : notices) if (n.pending) ++*pending;
+    *lastError = lastNoticeError;
+    return complete && !*pending ? MY_INPUT_OK : MY_INPUT_HOST_ERROR;
 }
 extern "C" int MixyardInputTest_Retire(AudioObjectID id, uint64_t *out) {
     if (!out) return MY_INPUT_INVALID;

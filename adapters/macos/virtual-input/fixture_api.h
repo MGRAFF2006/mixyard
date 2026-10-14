@@ -17,7 +17,7 @@ enum { MY_INPUT_ENDPOINT_LIMIT = 2, MY_INPUT_CLIENT_LIMIT = 16,
        MY_INPUT_RING_FRAMES = 16384, MY_INPUT_PACKET_FRAMES = 4096 };
 enum { MY_INPUT_OK = 0, MY_INPUT_INVALID = 1, MY_INPUT_STALE = 2,
        MY_INPUT_CAPACITY = 3, MY_INPUT_BUSY = 4, MY_INPUT_NOT_FOUND = 5,
-       MY_INPUT_HOST_ERROR = 6 };
+       MY_INPUT_HOST_ERROR = 6, MY_INPUT_COMMITTED_NOTIFY_PENDING = 7 };
 enum { MY_INPUT_PCM = 0, MY_INPUT_NO_PRODUCER = 1, MY_INPUT_UNDERRUN = 2,
        MY_INPUT_RETIRED = 3, MY_INPUT_STOPPED = 4, MY_INPUT_BAD_TIME = 5,
        MY_INPUT_TRANSITION = 6 };
@@ -25,8 +25,17 @@ enum { MY_INPUT_PCM = 0, MY_INPUT_NO_PRODUCER = 1, MY_INPUT_UNDERRUN = 2,
 #define MY_INPUT_UID_PREFIX "org.mixyard.input."
 // One initialized A; publish B once. Two lifetime endpoint and 16 lifetime client slots
 // per endpoint (retired IDs/client slots are never recycled; capacity is explicit).
+// Publish/Rename return COMMITTED_NOTIFY_PENDING when the mutation succeeded but
+// post-change notification is pending. Publish's output ID is valid in that case;
+// do not republish. Reconcile preserves identity, names and lifetime capacity.
 int MixyardInputTest_PublishEndpoint(const char *uuid, const char *name, AudioObjectID *device);
 int MixyardInputTest_Rename(AudioObjectID device, const char *name);
+// One bounded pass over at most nine queued host calls (registry lists share one).
+// Retries only pending notices; HOST_ERROR means pending/reentrant, not rollback.
+// Outputs pending call count and most recent notification failure (retained after
+// recovery). Lifecycle ABI calls return success for committed start/stop/remove/
+// retirement; notification errors remain queued and retry on later transitions.
+int MixyardInputTest_ReconcileNotifications(uint32_t *pending, OSStatus *lastError);
 // Pending retirement gates PCM immediately; host must perform or abort the returned token.
 // Request failure/abort leaves device published and silent; a fresh admission is required.
 int MixyardInputTest_Retire(AudioObjectID device, uint64_t *action);

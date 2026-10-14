@@ -13,9 +13,28 @@ static unsigned notifications = 0;
 static AudioObjectID requestedDevice = 0;
 static UInt64 requestedAction = 0;
 static bool rejectRequest = false;
-static OSStatus changed(AudioServerPlugInHostRef, AudioObjectID, UInt32 count,
+struct NoticeCall { AudioObjectID object; AudioObjectPropertySelector selector; OSStatus status; };
+static std::vector<NoticeCall> noticeCalls;
+static AudioObjectID rejectNoticeObject = kAudioObjectUnknown;
+static AudioObjectPropertySelector rejectNoticeSelector = 0;
+static bool rejectAllNotices = false;
+static AudioObjectID reentrantRenameDevice = kAudioObjectUnknown;
+static OSStatus changed(AudioServerPlugInHostRef, AudioObjectID object, UInt32 count,
                         const AudioObjectPropertyAddress* addresses) {
-    assert(count && addresses); notifications += count; return noErr;
+    assert(count && addresses); notifications += count;
+    if (object == kAudioObjectPlugInObject) {
+        assert(count == 2 && addresses[0].mSelector == kAudioPlugInPropertyDeviceList);
+        assert(addresses[1].mSelector == kAudioObjectPropertyOwnedObjects);
+    } else assert(count == 1);
+    const OSStatus status = rejectAllNotices ||
+        (object == rejectNoticeObject && addresses[0].mSelector == rejectNoticeSelector)
+        ? kAudioHardwareUnspecifiedError : noErr;
+    noticeCalls.push_back({object, addresses[0].mSelector, status});
+    if (object == reentrantRenameDevice && addresses[0].mSelector == kAudioObjectPropertyName) {
+        reentrantRenameDevice = kAudioObjectUnknown;
+        assert(MixyardInputTest_Rename(object, "Reentrant B") == MY_INPUT_COMMITTED_NOTIFY_PENDING);
+    }
+    return status;
 }
 static OSStatus copyStorage(AudioServerPlugInHostRef, CFStringRef, CFPropertyListRef* out) {
     if (out) *out = nullptr;
@@ -81,9 +100,6 @@ static AudioObjectID inspect(AudioServerPlugInDriverRef d, AudioObjectID device)
     assert(!(*d)->HasProperty(d, device, 0, &p));
     assert((*d)->GetPropertyDataSize(d, device, 0, &p, 0, nullptr, &size) == kAudioHardwareUnknownPropertyError);
     assert((*d)->GetPropertyDataSize(d, 9999, 0, &p, 0, nullptr, &size) == kAudioHardwareBadObjectError);
-    p = address(kAudioDevicePropertyDeviceUID);
-    assert((*d)->GetPropertyData(d, device, 0, &p, 0, nullptr, sizeof(CFStringRef), &size, nullptr) != noErr);
-    assert((*d)->GetPropertyDataSize(d, device, 0, &p, 0, nullptr, nullptr) != noErr);
     p = address(kAudioStreamPropertyPhysicalFormat, kAudioObjectPropertyScopeOutput);
     assert(!(*d)->HasProperty(d, streams[0], 0, &p));
     return streams[0];
@@ -130,6 +146,54 @@ static std::vector<float> fixture(unsigned frames, bool b = false) {
     }
     return pcm;
 }
+static void reconcile(uint32_t expectedPending) {
+    uint32_t pending = UINT32_MAX; OSStatus lastError = noErr;
+    assert(MixyardInputTest_ReconcileNotifications(&pending, &lastError) ==
+        (expectedPending ? MY_INPUT_HOST_ERROR : MY_INPUT_OK));
+    assert(pending == expectedPending && lastError == kAudioHardwareUnspecifiedError);
+}
+static void named(AudioServerPlugInDriverRef d, AudioObjectID id, CFStringRef expected) {
+    auto name = property<CFStringRef>(d, id, kAudioObjectPropertyName);
+    assert(CFEqual(name, expected)); CFRelease(name);
+}
+static void lifecycleNotificationErrors(AudioServerPlugInDriverRef d, AudioObjectID a, AudioObjectID stream) {
+    auto first = client(90), second = client(91), removed = client(92);
+    assert((*d)->AddDeviceClient(d, a, &first) == noErr);
+    rejectNoticeObject = a; rejectNoticeSelector = kAudioDevicePropertyDeviceIsRunning;
+    const auto before = noticeCalls.size();
+    assert((*d)->StartIO(d, a, first.mClientID) == noErr); // committed despite failed notice
+    assert(noticeCalls.size() == before + 1 && noticeCalls.back().status != noErr);
+    assert(property<UInt32>(d, a, kAudioDevicePropertyDeviceIsRunning) == 1);
+    const auto firstSeed = seed(d, a, first.mClientID);
+    zeros(read(d, a, stream, first.mClientID, 0, 8));
+    assert((*d)->StartIO(d, a, first.mClientID) == kAudioHardwareIllegalOperationError);
+    reconcile(1); // failing retry is bounded and leaves state/epoch intact
+    assert(noticeCalls.size() == before + 2 && seed(d, a, first.mClientID) == firstSeed);
+    assert((*d)->AddDeviceClient(d, a, &second) == noErr);
+    assert((*d)->StartIO(d, a, second.mClientID) == noErr); // retries pending notice once
+    assert(noticeCalls.size() == before + 3 && noticeCalls.back().status != noErr);
+    assert(seed(d, a, second.mClientID) == firstSeed);
+    rejectNoticeObject = kAudioObjectUnknown; reconcile(0);
+    assert((*d)->StopIO(d, a, first.mClientID) == noErr);
+    assert(property<UInt32>(d, a, kAudioDevicePropertyDeviceIsRunning) == 1);
+    rejectNoticeObject = a;
+    assert((*d)->StopIO(d, a, second.mClientID) == noErr);
+    assert(property<UInt32>(d, a, kAudioDevicePropertyDeviceIsRunning) == 0);
+    assert((*d)->StopIO(d, a, second.mClientID) == kAudioHardwareIllegalOperationError);
+    reconcile(1); rejectNoticeObject = kAudioObjectUnknown; reconcile(0);
+    assert((*d)->RemoveDeviceClient(d, a, &first) == noErr);
+    assert((*d)->RemoveDeviceClient(d, a, &second) == noErr);
+    assert((*d)->AddDeviceClient(d, a, &removed) == noErr);
+    assert((*d)->StartIO(d, a, removed.mClientID) == noErr);
+    const auto secondSeed = seed(d, a, removed.mClientID); assert(secondSeed != firstSeed);
+    rejectNoticeObject = a;
+    assert((*d)->RemoveDeviceClient(d, a, &removed) == noErr); // also commits a last-client stop
+    assert(property<UInt32>(d, a, kAudioDevicePropertyDeviceIsRunning) == 0);
+    assert((*d)->RemoveDeviceClient(d, a, &removed) == kAudioHardwareIllegalOperationError);
+    reconcile(1); rejectNoticeObject = kAudioObjectUnknown; reconcile(0);
+    start(d, a, 93); assert(seed(d, a, 93) != secondSeed); stop(d, a, 93);
+    const auto after = noticeCalls.size(); reconcile(0); assert(noticeCalls.size() == after);
+}
 static AudioServerPlugInDriverRef open(void* (*create)(CFAllocatorRef, CFUUIDRef)) {
     assert(!create(nullptr, kAudioServerPlugInDriverInterfaceUUID));
     auto d = static_cast<AudioServerPlugInDriverRef>(create(nullptr, kAudioServerPlugInTypeUUID));
@@ -170,8 +234,13 @@ int main(int argc, char** argv) {
     assert(translate(d, "org.mixyard.input.missing") == kAudioObjectUnknown);
     assert(list(d, kAudioObjectPlugInObject, kAudioObjectPropertyOwnedObjects) == devices);
     AudioObjectID out = 0; auto info = client(1);
-    assert((*d)->CreateDevice(d, nullptr, &info, &out) == kAudioHardwareUnsupportedOperationError);
+    CFDictionaryRef description = CFDictionaryCreate(nullptr, nullptr, nullptr, 0,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    assert(description);
+    assert((*d)->CreateDevice(d, description, &info, &out) == kAudioHardwareUnsupportedOperationError);
+    assert(out == kAudioObjectUnknown); CFRelease(description);
     assert((*d)->DestroyDevice(d, a) == kAudioHardwareUnsupportedOperationError);
+    lifecycleNotificationErrors(d, a, as);
     start(d, a, 1); start(d, a, 2);
     const auto aseed = seed(d, a, 1); assert(seed(d, a, 2) == aseed);
     zeros(read(d, a, as, 1, 0, 8)); zeros(read(d, a, as, 2, 0, 8));
@@ -208,12 +277,20 @@ int main(int argc, char** argv) {
     const unsigned before = notifications;
     const char* buuid = "b670ff62-f0de-490a-a0f6-9c748bc75343";
     AudioObjectID b = 0;
-    assert(MixyardInputTest_PublishEndpoint(buuid, "Independent B", &b) == MY_INPUT_OK);
-    assert(b != a && notifications > before);
+    rejectNoticeObject = kAudioObjectPlugInObject; rejectNoticeSelector = kAudioPlugInPropertyDeviceList;
+    assert(MixyardInputTest_PublishEndpoint(buuid, "Independent B", &b) == MY_INPUT_COMMITTED_NOTIFY_PENDING);
+    assert(b != kAudioObjectUnknown && b != a && notifications == before + 2);
     assert(MixyardInputTest_PublishEndpoint(buuid, "Duplicate", &out) != MY_INPUT_OK);
+    assert(out == kAudioObjectUnknown);
     assert(MixyardInputTest_PublishEndpoint("fa1bf82a-087b-428b-b274-c42b49d147fa", "C", &out) == MY_INPUT_CAPACITY);
-    assert(list(d, kAudioObjectPlugInObject, kAudioPlugInPropertyDeviceList).size() == 2);
+    assert(out == kAudioObjectUnknown);
+    devices = {a, b};
+    assert(list(d, kAudioObjectPlugInObject, kAudioPlugInPropertyDeviceList) == devices);
+    assert(list(d, kAudioObjectPlugInObject, kAudioObjectPropertyOwnedObjects) == devices);
     assert(translate(d, "org.mixyard.input.b670ff62-f0de-490a-a0f6-9c748bc75343") == b);
+    named(d, b, CFSTR("Independent B")); named(d, b + 1, CFSTR("Independent B"));
+    reconcile(1); rejectNoticeObject = kAudioObjectUnknown; reconcile(0);
+    assert(list(d, kAudioObjectPlugInObject, kAudioPlugInPropertyDeviceList) == devices);
     const auto bs = inspect(d, b); start(d, b, 3);
     const auto bseed = seed(d, b, 3);
     zeros(read(d, b, bs, 3, 0, 8));
@@ -231,10 +308,40 @@ int main(int argc, char** argv) {
     assert(MixyardInputTest_Packet(b, 1, bseed, 10, 24, 16, shared.data(), 128) == MY_INPUT_OK);
     assert(read(d, a, as, 1, 40, 16) == shared);
     assert(read(d, b, bs, 3, 24, 16) == shared);
+    // Exercise each half of the dual device/stream post-change notification.
+    rejectNoticeSelector = kAudioObjectPropertyName;
+    for (auto failedObject : {b, bs}) {
+        rejectNoticeObject = failedObject;
+        const auto count = noticeCalls.size();
+        const char* newName = failedObject == b ? "Device pending" : "Stream pending";
+        CFStringRef expectedName = failedObject == b ? CFSTR("Device pending") : CFSTR("Stream pending");
+        assert(MixyardInputTest_Rename(b, newName) == MY_INPUT_COMMITTED_NOTIFY_PENDING);
+        assert(noticeCalls.size() == count + 2);
+        assert(noticeCalls[count].object == b && noticeCalls[count + 1].object == bs);
+        assert((noticeCalls[count].status != noErr) == (failedObject == b));
+        assert((noticeCalls[count + 1].status != noErr) == (failedObject == bs));
+        named(d, b, expectedName); named(d, bs, expectedName);
+        reconcile(1); assert(noticeCalls.size() == count + 3 && noticeCalls.back().object == failedObject);
+        rejectNoticeObject = kAudioObjectUnknown; reconcile(0);
+        assert(noticeCalls.size() == count + 4 && noticeCalls.back().object == failedObject);
+    }
+    rejectAllNotices = true;
+    assert(MixyardInputTest_Rename(b, "Both pending") == MY_INPUT_COMMITTED_NOTIFY_PENDING);
+    named(d, b, CFSTR("Both pending")); named(d, bs, CFSTR("Both pending"));
+    reconcile(2); rejectAllNotices = false; reconcile(0);
+    const auto afterRename = noticeCalls.size(); reconcile(0); assert(noticeCalls.size() == afterRename);
+    // A host callback may synchronously change the same names while we notify.
+    // Its newer notices survive the current pass, which cannot recurse or spin.
+    reentrantRenameDevice = b;
+    assert(MixyardInputTest_Rename(b, "Before reentry") == MY_INPUT_COMMITTED_NOTIFY_PENDING);
+    assert(noticeCalls.size() == afterRename + 2);
+    named(d, b, CFSTR("Reentrant B")); named(d, bs, CFSTR("Reentrant B"));
+    reconcile(0); assert(noticeCalls.size() == afterRename + 4);
     assert(MixyardInputTest_Rename(b, "Renamed B") == MY_INPUT_OK);
     assert(translate(d, "org.mixyard.input.b670ff62-f0de-490a-a0f6-9c748bc75343") == b);
-    auto name = property<CFStringRef>(d, b, kAudioObjectPropertyName);
-    assert(CFEqual(name, CFSTR("Renamed B"))); CFRelease(name);
+    assert(list(d, kAudioObjectPlugInObject, kAudioPlugInPropertyDeviceList) == devices);
+    assert(list(d, kAudioObjectPlugInObject, kAudioObjectPropertyOwnedObjects) == devices);
+    assert(MixyardInputTest_PublishEndpoint("fa1bf82a-087b-428b-b274-c42b49d147fa", "C", &out) == MY_INPUT_CAPACITY);
 
     uint64_t action = 0;
     assert(MixyardInputTest_Retire(b, &action) == MY_INPUT_OK);
@@ -251,9 +358,15 @@ int main(int argc, char** argv) {
     rejectRequest = false;
     zeros(read(d, b, bs, 3, 64, 8));
     assert(MixyardInputTest_Retire(b, &action) == MY_INPUT_OK);
+    rejectAllNotices = true;
     assert((*d)->PerformDeviceConfigurationChange(d, b, action, nullptr) == noErr);
+    reconcile(2); // retirement committed; alive and registry notifications both failed
+    assert((*d)->PerformDeviceConfigurationChange(d, b, action, nullptr) == kAudioHardwareIllegalOperationError);
     assert(list(d, kAudioObjectPlugInObject, kAudioPlugInPropertyDeviceList) == std::vector<AudioObjectID>{a});
+    assert(list(d, kAudioObjectPlugInObject, kAudioObjectPropertyOwnedObjects) == std::vector<AudioObjectID>{a});
     assert(translate(d, "org.mixyard.input.b670ff62-f0de-490a-a0f6-9c748bc75343") == kAudioObjectUnknown);
+    rejectAllNotices = false; reconcile(0);
+    assert(MixyardInputTest_PublishEndpoint("fa1bf82a-087b-428b-b274-c42b49d147fa", "C", &out) == MY_INPUT_CAPACITY);
     zeros(read(d, b, bs, 3, 72, 8)); // static tombstone; late callback cannot replay
     stop(d, b, 3);
     // Silence tail exceeds retained ring without exceeding one callback's bounded size.
@@ -281,5 +394,6 @@ int main(int argc, char** argv) {
         "\"checks\":[\"signed_release_ABI_silence\",\"COM_lifetime\",\"property_errors_stereo\","
         "\"A_B_first_tail_exact_samples\",\"half_gain_fanout_reader_isolation\","
         "\"stale_length_nonfinite_rejection\",\"effective_revision\","
-        "\"rename_retire_abort_remove_reopen_epoch\"]}\n", notifications);
+        "\"rename_retire_abort_remove_reopen_epoch\",\"committed_lifecycle_notification_errors\","
+        "\"publication_rename_partial_notification_reconciliation\"]}\n", notifications);
 }
