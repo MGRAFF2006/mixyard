@@ -126,6 +126,7 @@ jobs:
           import os, subprocess, sys
           binary = 'target/debug/mixyard' + ('.exe' if os.name == 'nt' else '')
           subprocess.run([sys.executable, '-B', 'verification/policy_check.py', binary], check=True)
+          subprocess.run([sys.executable, '-B', 'verification/policy_selfcheck.py', binary], check=True)
 
   linux:
     name: Linux adapter CLI check (no PipeWire audio)
