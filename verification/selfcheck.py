@@ -6,6 +6,7 @@ import math
 import random
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tempfile
 import wave
@@ -112,6 +113,59 @@ def main():
         q.write_pcm(path, clean)
         require(q.compare(reference, path)["status"] == "pass", "transparent PCM")
         checks += 1
+        # Independent RIFF bytes: data length excludes its pad byte. Include an
+        # odd ancillary chunk so parsers must honor padding when locating data.
+        def riff_pcm(width, channels, data_size, rate=q.RATE):
+            fmt = struct.pack("<HHIIHH", 1, channels, rate, rate * width * channels,
+                              width * channels, width * 8)
+            body = (b"WAVEJUNK" + struct.pack("<I", 1) + b"x\0"
+                    + b"fmt " + struct.pack("<I", len(fmt)) + fmt
+                    + b"data" + struct.pack("<I", data_size) + bytes(data_size)
+                    + bytes(data_size % 2))
+            return b"RIFF" + struct.pack("<I", len(body)) + body
+
+        def cli_blocked(arguments, label, reason):
+            result = subprocess.run([sys.executable, "-B", str(Path(q.__file__)), *arguments],
+                                    capture_output=True, text=True, timeout=5)
+            report = json.loads(result.stdout)
+            require(result.returncode == 2 and report["status"] == "blocked"
+                    and report["native_routing_verified"] is False and reason in report["reason"], label)
+
+        valid = root / "padded.wav"
+        valid.write_bytes(riff_pcm(3, 1, (q.RATE // 2 + 1) * 3))
+        require(q.analyze(valid, "silence", "call", duration=.5)["status"] == "pass", "valid RIFF padding")
+        require(q.compare(valid, valid)["status"] == "pass", "valid padded comparison")
+        checks += 2
+        # Keep a complete selected interval but remove the later declared PCM.
+        # Hand-built headers, not the writer/parser under test, define the sizes.
+        for width, channels in ((2, 1), (2, 2), (3, 1), (4, 2)):
+            complete = root / "complete.wav"
+            truncated = root / "truncated-tail.wav"
+            payload = riff_pcm(width, channels, q.RATE * width * channels)
+            complete.write_bytes(payload)
+            truncated.write_bytes(payload[:-q.RATE // 2 * width * channels])
+            cli_blocked(["analyze", str(truncated), "--scenario", "silence", "--duration", ".5",
+                         "--bus", "call" if channels == 1 else "record"],
+                        "truncated tail outside analysis interval blocked", "truncated WAV data")
+            for left, right in ((truncated, complete), (complete, truncated), (truncated, truncated)):
+                cli_blocked(["compare", str(left), str(right), "--frames", "24000"],
+                            "truncated tail outside comparison interval blocked", "truncated WAV data")
+            checks += 4
+        for width, channels, extra in ((2, 1, 1), (2, 2, 2), (3, 1, 1), (4, 2, 4)):
+            malformed = root / "partial.wav"
+            malformed.write_bytes(riff_pcm(width, channels, q.RATE // 2 * width * channels + extra))
+            cli_blocked(["analyze", str(malformed), "--scenario", "silence",
+                         "--bus", "call" if channels == 1 else "record"], "partial frame analyze blocked", "partial declared PCM frame")
+            for left, right in ((malformed, reference), (reference, malformed), (malformed, malformed)):
+                cli_blocked(["compare", str(left), str(right)], "partial frame compare blocked", "partial declared PCM frame")
+            checks += 4
+        zero_rate = root / "zero-rate.wav"
+        zero_rate.write_bytes(riff_pcm(2, 1, 48000, rate=0))
+        cli_blocked(["analyze", str(zero_rate), "--scenario", "silence", "--bus", "call"],
+                    "zero rate analyze blocked", "sample rate must be positive")
+        for left, right in ((zero_rate, reference), (reference, zero_rate), (zero_rate, zero_rate)):
+            cli_blocked(["compare", str(left), str(right)], "zero rate compare blocked without hanging", "sample rate must be positive")
+        checks += 4
         data = [clean[0].copy()]
         data[0][100] += .0002  # below routing tolerances, above PCM16 quantization
         q.write_pcm(path, data)
