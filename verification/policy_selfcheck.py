@@ -30,6 +30,11 @@ def main():
         "wrong gain": 'for output in plan["outputs"]: output["gain"] = 0',
         "wrong mute": 'for output in plan["outputs"]: output["mute"] = not output["mute"]',
         "empty outputs": 'plan["outputs"] = []',
+        "wrong resolved output": 'for output in plan["outputs"]: output["observedIds"] = ["simulated:output:4"]',
+        "empty resolved outputs": 'for output in plan["outputs"]: output["observedIds"] = []',
+        "duplicate resolved outputs": 'for output in plan["outputs"]: output["observedIds"] *= 2',
+        "wrong effective gain": 'for output in plan["outputs"]: output["effectiveGain"] = 0',
+        "effective gain ignores mute": 'for output in plan["outputs"]: output["effectiveGain"] = output["gain"]',
         "empty players": 'plan["players"] = []',
         "private player": 'plan["players"][0].update(sessionId="simulated:session:private-player", applicationId="example:private-player")',
         "wrong action": 'plan["players"][0]["plannedAction"] = "play"',
@@ -57,6 +62,8 @@ def main():
                                               "duplicate-stable-id-rejected", "superseded-v1-not-used-as-v2-contract"}}
             if command == "plan-media":
                 expected = {"public-v2-plan-media-argument-order-no-dispatch"}
+            elif label == "effective gain ignores mute":
+                expected = {"output-gain-mute-preserves-siblings"}
             if report["status"] != "fail" or failures != expected:
                 raise AssertionError((label, report))
     print(json.dumps({"status": "pass", "checks": len(mutations) + 1,

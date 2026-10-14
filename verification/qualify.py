@@ -153,8 +153,10 @@ def decode(raw, width, channel_count):
 
 @contextmanager
 def open_pcm(path):
-    """Check declared data bytes before wave.getnframes() floors partial frames."""
+    """Require complete declared PCM even when analyzing only a selected interval."""
     with open(path, "rb") as source:
+        physical_end = source.seek(0, 2)
+        source.seek(0)
         riff, size, kind = struct.unpack("<4sI4s", source.read(12))
         if riff != b"RIFF" or kind != b"WAVE":
             raise ValueError("requires RIFF WAVE")
@@ -163,6 +165,8 @@ def open_pcm(path):
             chunk, size = struct.unpack("<4sI", source.read(8))
             if source.tell() + size > end:
                 raise ValueError("WAV chunk exceeds declared RIFF size")
+            if source.tell() + size > physical_end:
+                raise ValueError("truncated WAV data")
             if chunk == b"data":
                 break
             # RIFF padding belongs to the chunk container, never to PCM frames.

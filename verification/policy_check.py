@@ -28,11 +28,24 @@ def check(binary, examples, runner=()):
         return {"status": "blocked", "reason": "No independent media expectation for this request fixture.",
                 "native_routing_verified": False}
     expected_players = [("simulated:session:spotify", "example:spotify", "pause", "planned", "not-dispatched")]
+    # Explicit public fixture resolutions; never derive these from CLI replies.
+    expected_resolved_outputs = {
+        "call-input": {"observedIds": ["simulated:output:0"], "effectiveGain": 1.0},
+        "record-input": {"observedIds": ["simulated:output:1"], "effectiveGain": 1.0},
+        "headphones": {"observedIds": ["simulated:output:2"], "effectiveGain": 1.0},
+        "speaker-a": {"observedIds": ["simulated:output:3"], "effectiveGain": 1.0},
+        "speaker-b": {"observedIds": ["simulated:output:4"], "effectiveGain": 1.0},
+        "speaker-c": {"observedIds": ["simulated:output:5"], "effectiveGain": 0.5},
+        "party": {"observedIds": ["simulated:output:6"], "effectiveGain": 1.0},
+    }
+    if {o["id"] for o in config["outputs"]} != set(expected_resolved_outputs):
+        return {"status": "blocked", "reason": "No independent output resolutions for this config fixture.",
+                "native_routing_verified": False}
     results = []
     with tempfile.TemporaryDirectory(prefix="mixyard-policy-v2-") as directory:
         root = Path(directory)
 
-        def run(label, desired, command="plan", reject=False):
+        def run(label, desired, command="plan", reject=False, resolved_outputs=expected_resolved_outputs):
             desired_path, observed_path = root / "config.json", root / "inventory.json"
             desired_path.write_text(json.dumps(desired))
             observed_path.write_text(json.dumps(inventory))
@@ -64,8 +77,8 @@ def check(binary, examples, runner=()):
                             and sorted((p["sessionId"], p["applicationId"], p["plannedAction"],
                                         p["decision"], p["dispatchOutcome"]) for p in plan["players"]) == expected_players
                     else:
-                        fields = ("id", "mix", "target", "gain", "mute", "allowMicMonitor")
-                        expected_outputs = [{**o, "mute": o.get("mute", False),
+                        fields = ("id", "mix", "target", "gain", "mute", "allowMicMonitor", "observedIds", "effectiveGain")
+                        expected_outputs = [{**o, **resolved_outputs[o["id"]], "mute": o.get("mute", False),
                                              "allowMicMonitor": o.get("allowMicMonitor", False)}
                                             for o in desired["outputs"]]
                         passed = passed and len(plan["mixes"]) == len(desired["mixes"]) \
@@ -83,7 +96,9 @@ def check(binary, examples, runner=()):
         run("all-mix-and-output-ids-accounted-for", config)
         output_levels = copy.deepcopy(config)
         output_levels["outputs"][0].update(gain=.25, mute=True)
-        run("output-gain-mute-preserves-siblings", output_levels)
+        muted_resolution = copy.deepcopy(expected_resolved_outputs)
+        muted_resolution[output_levels["outputs"][0]["id"]]["effectiveGain"] = 0.0
+        run("output-gain-mute-preserves-siblings", output_levels, resolved_outputs=muted_resolution)
         expanded = copy.deepcopy(config)
         ids = {m["id"] for m in expanded["mixes"]}
         serial = 0

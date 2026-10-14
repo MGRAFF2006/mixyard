@@ -136,6 +136,21 @@ def main():
         require(q.analyze(valid, "silence", "call", duration=.5)["status"] == "pass", "valid RIFF padding")
         require(q.compare(valid, valid)["status"] == "pass", "valid padded comparison")
         checks += 2
+        # Keep a complete selected interval but remove the later declared PCM.
+        # Hand-built headers, not the writer/parser under test, define the sizes.
+        for width, channels in ((2, 1), (2, 2), (3, 1), (4, 2)):
+            complete = root / "complete.wav"
+            truncated = root / "truncated-tail.wav"
+            payload = riff_pcm(width, channels, q.RATE * width * channels)
+            complete.write_bytes(payload)
+            truncated.write_bytes(payload[:-q.RATE // 2 * width * channels])
+            cli_blocked(["analyze", str(truncated), "--scenario", "silence", "--duration", ".5",
+                         "--bus", "call" if channels == 1 else "record"],
+                        "truncated tail outside analysis interval blocked", "truncated WAV data")
+            for left, right in ((truncated, complete), (complete, truncated), (truncated, truncated)):
+                cli_blocked(["compare", str(left), str(right), "--frames", "24000"],
+                            "truncated tail outside comparison interval blocked", "truncated WAV data")
+            checks += 4
         for width, channels, extra in ((2, 1, 1), (2, 2, 2), (3, 1, 1), (4, 2, 4)):
             malformed = root / "partial.wav"
             malformed.write_bytes(riff_pcm(width, channels, q.RATE // 2 * width * channels + extra))
