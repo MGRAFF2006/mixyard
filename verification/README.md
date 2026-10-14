@@ -64,8 +64,15 @@ these scenarios are not audio evidence. `policy_check.py` runs a focused schema-
 black-box subset against an **already built** CLI using public config/inventory
 fixtures and temporary mutations, with independent expected invariants. It checks
 the public `plan-media CONFIG INVENTORY REQUEST` invocation without dispatch,
-all requested mix/output IDs, four-plus arbitrary mixes, rename/duplicate labels,
-create/delete, duplicate-ID rejection and superseded-version rejection. It never
+all requested mix/output IDs and output mix/target/gain/mute/consent fields,
+four-plus arbitrary mixes, rename/duplicate labels, create/delete, independent
+output gain/mute, duplicate-ID rejection and superseded-version rejection. The
+public device-a pause fixture must select exactly the Spotify session and planned
+pause without dispatch; other request fixtures block pending an independent oracle.
+`policy_selfcheck.py` accepts the same CLI/examples arguments and corrupts real
+CLI replies through temporary wrappers to prove wrong routes, empty outputs,
+empty/duplicate/private players and wrong actions fail. CI runs both against the
+built core when available; these are model/oracle checks only. It never
 builds/imports implementation code and never falls back to the old fixed-three
 schema. Exit 0 means those model checks pass, 1 means contract failures, 2 means
 blocked executable/environment/absent schema-2 fixtures. Media resolver and native

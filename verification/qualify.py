@@ -2,6 +2,7 @@
 """Offline tone fixtures and an independent captured-PCM oracle. No audio APIs."""
 
 import argparse
+from contextlib import contextmanager
 from functools import lru_cache
 import json
 import math
@@ -150,6 +151,37 @@ def decode(raw, width, channel_count):
     return [[v / scale for v in values[c::channel_count]] for c in range(channel_count)]
 
 
+@contextmanager
+def open_pcm(path):
+    """Require complete declared PCM even when analyzing only a selected interval."""
+    with open(path, "rb") as source:
+        physical_end = source.seek(0, 2)
+        source.seek(0)
+        riff, size, kind = struct.unpack("<4sI4s", source.read(12))
+        if riff != b"RIFF" or kind != b"WAVE":
+            raise ValueError("requires RIFF WAVE")
+        end = 8 + size
+        while source.tell() + 8 <= end:
+            chunk, size = struct.unpack("<4sI", source.read(8))
+            if source.tell() + size > end:
+                raise ValueError("WAV chunk exceeds declared RIFF size")
+            if source.tell() + size > physical_end:
+                raise ValueError("truncated WAV data")
+            if chunk == b"data":
+                break
+            # RIFF padding belongs to the chunk container, never to PCM frames.
+            source.seek(size + (size % 2), 1)
+        else:
+            raise ValueError("WAV data chunk missing")
+        source.seek(0)
+        with wave.open(source, "rb") as pcm:
+            if pcm.getframerate() <= 0:
+                raise ValueError("sample rate must be positive")
+            if size % (pcm.getsampwidth() * pcm.getnchannels()):
+                raise ValueError("partial declared PCM frame")
+            yield pcm
+
+
 def analyze(path, scenario=None, bus=None, offset=0.0, duration=None, limits=None, targets=None):
     limits = DEFAULT_LIMITS if limits is None else limits
     if not math.isfinite(offset) or offset < 0:
@@ -168,7 +200,7 @@ def analyze(path, scenario=None, bus=None, offset=0.0, duration=None, limits=Non
     targets = expected(scenario, bus) if targets is None else targets
     ranges = [{str(f): [math.inf, 0.0] for f in FREQUENCIES} for _ in targets]
     max_peak = max_residual = 0.0
-    with wave.open(str(path), "rb") as capture:
+    with open_pcm(path) as capture:
         rate, width, channels = capture.getframerate(), capture.getsampwidth(), capture.getnchannels()
         if capture.getcomptype() != "NONE" or width not in (2, 3, 4):
             raise ValueError("requires uncompressed signed integer PCM WAV, 16/24/32-bit")
@@ -234,7 +266,7 @@ def compare(reference, capture, reference_offset=0, capture_offset=0, frames=Non
     """Aligned unity/bypass PCM check; no automatic gain, shift or resampling."""
     if min(reference_offset, capture_offset) < 0 or (frames is not None and frames <= 0):
         raise ValueError("offsets must be nonnegative and frames positive")
-    with wave.open(str(reference), "rb") as ref, wave.open(str(capture), "rb") as got:
+    with open_pcm(reference) as ref, open_pcm(capture) as got:
         if any(w.getcomptype() != "NONE" or w.getsampwidth() not in (2, 3, 4)
                or w.getnchannels() not in (1, 2) for w in (ref, got)):
             raise ValueError("compare requires mono/stereo integer PCM16/24/32 WAV")
@@ -255,7 +287,7 @@ def compare(reference, capture, reference_offset=0, capture_offset=0, frames=Non
         violations = 0
         remaining = frames
         while remaining:
-            count = min(remaining, ref.getframerate())
+            count = min(remaining, ref.getframerate(), 192000)
             arrays = []
             for source in (ref, got):
                 raw = source.readframes(count)
