@@ -8,7 +8,7 @@
 #error "Use an Apple macOS SDK 14.2 or newer for process taps."
 #endif
 
-#include "capture_buffer.hpp"
+#include "capture_writer.hpp"
 #include <algorithm>
 #include <chrono>
 #include <csignal>
@@ -281,10 +281,7 @@ static void capture(int argc, const char* argv[], NSMutableDictionary* result) {
         }
         OwnedCapture owned;
         auto state = std::make_unique<CaptureState>();
-        std::unique_ptr<mixyard::WavWriter> wav;
-        std::atomic<uint32_t> done{0}, writerFailed{0}, writtenFrames{0};
-        std::string writerError;
-        std::thread writer;
+        std::unique_ptr<mixyard::CaptureWriter> writer;
         std::exception_ptr failure;
         uint32_t rate = 0;
         try {
@@ -305,23 +302,7 @@ static void capture(int argc, const char* argv[], NSMutableDictionary* result) {
                                                        @(kAudioSubTapDriftCompensationKey): @NO}]
             };
             check(AudioHardwareCreateAggregateDevice((__bridge CFDictionaryRef)aggregate, &owned.aggregate), "create private tap-only aggregate");
-            wav = std::make_unique<mixyard::WavWriter>(path, rate);
-            writer = std::thread([&] {
-                try {
-                    for (;;) {
-                        if (const auto* chunk = state->queue.front()) {
-                            wav->write(*chunk);
-                            writtenFrames.fetch_add(chunk->frames, std::memory_order_relaxed);
-                            state->queue.pop();
-                        } else if (done.load(std::memory_order_acquire)) {
-                            // Recheck after observing done: the final producer publication precedes it.
-                            if (!state->queue.front()) break;
-                        } else std::this_thread::sleep_for(2ms);
-                    }
-                } catch (const std::exception& e) {
-                    writerError = e.what(); writerFailed.store(1, std::memory_order_release);
-                }
-            });
+            writer = std::make_unique<mixyard::CaptureWriter>(state->queue, path, rate);
             check(AudioDeviceCreateIOProcID(owned.aggregate, receive, state.get(), &owned.io), "create capture IOProc");
             std::signal(SIGINT, onSignal); std::signal(SIGTERM, onSignal);
             check(AudioDeviceStart(owned.aggregate, owned.io), "start capture (system audio-recording permission required)");
@@ -334,9 +315,9 @@ static void capture(int argc, const char* argv[], NSMutableDictionary* result) {
                 if (state->queue.dropped.load(std::memory_order_relaxed)) throw ProbeError("capture-overflow", "Bounded capture queue overflowed; WAV contains a gap and is not qualification evidence");
                 if (state->queue.invalid.load(std::memory_order_relaxed)) throw ProbeError("capture-buffer-error", "Unexpected/oversize native buffer; WAV is not qualification evidence");
                 if (state->clockFault.load(std::memory_order_relaxed)) throw ProbeError("capture-clock-gap", "Missing/discontinuous tap sample timestamps; WAV is not qualification evidence");
-                if (writerFailed.load(std::memory_order_acquire)) throw ProbeError("disk-write-failed", writerError);
+                if (writer->failed.load(std::memory_order_acquire)) throw ProbeError("disk-write-failed", writer->error);
                 const auto now = std::chrono::steady_clock::now();
-                const uint32_t progress = writtenFrames.load(std::memory_order_relaxed);
+                const uint32_t progress = writer->writtenFrames.load(std::memory_order_relaxed);
                 if (progress != previousFrames) { previousFrames = progress; lastProgress = now; }
                 if (progress && now - lastProgress > 2s)
                     throw ProbeError("capture-stalled", "Native capture/writer stopped advancing for two seconds; partial WAV is unqualified");
@@ -357,7 +338,7 @@ static void capture(int argc, const char* argv[], NSMutableDictionary* result) {
                         throw ProbeError("capture-format-changed", "Tap format changed; stopped instead of mislabeling PCM");
                     nextCheck = now + 1s;
                 }
-                if (now - begin > 5s && writtenFrames.load(std::memory_order_relaxed) == 0)
+                if (now - begin > 5s && writer->writtenFrames.load(std::memory_order_relaxed) == 0)
                     throw ProbeError("capture-no-data", "No native PCM arrived; check permission, selected-process playback and aggregate support");
                 std::this_thread::sleep_for(10ms);
             }
@@ -367,23 +348,25 @@ static void capture(int argc, const char* argv[], NSMutableDictionary* result) {
             diagnostic(result, @"capture-unqualified", @"Owned teardown failed; terminating without freeing possibly live callback storage. Recheck owned resources on the Mac.", @"error");
             emit(result); std::_Exit(1);
         }
-        done.store(1, std::memory_order_release);
-        if (writer.joinable()) writer.join();
-        if (wav) {
-            try { wav->finish(); } catch (...) { if (!failure) failure = std::current_exception(); }
+        if (writer && !writer->stopAndWait(2s)) {
+            diagnostic(result, @"disk-write-timeout", @"WAV writer did not complete draining/finalization within two seconds after owned capture cleanup; partial WAV is unqualified.", @"error");
+            diagnostic(result, @"capture-unqualified", @"Terminating without freeing storage still referenced by the blocked writer.", @"error");
+            emit(result); std::_Exit(1);
+        }
+        if (writer && writer->opened) {
             result[@"capture"] = @{@"path": str(path), @"sampleRate": @(rate), @"channels": @2,
-                @"encoding": @"float32-le", @"frames": @(wav->frames()), @"hasNonzeroSamples": @(wav->hasSignal()),
+                @"encoding": @"float32-le", @"frames": @(writer->frames), @"hasNonzeroSamples": @(writer->hasSignal),
                 @"droppedBuffers": @(state->queue.dropped.load()), @"invalidBuffers": @(state->queue.invalid.load()),
                 @"clockGap": @(state->clockFault.load() != 0), @"interrupted": @(interrupted != 0), @"selectedProcesses": selected};
         }
         if (failure) std::rethrow_exception(failure);
-        if (writerFailed.load()) throw ProbeError("disk-write-failed", writerError);
+        if (writer && writer->failed.load()) throw ProbeError("disk-write-failed", writer->error);
         if (state->queue.dropped.load() || state->queue.invalid.load() || state->clockFault.load())
             throw ProbeError("capture-gap", "Capture failed during shutdown; check buffer/clock diagnostics");
-        if (!wav || !wav->frames()) throw ProbeError("capture-no-data", "No PCM captured; permission and native capture remain unproved");
-        if (!interrupted && wav->frames() + mixyard::maxFrames < uint64_t(seconds) * rate)
+        if (!writer || !writer->frames) throw ProbeError("capture-no-data", "No PCM captured; permission and native capture remain unproved");
+        if (!interrupted && writer->frames + mixyard::maxFrames < uint64_t(seconds) * rate)
             throw ProbeError("capture-short", "Captured fewer frames than requested wall-clock duration (beyond one maximum buffer); investigate native gaps/startup/clock behavior");
-        if (!wav->hasSignal()) throw ProbeError("capture-silent-or-denied", "Only zero PCM captured: source may be silent or permission withheld. This is not proof of permitted capture; retry with an explicit audible test source");
+        if (!writer->hasSignal) throw ProbeError("capture-silent-or-denied", "Only zero PCM captured: source may be silent or permission withheld. This is not proof of permitted capture; retry with an explicit audible test source");
         result[@"capabilities"][@"processCapture"] = @YES;
         if (interrupted) diagnostic(result, @"capture-interrupted", @"Stopped by signal and finalized partial WAV; requested duration was not completed", @"warning");
     } else {

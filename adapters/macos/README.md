@@ -94,6 +94,12 @@ are not repaired or concealed. Permission failures and no-data capture cannot
 pass. A failed disk write can leave an incomplete file; this probe is not a
 recoverable production recorder.
 
+After owned capture cleanup, draining and all WAV file operations (including
+finalization and close after an error) must complete within two seconds. A blocked
+writer reports `disk-write-timeout` and `capture-unqualified`, leaves process capture
+unproved, and exits immediately without destroying storage still used by the worker.
+There is no thread cancellation. A timeout can leave an incomplete WAV.
+
 Only the tap clock is recorded. Drift compensation is disabled for this single
 tap-only aggregate: there is no second physical clock to synchronize. This does
 not prove clock stability or adaptation for future mic/monitor/virtual-device
@@ -254,6 +260,13 @@ synthetic queue/WAV test under AddressSanitizer and UndefinedBehaviorSanitizer:
 overflow/bounds, planar interleave, 10,000 threaded FIFO publications, exact WAV
 header/data bytes and refusal to overwrite. Plist parsing and shell syntax passed.
 Free disk remained 76 GiB. This is **portable synthetic evidence only**.
+
+The writer shutdown regression also checks normal final WAV bytes and creation,
+write, flush and close errors. On Linux, linker-injected blocking PCM writes,
+flush, seek, final header write, close and destructor close run in isolated child
+processes under ASan/UBSan, with a five-second external guard. Each blocked child
+reports unqualified failure and exits at the two-second writer deadline. The
+libc fault injection requires the Linux linker; it is not native Core Audio proof.
 
 `bash adapters/macos/build.sh` exits 2 on Linux with an explicit unavailable error.
 Native macOS compilation, actual audio, denied/revoked permission behavior,
