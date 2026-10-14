@@ -1,7 +1,7 @@
 {
   "identifier": "mixer-shell",
-  "description": "Local mixer window may read shell status, hide itself or quit the UI. Explicit read-only connection to an owned local lifecycle endpoint. No runtime mutation, shell, filesystem, device or remote permissions.",
+  "description": "Local mixer window may read shell status, hide itself or quit the UI. Explicit read-only connection to an owned local lifecycle endpoint. Read and preview the current-user default local profile store only. No runtime mutation, shell, filesystem, device or remote permissions.",
   "local": true,
   "windows": ["main"],
-  "permissions": ["allow-inspect-snapshot", "allow-shell-status", "allow-connect-runtime", "allow-disconnect-runtime", "allow-hide-mixer", "allow-quit-ui"]
+  "permissions": ["allow-inspect-snapshot", "allow-read-profiles", "allow-shell-status", "allow-connect-runtime", "allow-disconnect-runtime", "allow-hide-mixer", "allow-quit-ui"]
 }

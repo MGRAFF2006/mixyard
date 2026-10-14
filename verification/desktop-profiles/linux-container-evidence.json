@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "executed_at_utc": "2026-10-14T21:55:38.914522+00:00",
+  "executed_source_head": {
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "unavailable": "[Errno 2] No such file or directory: 'git'"
+  },
+  "boundary": "Actual release Linux Tauri/WebKit default-store reads and profiles::preview; owned temporary CLI-created local profiles and simulated imported inventory. Injected inventory DOM content; trusted Return activation. No OS file picker, physical audio/live setup, tray, screen reader or Windows/macOS GUI execution.",
+  "binary": {
+    "path": "/cache/profile-evidence/mixyard-desktop",
+    "bytes": 13247336,
+    "sha256": "b694f47cbbda5af6d1decb9f4651fbd6fc642e35b4f88a3b87d2f0fa7287d952"
+  },
+  "cli_binary": {
+    "path": "/cache/profile-evidence/mixyard",
+    "bytes": 2219288,
+    "sha256": "a99a756cbb9cb64381762258e6c99bca6991b64f00dfc8aa5ddbf58f16d8d2be"
+  },
+  "host": "Linux-6.12.111+deb13-cloud-amd64-x86_64-with-glibc2.39",
+  "architecture": "x86_64",
+  "cpu_count": 6,
+  "load": [
+    2.33154296875,
+    1.9833984375,
+    1.46875
+  ],
+  "free_bytes_before": 54692630528,
+  "free_bytes_after": 54692106240,
+  "minimum_reserve_bytes": 10737418240,
+  "steps": [
+    {
+      "case": "missing-default-store-no-creation",
+      "reply": {
+        "audioApplied": false,
+        "command": "list",
+        "confirmedWorkingSetup": null,
+        "draft": null,
+        "freshness": "read-snapshot",
+        "mode": "local-profile-preview",
+        "profiles": [],
+        "provenance": "current-user-local-store",
+        "schemaVersion": 1,
+        "storeRevision": 0,
+        "storeState": "missing",
+        "storedConsentIsFreshNativeConsent": false
+      }
+    },
+    {
+      "case": "empty-present-store-distinct-from-missing"
+    },
+    {
+      "case": "CLI-created-duplicate-names-stable-selection-six-change-kinds-exact-core-equivalence",
+      "storeRevision": 3,
+      "profileId": "profile-2",
+      "unchanged_files": {
+        "profiles.json": "0f169aa98177d43e7e3136237bcdb2eb84d5cdc4d13b6424032c817f6c218e31"
+      }
+    },
+    {
+      "case": "preview-rereads-store-rejects-CLI-change-clears-selection-and-snapshot"
+    },
+    {
+      "case": "selection-change-suppresses-delayed-real-reply-single-admission-buttons"
+    },
+    {
+      "case": "inventory-edit-clears-selection-and-preview"
+    },
+    {
+      "case": "authoritative-policy-failure-clears-old-results"
+    },
+    {
+      "case": "busy-pending-and-corrupt-store-no-empty-fallback-no-repair"
+    },
+    {
+      "case": "640px-layout-apply-and-route-controls-remain-locked"
+    }
+  ],
+  "source_files": {
+    ".github/workflows/desktop-native.yml": "817bcb28dbf56367e49dd63f0a13ab9fa9defd8cc3c7aa36ca53bf32a5c2aa07",
+    ".github/workflows/runtime.yml": "0415feb8ef9d07066f7f47ee4a9307afa805d93d62db28402fb4a1568d86f92c",
+    "Cargo.lock": "74b8b80a678a9711ec547640c84c003fbba69e115a5b3a729dce006d5f98e134",
+    "Cargo.toml": "d9b12a868403d1e1dbe4d06158eb113a224394253fcdedaccb20ece8f6de3dad",
+    "apps/desktop/index.html": "d32606e94a85df23d5ee406f6b5d8f816d27a449a81364891dd1ee1839c8814f",
+    "apps/desktop/package.json": "eb04a5f2758e567e5428e895b3d207ddf6e3c1f7a18b627e580308fed0a23833",
+    "apps/desktop/pnpm-lock.yaml": "90f43562bd61935cbc1a6267c9bf01110d4ab3bbc229bab4729f9bad7a5488d8",
+    "apps/desktop/src/App.vue": "caa91d87ec1de59e44e69168542c3cc1f27db7e7446288fa0379713e890f1d96",
+    "apps/desktop/src/InspectionPanel.vue": "052a4ce16ed6c86bbf782091412c9941a4c671db9a189d8406376e7c5a652882",
+    "apps/desktop/src/ProfilesPanel.vue": "98a58140b61c41ebfb7d09bff449be4cedfb8b328197c52275f23b48436fc9d0",
+    "apps/desktop/src/SendControl.vue": "156b05db87549b2f3008b424ef6de1cd7198fedfdb4b39396abcee9c7b5c0fdc",
+    "apps/desktop/src/bridge.ts": "b49280ddf362b96c7a20c8afb9348a3d265dc8b8d65cade096b6040bdeadc308",
+    "apps/desktop/src/inspection.test.ts": "4e4989c723c14775f8ec649c24a3ec2af08062c744b5cf43065f095c1dd7db76",
+    "apps/desktop/src/inspection.ts": "e1c518e04f4199f7265c6680d693551ed253954ffb1cd8d1e830db6684643e8c",
+    "apps/desktop/src/main.ts": "0d42fb6bb74a51d647f20a0cd2bcdcc7b89b146f4cdfbf6f1f7b640e7e036119",
+    "apps/desktop/src/model.test.ts": "e0d953465aab50e8e3139a8e634a88b90c2f9c461914e6d1b70454b7045aa871",
+    "apps/desktop/src/model.ts": "57c244dca755dda2f11fbe33f849bba8612972f1b14a64d96de755129ed70036",
+    "apps/desktop/src/profiles.test.ts": "195429000a5f7de4b378728b29a31910d48686bbfaf9084869311a667b15a5f0",
+    "apps/desktop/src/profiles.ts": "6bda4d089a2b355281b872692fc927064cb511b747385fc97fdbd63c4dd70972",
+    "apps/desktop/src/runtime.test.ts": "77a7b7d794b42befbbbaf45bd12745c5906b0a5101222edfaccc2af4a6ff4ae8",
+    "apps/desktop/src/runtime.ts": "9b173c772590e6737c7152083b1ea34600d732b8573efc57b8bb34789e94d4ba",
+    "apps/desktop/src/style.css": "789e32a5d9938c77c63c5dea6633a7992ee36b22b8fc038b93535de05a55b427",
+    "apps/desktop/src-tauri/Cargo.lock": "ccef7a1131622e16aefffc7a5a1f1e4c6304275ad592c65ffd396b19377324eb",
+    "apps/desktop/src-tauri/Cargo.toml": "82b4501f5cbce8ee9905690df941683592f3c7caf4a0440a71421bad68255b2c",
+    "apps/desktop/src-tauri/build.rs": "606960f2ad8feef356a6e15afb813bcc958ca171942695dc0f790495e26e996b",
+    "apps/desktop/src-tauri/capabilities/mixer-shell.json": "319d3a6e438ac372ae6ac2874051b55976aab5ae900fa7cd5c21b4a7a5d1ccc5",
+    "apps/desktop/src-tauri/src/connection.rs": "8a33388d37444156c6cf9c74fd32e6b367a15b348e1ac9953d60cf6febeb451c",
+    "apps/desktop/src-tauri/src/inspection.rs": "91c22ecbe035ba220a010c76dd55d619e5f22ba63b18d0979a2a0cfab9027311",
+    "apps/desktop/src-tauri/src/main.rs": "ed3fce5da8ec0a5f04a46859e8868f05f39593e3669d08e65e1ecc4e4c926095",
+    "apps/desktop/src-tauri/src/profiles.rs": "e08feb51b3752d60d93947281cf54501f5c5e7e91e1d455959ab4957bea5f598",
+    "apps/desktop/src-tauri/src/profiles_tests.rs": "824f646b4db32067fce0e3847c5307410739d0e475ccfe0adc002dcff2aedd01",
+    "apps/desktop/src-tauri/tauri.conf.json": "47f246b9d60c403ffa823dc5bc66518b16762d6017603079f2d22cd71bd4e398",
+    "apps/desktop/tsconfig.json": "3357590b68e5c418abe903616dd3173b02a3ae8b080bee01b20d78c93c66cd5d",
+    "apps/desktop/vite.config.ts": "7ceee5d305e58abfbdcd59d308f8e7f95951163431b140c98871ec9a8698baa8",
+    "src/bin/mixyard-runtime.rs": "85f8e82c9ac7ec4f12290f1ae617a2db5d735e2c66d6b9697ad00b1e8dfea028",
+    "src/diagnostics.rs": "ede695a1c82587a7803ad54d980823575d14fb4d8d6b5418677ba7de8381fa1e",
+    "src/lib.rs": "6fb14240ca666336a39aa34951673b3845b5a08c3fee63c0b465ce137ebf9c64",
+    "src/main.rs": "a1321e7be222bfc036e163262d3dbfe851603eef00d1448289e03aac0d7017de",
+    "src/profiles/tests.rs": "aa7bb53c86cb9792d5fb981375b5363d5e28757b3f733fc992c0b5800a9362d0",
+    "src/profiles.rs": "a5ec4ca10125138a2d7a196d6e6566e7820e60480c1706c474d1a45fc584ae49",
+    "src/runtime/client.rs": "84d5612c8b5aed625869012cfe129ef5e6cfd55e7a990cd0632e6d58f92642a9",
+    "src/runtime/mod.rs": "15a4b5819aaba772eede9d32a8718d1faa309b01b98479278f7b3393ec3b1ec8",
+    "src/runtime/unix.rs": "9b2079852c346e12d5c4e5bf45605ebd5c44bbf70a4f6a4b92de82f1117203c2",
+    "src/runtime/windows.rs": "837b37f97d7936aed3ae0867a8074655ac090709795fc5651b502a1e4fdef379",
+    "src/tests.rs": "4478580656c4e50c80077d2dda50681505e027481712ec6b7ad4bb9d6b6e63aa",
+    "tests/runtime_lifecycle.rs": "9911b6214a3f53cbf0496c4986638fede3041c3b8d55cd08d0d0f84a7d9ea6e7",
+    "tests/runtime_readonly.rs": "04265f59172b9eaee9f91684f014c2249ee285650b5bb59965b162d67b1db8fc",
+    "verification/desktop-native/Dockerfile": "26feaee0f2cc9850c443f61d9ab40dac964891e990f03ec8205c2d73709b966d",
+    "verification/desktop-native/README.md": "5c9feec3f3aa2e6e99c89a31b458a1b0e937d29221619eba88250f556dc13978",
+    "verification/desktop-native/evidence.py": "660891b07eeca71bbe85bed801b78bcb08f5ca9b7a1d3ffa8fbf8a93dc9b2383",
+    "verification/desktop-native/run-linux.sh": "c11fea2d5d23d0f23ff4eeb4d98d6799fc88d7ef5a070fae8752893c030daedb",
+    "verification/desktop-native/webdriver.py": "f27623eca88aca164d38212cc2cefe55e86982de361bd8bed762d16c45f9bdd8"
+  },
+  "profile_verification_sources": {
+    "verification/desktop-profiles/.gitignore": "337613937fda3acd2ba7834aa3e1b1eacfe04c9cafb336dfd6dfb7b6827d8f3e",
+    "verification/desktop-profiles/Cargo.lock": "864f45eea417deeff77d96e0fd74e945e0cd56b36acb8f5ebe5feab995351ee2",
+    "verification/desktop-profiles/Cargo.toml": "5bc5a817f1469d09cb8aff369682a22c0f0f6a27fc60cbba5e19684f9ad8d6f9",
+    "verification/desktop-profiles/README.md": "3972092feab7d31702f828bf68a7cafa7ea315edc7c1b1c64985f8a91407a0cc",
+    "verification/desktop-profiles/run-linux.sh": "e118d121c9a73058f93aa7637fd0cc5333a41c99fa8e481786f9d1b8143bb3a0",
+    "verification/desktop-profiles/webview.py": "e3e64d51ac3f38405c3b710c6e9ab0e489fced52ecdad0b72e27be7d5e100db2"
+  },
+  "raw_artifacts": {
+    "linux-profiles.json": {
+      "path": "/home/humunkulud/.cache/mixyard-desktop-native/profile-evidence/linux-profiles.json",
+      "sha256": "a6debaf2e1f1dbc32c7c3148fd2c636222c50b0eab523589a2b981d3556f9768"
+    },
+    "accepted-native-preview.json": {
+      "path": "/home/humunkulud/.cache/mixyard-desktop-native/profile-evidence/accepted-native-preview.json",
+      "sha256": "af7b362eac6c2c0321239fca40db6e53cfe98ad68aa7adec12dd3097a43009ae"
+    },
+    "authoritative-cli-preview.json": {
+      "path": "/home/humunkulud/.cache/mixyard-desktop-native/profile-evidence/authoritative-cli-preview.json",
+      "sha256": "10e6f0c801aa24e1bc3d8b69484c0f0e729b2a88ceb21430d9433d67b9ca79c8"
+    },
+    "gui.log": {
+      "path": "/home/humunkulud/.cache/mixyard-desktop-native/profile-evidence/gui.log",
+      "sha256": "ca85daabb87703eb032458b720a3527068c697163af3654c7564592306b154af"
+    },
+    "build.log": {
+      "path": "/home/humunkulud/.cache/mixyard-desktop-native/profile-evidence/build.log",
+      "sha256": "4e94d6988201b865d8d206fd09b87d79ebdf9b95dcfa9aa20eae178ab2d2aa81"
+    },
+    "frontend-install.log": {
+      "path": "/home/humunkulud/.cache/mixyard-desktop-native/profile-evidence/frontend-install.log",
+      "sha256": "4b34a689a68f2e5f78d0ced3797ba8ea5e7c93502d924b7b7895cfe31db95d67"
+    }
+  },
+  "prior_failed_attempts": [
+    {
+      "directory": "/home/humunkulud/.cache/mixyard-desktop-native/profile-evidence/failed-plain-cargo-devurl",
+      "status": "failed",
+      "failure": "Traceback (most recent call last):\n  File \"/work/verification/desktop-profiles/webview.py\", line 60, in main\n    wait_for(lambda: driver.script(\"return !!document.querySelector('#local-profiles')\"), 'profile panel')\n  File \"/work/verification/desktop-native/webdriver.py\", line 31, in wait_for\n    raise AssertionError(f'Timed out: {label}')\nAssertionError: Timed out: profile panel\n",
+      "manifest_sha256": "46e55136b6cd8df952bb44e20fe928361fe4e0fe9c468851e9b7655dd7b9e69c",
+      "binary": {
+        "path": "/cache/profile-evidence/mixyard-desktop",
+        "bytes": 13202904,
+        "sha256": "2125901a9491066331055ab7e9dd014e368b1085e873c40d34504d97957c459b"
+      }
+    },
+    {
+      "directory": "/home/humunkulud/.cache/mixyard-desktop-native/profile-evidence/failed-harness-optional-master",
+      "status": "failed",
+      "failure": "Traceback (most recent call last):\n  File \"/work/verification/desktop-profiles/webview.py\", line 107, in main\n    candidate['mixes'][0]['name'] = 'Saved mix \u2665'; candidate['mixes'][0]['master']['gain'] = 0.5\n                                                   ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^\nKeyError: 'master'\n",
+      "manifest_sha256": "26a9c9624c89835368df6e74e5112a5cf222c13889e9cc21ddcbd893b071fe28",
+      "binary": {
+        "path": "/cache/profile-evidence/mixyard-desktop",
+        "bytes": 13247336,
+        "sha256": "b694f47cbbda5af6d1decb9f4651fbd6fc642e35b4f88a3b87d2f0fa7287d952"
+      }
+    }
+  ],
+  "artifact_availability": "Raw evidence and binaries retained in leased local cache, not uploaded. Source hashes identify executed source before the manifest/docs commit.",
+  "blocked": [
+    "physical visible tray/menu and no-tray desktop hosts",
+    "Windows/macOS UI lifecycle, keyboard, accessibility and timing",
+    "screen-reader accessibility on every platform",
+    "audio engine survival across UI exit (no audio backend)",
+    "live meters, audio gaps, device latency and sound quality",
+    "Windows/macOS native profile GUI execution",
+    "real microphone + selected app to independent external consumer PCM"
+  ]
+}

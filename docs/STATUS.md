@@ -41,6 +41,13 @@ The lifecycle connection supplies no routing snapshots. No protocol, runtime,
 profile, core policy, discovery adapter or production-apply behavior changes.
 See the focused [inspection checks and evidence limits](../verification/desktop-inspection/README.md).
 
+The separate **Named local profiles** panel explicitly refreshes the current-user
+default local store, shows stable-ID saved configs and calls `profiles::preview`
+against a fresh current draft plus imported schema-2 inventory. Stale store
+revisions fail closed; no GUI writes, repair, consent or activation. The core
+adds only opt-in bounded reading through its existing path/parser/validation;
+CLI `Store::read` behavior is unchanged. See [profile checks and evidence](../verification/desktop-profiles/README.md).
+
 | Present component | Runnable evidence / compatibility boundary | First complete workflow gate |
 | --- | --- | --- |
 | [Core](../src/main.rs) | Schema-2 config validation and routing/media plans against simulated inventories; no GUI dependencies | No audio execution or native dispatch |
