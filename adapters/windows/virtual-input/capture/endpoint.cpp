@@ -9,16 +9,26 @@
 #include "delivery.hpp"
 #include "buffer.hpp"
 
+namespace {
+constexpr ULONG tag = 'cIxM';
+}
+
 void* __cdecl operator new(size_t bytes, POOL_TYPE, ULONG pool_tag) noexcept {
     return ExAllocatePool2(POOL_FLAG_NON_PAGED, bytes, pool_tag);
 }
 void __cdecl operator delete(void* p, POOL_TYPE, ULONG pool_tag) noexcept {
     if (p) ExFreePoolWithTag(p, pool_tag);
 }
+// Compiler-generated deleting destructors use ordinary delete; all objects use tag.
+void __cdecl operator delete(void* p) noexcept {
+    if (p) ExFreePoolWithTag(p, tag);
+}
+void __cdecl operator delete(void* p, size_t) noexcept {
+    ::operator delete(p);
+}
 
 namespace {
 using namespace mixyard_input;
-constexpr ULONG tag = 'cIxM';
 constexpr ULONG max_buffer_bytes = 4800 * 8; // 100 ms artifact budget, not quality evidence.
 KSPIN_LOCK gate;
 Transport transport;
