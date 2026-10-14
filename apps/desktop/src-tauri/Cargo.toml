@@ -1,0 +1,16 @@
+[package]
+name = "mixyard-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Mixyard desktop UI prototype; no audio runtime"
+
+# This shell is independent of the headless policy/CLI package at the repo root.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = ["tray-icon"] }

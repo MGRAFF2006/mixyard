@@ -1,0 +1,65 @@
+name: Desktop frontend checks (not native audio)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'apps/desktop/**'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - '.github/workflows/desktop.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Typecheck, preview model tests and frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v7
+      - name: Disk prerequisite (at least 10 GiB)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import shutil
+          free = shutil.disk_usage('.').free
+          print(f'Available: {free / 2**30:.1f} GiB')
+          if free < 10 * 2**30:
+              raise SystemExit('BLOCKED: less than 10 GiB free before installation/build')
+          PY
+      - uses: pnpm/action-setup@v6
+        with:
+          version: '11.10.0'
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.1'
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - name: Install locked local desktop dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Strict TypeScript and preview model checks
+        run: pnpm check
+      - name: Production frontend build
+        run: pnpm build
+      - name: Evidence boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'Frontend typecheck, fixture-model tests and static build only.'
+            echo 'No native Tauri compilation, webview/tray execution or live runtime exercised.'
+            echo 'Native interaction p95, accessibility, runtime lifecycle, virtual inputs and audio gaps remain unverified.'
+          } >> "$GITHUB_STEP_SUMMARY"
