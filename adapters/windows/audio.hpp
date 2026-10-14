@@ -16,32 +16,67 @@ constexpr std::size_t queue_slots = 64;
 struct Packet {
     std::array<std::uint8_t, packet_bytes> data{};
     std::uint64_t first_frame = 0;
-    std::uint64_t device_position = 0;
-    std::uint64_t qpc_100ns = 0;
     std::uint32_t frames = 0;
+};
+
+struct PacketFault {
+    std::uint64_t first_frame = 0, device_position = 0, qpc_100ns = 0;
     std::uint32_t flags = 0;
 };
 
 // One capture producer, one disk consumer. No allocation or locks after setup.
-class Queue {
-    std::array<Packet, queue_slots> slots_{};
+template<class T>
+class SpscQueue {
+    std::array<T, queue_slots> slots_{};
     alignas(64) std::atomic<std::uint64_t> write_{0};
     alignas(64) std::atomic<std::uint64_t> read_{0};
 public:
     static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
-    Packet* reserve() noexcept {
+    T* reserve() noexcept {
         const auto w = write_.load(std::memory_order_relaxed);
         if (w - read_.load(std::memory_order_acquire) == queue_slots) return nullptr;
         return &slots_[w % queue_slots];
     }
     void publish() noexcept { write_.fetch_add(1, std::memory_order_release); }
-    const Packet* front() noexcept {
+    const T* front() noexcept {
         const auto r = read_.load(std::memory_order_relaxed);
         if (r == write_.load(std::memory_order_acquire)) return nullptr;
         return &slots_[r % queue_slots];
     }
     void consume() noexcept { read_.fetch_add(1, std::memory_order_release); }
 };
+
+using Queue = SpscQueue<Packet>;
+using FaultQueue = SpscQueue<PacketFault>;
+
+inline bool enqueue_chunk(Queue& queue, std::uint64_t first_frame, const std::uint8_t* data,
+                          std::uint32_t frames, std::uint16_t block_align, bool silent) noexcept {
+    auto packet = queue.reserve();
+    if (!packet) return false;
+    packet->first_frame = first_frame; packet->frames = frames;
+    const auto bytes = frames * block_align;
+    if (silent) std::memset(packet->data.data(), 0, bytes);
+    else std::memcpy(packet->data.data(), data, bytes);
+    queue.publish(); return true;
+}
+
+// Packet boundary evidence is independent of whether any PCM chunk survives.
+inline bool record_fault(FaultQueue& queue, PacketFault fault) noexcept {
+    auto slot = queue.reserve();
+    if (!slot) return false;
+    *slot = fault; queue.publish(); return true;
+}
+
+inline void write_fault(std::ostream& out, const PacketFault& fault) {
+    out << "{\"code\":\"wasapi-packet-flags\",\"firstFrame\":" << fault.first_frame
+        << ",\"flags\":" << fault.flags << ",\"devicePosition\":" << fault.device_position
+        << ",\"qpc100ns\":" << fault.qpc_100ns << ",\"missingFrames\":null}\n";
+}
+
+inline void write_fault_overflow(std::ostream& out, std::uint64_t records) {
+    out << "{\"code\":\"fault-metadata-overflow\",\"records\":" << records
+        << ",\"firstFrame\":null,\"missingFrames\":null}\n";
+}
 
 struct Format {
     std::uint32_t rate;

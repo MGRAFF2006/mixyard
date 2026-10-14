@@ -1,4 +1,5 @@
 #include "audio.hpp"
+#include "output.hpp"
 
 #include <windows.h>
 #include <audioclient.h>
@@ -13,8 +14,6 @@
 #include <winternl.h>
 
 #include <chrono>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -303,27 +302,31 @@ void capture(const Options& opts) {
     ComPtr<IAudioCaptureClient> capture_client;
     checked(client->GetService(IID_PPV_ARGS(&capture_client)), "IAudioCaptureClient");
     auto queue = std::make_unique<Queue>(); // Allocate and touch all slots before capture starts.
-    const std::filesystem::path path(opts.path), gap_path(opts.path + L".gaps.jsonl");
-    if (std::filesystem::exists(path) || std::filesystem::exists(gap_path))
-        throw Failure("output-exists", "Refusing to replace an existing WAV or gap report");
-    std::ofstream output(path, std::ios::binary), gaps(gap_path);
-    if (!output || !gaps) throw Failure("output-unavailable", "Cannot create WAV and gap report; check directory permissions");
+    auto faults = std::make_unique<FaultQueue>();
+    // CREATE_NEW acquires the same handles used for every write; no check/reopen race.
+    ExclusiveFileBuffer output_file(opts.path), gap_file(opts.path + L".gaps.jsonl");
+    std::ostream output(&output_file), gaps(&gap_file);
     Wav wav(output, format);
     std::atomic<bool> done{false}, writer_failed{false};
     static_assert(std::atomic<bool>::is_always_lock_free);
-    std::uint64_t received = 0, dropped = 0, discontinuities = 0, timestamp_errors = 0, silent = 0;
+    std::uint64_t received = 0, dropped = 0, discontinuities = 0, timestamp_errors = 0, silent = 0, fault_metadata_dropped = 0;
     std::string writer_error;
     std::thread writer([&] {
         try {
             for (;;) {
+                while (const PacketFault* fault = faults->front()) {
+                    write_fault(gaps, *fault); faults->consume();
+                    if (!gaps) throw Failure("disk-write-failed", "Gap report write failed");
+                }
                 const Packet* packet = queue->front();
                 if (!packet) {
                     if (done.load(std::memory_order_acquire)) {
                         // Acquire done then re-read queue: do not miss the last published slot.
-                        if (queue->front()) continue;
+                        if (queue->front() || faults->front()) continue;
                         const auto start = wav.frames();
                         const auto tail = pad_gap(wav, received);
                         if (tail) gaps << "{\"code\":\"queue-overflow\",\"firstFrame\":" << start << ",\"frames\":" << tail << "}\n";
+                        if (fault_metadata_dropped) write_fault_overflow(gaps, fault_metadata_dropped);
                         break;
                     }
                     std::this_thread::sleep_for(std::chrono::milliseconds(1)); continue;
@@ -331,18 +334,14 @@ void capture(const Options& opts) {
                 const auto start = wav.frames();
                 const auto gap = pad_gap(wav, packet->first_frame);
                 if (gap) gaps << "{\"code\":\"queue-overflow\",\"firstFrame\":" << start << ",\"frames\":" << gap << "}\n";
-                if (packet->flags & (AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY | AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR))
-                    gaps << "{\"code\":\"wasapi-packet-flags\",\"firstFrame\":" << packet->first_frame
-                         << ",\"flags\":" << packet->flags << ",\"devicePosition\":" << packet->device_position
-                         << ",\"qpc100ns\":" << packet->qpc_100ns << ",\"missingFrames\":null}\n";
                 wav.append(packet->data.data(), packet->frames);
                 queue->consume();
                 if (!gaps) throw Failure("disk-write-failed", "Gap report write failed");
             }
             wav.finish(); gaps.flush();
             if (!gaps) throw Failure("disk-write-failed", "Could not flush gap report");
-            output.close(); gaps.close();
-            if (!output || !gaps) throw Failure("disk-write-failed", "Could not close WAV or gap report");
+            const bool output_closed = output_file.close(), gaps_closed = gap_file.close();
+            if (!output_closed || !gaps_closed) throw Failure("disk-write-failed", "Could not close WAV or gap report");
         } catch (const std::exception& error) {
             writer_error = error.what(); writer_failed.store(true, std::memory_order_release);
         }
@@ -372,19 +371,16 @@ void capture(const Options& opts) {
             }
             discontinuities += (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) != 0;
             timestamp_errors += (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) != 0;
+            if (flags & (AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY | AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)) {
+                if (!record_fault(*faults, {received, position, qpc, flags})) ++fault_metadata_dropped;
+            }
             const auto count = static_cast<UINT32>(std::min<std::uint64_t>(frames, frame_limit - received));
             if (flags & AUDCLNT_BUFFERFLAGS_SILENT) silent += count;
             for (UINT32 offset = 0; offset < count; ) {
                 const UINT32 chunk = static_cast<UINT32>(std::min<std::size_t>(count - offset, packet_frames));
-                if (Packet* packet = queue->reserve()) {
-                    packet->first_frame = received + offset; packet->frames = chunk;
-                    packet->flags = offset ? flags & AUDCLNT_BUFFERFLAGS_SILENT : flags;
-                    packet->device_position = position + offset; packet->qpc_100ns = qpc;
-                    const auto bytes = chunk * format.block_align();
-                    if (flags & AUDCLNT_BUFFERFLAGS_SILENT) std::memset(packet->data.data(), 0, bytes);
-                    else std::memcpy(packet->data.data(), data + offset * format.block_align(), bytes);
-                    queue->publish();
-                } else dropped += chunk;
+                if (!enqueue_chunk(*queue, received + offset,
+                    data ? data + offset * format.block_align() : nullptr, chunk, format.block_align(),
+                    (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0)) dropped += chunk;
                 offset += chunk;
             }
             received += count;
@@ -396,7 +392,7 @@ void capture(const Options& opts) {
     if (SUCCEEDED(capture_hr) && FAILED(stop_hr)) capture_hr = stop_hr;
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
     done.store(true, std::memory_order_release); writer.join();
-    const bool degraded = dropped || discontinuities || timestamp_errors;
+    const bool degraded = dropped || discontinuities || timestamp_errors || fault_metadata_dropped;
     const bool failed = FAILED(capture_hr) || writer_failed.load() || process_lost || !received;
     std::cout << "{\"command\":\"capture\",\"status\":" << json(failed ? "failed" : degraded ? "degraded" : "captured")
         << ",\"nativeAudioQualified\":false,\"sampleRate\":" << format.rate << ",\"channels\":" << format.channels
@@ -404,6 +400,7 @@ void capture(const Options& opts) {
         << ",\"engineConversion\":" << ((stream_flags & AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM) ? "true" : "false")
         << ",\"wavBits\":" << format.bits << ",\"receivedFrames\":" << received << ",\"writtenFrames\":" << wav.frames()
         << ",\"queueDroppedFrames\":" << dropped << ",\"discontinuities\":" << discontinuities
+        << ",\"faultMetadataDroppedRecords\":" << fault_metadata_dropped
         << ",\"timestampErrors\":" << timestamp_errors << ",\"silentFrames\":" << silent
         << ",\"mmcssEnabled\":" << (mmcss ? "true" : "false") << "}\n";
     if (writer_failed.load()) throw Failure("disk-write-failed", writer_error);
@@ -420,6 +417,8 @@ int wmain(int argc, wchar_t** argv) {
         std::cerr << "Usage: mixyard-windows-probe snapshot\n"
                      "       mixyard-windows-probe capture (--mic ENDPOINT_ID | --pid PID) --seconds 1..600 --out FILE.wav\n";
         return 2;
+    } catch (const OutputError& error) {
+        std::cerr << error.code << ": " << error.what() << '\n'; return 1;
     } catch (const Failure& error) {
         std::cerr << error.code << ": " << error.what() << '\n'; return 1;
     } catch (const std::exception& error) {

@@ -64,6 +64,12 @@ Persisted executable/app identity resolution belongs to a later controller.
 Capture refuses its own process. A future mixer must also reject its producer
 processes and output endpoints as sources to prevent recapture/feedback.
 
+Each output is created atomically with `CreateFileW(CREATE_NEW)` and written
+through that same exclusive handle. A competing creation is refused without
+truncating it. If gap-file creation fails after creating the WAV, the newly
+created WAV remains empty; existing files are untouched. The two-file creation
+is not a filesystem transaction.
+
 ## Audio and failure behavior
 
 Microphone capture uses `GetMixFormat`, retaining rate, PCM container/valid bits,
@@ -100,6 +106,15 @@ missing duration is not guessed; gap entries retain flags and device/QPC positio
 (timestamps are invalid when the timestamp-error flag is set). Offset accounting
 counts received frames and is not an independent clock-drift proof. Even a
 startup discontinuity fails the strict no-dropout gate.
+
+Fault metadata uses its own preallocated 64-record SPSC queue, independent of
+PCM enqueue success. Each flagged WASAPI packet retains its original received
+frame offset, flags and device/QPC positions even if its first chunk or all its
+PCM drops. If that metadata queue fills, `fault-metadata-overflow` records the
+number of lost records with null offsets/durations; it does not invent fault
+locations. The result also reports `faultMetadataDroppedRecords` and degrades.
+Fault and PCM gap entries may be interleaved; use their explicit offsets rather
+than assuming JSONL file order is frame order.
 
 Capture emits a JSON result (`captured`, `degraded`, or `failed`) when a stream was
 started or attempted. Preflight errors go to stderr with exit 1 and no capture

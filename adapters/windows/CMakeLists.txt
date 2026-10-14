@@ -9,6 +9,7 @@ target_link_libraries(mixyard-windows-model-check PRIVATE Threads::Threads)
 add_test(NAME windows-buffer-wav-model COMMAND mixyard-windows-model-check)
 
 if(WIN32)
+  target_compile_definitions(mixyard-windows-model-check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
   if(NOT MSVC)
     message(FATAL_ERROR "The native probe requires MSVC and a Windows SDK >= 10.0.20348.0 (WRL/process loopback).")
   endif()
