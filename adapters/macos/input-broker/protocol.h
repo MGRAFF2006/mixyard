@@ -78,6 +78,43 @@ inline NSDictionary *errorDetails(NSError *error) {
 }
 }
 
+// Shared connection-local readiness contract. Callers serialize every access on
+// their non-RT session lock; close is terminal even if a probe replies later.
+namespace mixyard {
+struct Readiness {
+    bool closed = false, verified = false, challengeSent = false, ready = false;
+    NSString *challenge = nil;
+    void (^pending)(NSDictionary *) = nil;
+    NSDictionary *challengeReply() {
+        challengeSent = true;
+        return @{@"status": @"challenge", @"challenge": challenge};
+    }
+    void authenticate(void (^reply)(NSDictionary *)) {
+        if (closed) { reply(@{@"status": @"closed"}); return; }
+        if (challengeSent || pending) { reply(@{@"status": @"pending"}); return; }
+        if (verified) reply(challengeReply());
+        else pending = [reply copy];
+    }
+    bool probeCompleted() {
+        if (closed) return false;
+        verified = true; challenge = NSUUID.UUID.UUIDString;
+        if (pending) { pending(challengeReply()); pending = nil; }
+        return true;
+    }
+    void close() {
+        closed = true; ready = false; challenge = nil;
+        if (pending) { pending(@{@"status": @"closed"}); pending = nil; }
+    }
+    bool confirm(NSString *token) {
+        if (closed || ready || !verified || !challengeSent ||
+            ![token isKindOfClass:NSString.class] || ![challenge isEqual:token]) {
+            close(); return false;
+        }
+        challenge = nil; ready = true; return true;
+    }
+};
+}
+
 // A reply gives the enforcing broker an error callback for its native peer check.
 // No PCM, endpoint or control authority is granted by this diagnostic method.
 @protocol MYAuthorityProbe
@@ -106,7 +143,7 @@ inline NSDictionary *errorDetails(NSError *error) {
 - (void)snapshot:(void (^)(NSDictionary *))reply;
 @end
 
-@protocol MYStranger <MYAuthorityProbe>
+@protocol MYStranger <MYReadiness>
 - (void)attempt:(NSXPCListenerEndpoint *)endpoint requirement:(NSString *)requirement
           reply:(void (^)(NSDictionary *))reply;
 @end

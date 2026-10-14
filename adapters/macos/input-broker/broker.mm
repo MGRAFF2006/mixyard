@@ -40,9 +40,7 @@ void authorityEvent(NSDictionary *event) {
 
 @interface MYSession : NSObject <MYPCMTransport, MYFixtureControl> {
     uint64_t _generation;
-    BOOL _closed, _verified, _challengeSent, _ready;
-    NSString *_challenge;
-    void (^_authenticationReply)(NSDictionary *);
+    mixyard::Readiness _readiness;
 }
 @property(strong) NSXPCListenerEndpoint *endpoint;
 - (BOOL)probeCompleted;
@@ -51,48 +49,32 @@ void authorityEvent(NSDictionary *event) {
 - (void)close;
 @end
 @implementation MYSession
-- (NSDictionary *)challengeLocked {
-    _challengeSent = YES;
-    return @{@"status": @"challenge", @"challenge": _challenge};
-}
 - (void)authenticate:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (_closed) { reply(status(@"closed")); return; }
-    if (_challengeSent || _authenticationReply) { reply(status(@"pending")); return; }
-    if (_verified) reply([self challengeLocked]);
-    else _authenticationReply = [reply copy];
+    _readiness.authenticate(reply);
 }
 - (BOOL)probeCompleted {
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (_closed) return NO;
-    _verified = YES;
-    _challenge = NSUUID.UUID.UUIDString;
-    if (_authenticationReply) {
-        _authenticationReply([self challengeLocked]); _authenticationReply = nil;
-    }
-    return YES;
+    return _readiness.probeCompleted();
 }
 - (void)confirm:(NSString *)challenge reply:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (_closed || _ready || !_verified || !_challengeSent ||
-        ![challenge isKindOfClass:NSString.class] || ![_challenge isEqual:challenge]) {
-        [self closeLocked]; reply(status(@"rejected")); return;
-    }
-    _challenge = nil; _ready = YES;
-    reply(status(@"ready"));
+    const bool accepted = _readiness.confirm(challenge);
+    if (!accepted) [self closeLocked];
+    reply(status(accepted ? @"ready" : @"rejected"));
 }
 - (void)expire:(NSXPCConnection *)connection {
     // A finite pending-session lifetime only revokes; time never grants authority.
     {
         std::lock_guard<std::mutex> lock(state.mutex);
-        if (_ready) return;
+        if (_readiness.ready) return;
         [self closeLocked];
     }
     [connection invalidate];
 }
 - (void)hello:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (_closed || !_ready || self.endpoint) { reply(status(@"not_ready")); return; }
+    if (_readiness.closed || !_readiness.ready || self.endpoint) { reply(status(@"not_ready")); return; }
     if (_generation || state.active || state.nextGeneration == UINT64_MAX) {
         reply(status(@"busy")); return;
     }
@@ -125,7 +107,7 @@ void authorityEvent(NSDictionary *event) {
     for (uint32_t i = 0; i < h.frames * 2; ++i)
         if (!std::isfinite(pcm[i])) { reply(status(@"invalid")); return; }
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (_closed || !_ready || self.endpoint || !_generation || state.active != _generation) {
+    if (_readiness.closed || !_readiness.ready || self.endpoint || !_generation || state.active != _generation) {
         reply(status(@"not_admitted")); return;
     }
     if (h.generation != _generation || h.epoch != state.epoch ||
@@ -143,8 +125,7 @@ void authorityEvent(NSDictionary *event) {
             @"effective_delivery_ack": @NO});
 }
 - (void)closeLocked {
-    _closed = YES; _ready = NO; _challenge = nil;
-    if (_authenticationReply) { _authenticationReply(status(@"closed")); _authenticationReply = nil; }
+    _readiness.close();
     if (_generation && state.active == _generation) {
         (void)MixyardInputTest_Disconnect(2, _generation);
         state.active = 0;
@@ -156,11 +137,11 @@ void authorityEvent(NSDictionary *event) {
 }
 - (void)endpoint:(void (^)(NSXPCListenerEndpoint *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
-    reply(!_closed && _ready ? self.endpoint : nil);
+    reply(!_readiness.closed && _readiness.ready ? self.endpoint : nil);
 }
 - (void)snapshot:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (_closed || !_ready || !self.endpoint) { reply(status(@"not_ready")); return; }
+    if (_readiness.closed || !_readiness.ready || !self.endpoint) { reply(status(@"not_ready")); return; }
     reply(@{@"active": @(state.active), @"generation": @(state.nextGeneration),
             @"packets": @(state.packets), @"hellos": @(state.hellos),
             @"credit_frames": @(state.credits()), @"cursor0": @(state.cursors[0]),
@@ -170,7 +151,7 @@ void authorityEvent(NSDictionary *event) {
 - (void)read:(uint32_t)reader frame:(uint64_t)frame count:(uint32_t)count
        reply:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (_closed || !_ready || !self.endpoint) { reply(status(@"not_ready")); return; }
+    if (_readiness.closed || !_readiness.ready || !self.endpoint) { reply(status(@"not_ready")); return; }
     if (reader >= 2 || !count || count > mixyard::packetFrames ||
         frame != state.cursors[reader] || frame > mixyard::maxPosition - count) {
         reply(status(@"invalid")); return;

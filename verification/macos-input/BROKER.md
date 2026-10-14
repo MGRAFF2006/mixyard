@@ -51,8 +51,17 @@ pending or closed. The native fixture holds reverse replies on both channels,
 tries early authority, closes with early confirmation, then releases the replies;
 correlated `late_probe_ignored` events must prove they actually arrived after
 close. Both stale receiver pins require exact native 4102 errors and unchanged
-broker state, including the retained zero-hello assertion. Actor relays also
-receive a pinned probe response before the supervisor transfers an endpoint.
+broker state, including the retained zero-hello assertion. Held-probe clients
+send asynchronous non-authority `authenticate` before waiting for the reverse
+probe; `resume` alone does not send the request that starts acceptance.
+Actor relays enforce the same readiness state machine in a separate object per
+connection. Their server-side `attempt` guard precedes any endpoint use; the
+expected broker pin comes from fixture policy. Interruption, invalidation and
+probe errors close that session permanently. Native actor cases cover held/late
+probes, early attempts, wrong/replayed confirmation, unconfirmed invalidation and
+exact stale/wrong receiver failures. Correlated actor events must show zero
+endpoint uses for those sessions and exactly the two intended stranger/crash
+attempts after readiness. RPC/stage labels remain in stderr on timeout/failure.
 These are proposed assertions until exact native CI executes them successfully.
 
 The PCM authority protocol has only hello and packet operations, after readiness.

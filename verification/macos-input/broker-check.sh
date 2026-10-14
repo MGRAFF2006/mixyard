@@ -134,8 +134,30 @@ def run(case, args):
             # Held native probe replies must actually arrive after terminal close
             # on both channels; a source-only guard or an absent reply cannot pass.
             late = {e['channel'] for e in events if e['outcome']=='late_probe_ignored'
-                    and e['broker_pid']==proof['broker']['pid'] and e['peer_pid']==proof['producer_pid']}
+                    and e.get('broker_pid')==proof['broker']['pid'] and e['peer_pid']==proof['producer_pid']}
             if late != {'pcm', 'control'}: accepted = []
+            actors = [e for e in events if e['channel']=='actor']
+            checks = proof['actor_readiness_checks']
+            assert len(checks)==12
+            negative_ids = {c['connection'] for c in checks if 'connection' in c}
+            for check in checks:
+                if check['case']=='wrong_receiver':
+                    assert check['error']['domain']=='NSCocoaErrorDomain'
+                    assert check['error']['code']==proof['requirement_failure_code']
+                    continue
+                observed = [e for e in actors if e['connection']==check['connection']]
+                assert all(e['endpoint_uses']==0 for e in observed)
+                outcomes = {e['outcome'] for e in observed}
+                if 'attempt_not_ready' not in outcomes: accepted = []
+                if check['case']=='held_then_closed' and 'late_probe_ignored' not in outcomes: accepted = []
+                if check['case']=='invalidated_unconfirmed' and not outcomes.intersection({'interrupted','invalidated'}):
+                    accepted = []
+            uses = [e for e in actors if e['outcome']=='endpoint_use']
+            if len(uses)!=2: accepted = []  # Real stranger and trusted crash still execute.
+            assert all(e['connection'] not in negative_ids and e['endpoint_uses']==1 for e in uses)
+            assert all(any(r['connection']==e['connection'] and r['outcome']=='ready' for r in actors) for e in uses)
+            assert all(e['peer_pid']==proof['producer_pid'] and e['requirement']==policy['producer'] for e in actors)
+            assert all(e['endpoint_uses']==0 for e in actors if e['connection'] not in {u['connection'] for u in uses})
             assert proof['authentication_before_authority'] is True
             initial = proof['early_authority_unchanged']
             assert all(initial[k]==0 for k in ('active','generation','packets','hellos','cursor0','cursor1','start','end','revision'))
