@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "status": "passed",
+  "runUtc": "2026-10-14T21:26:37.264462+00:00",
+  "sourceBase": "8a212541bc6b89844b6aaedd79714d96de21a932",
+  "sourceAtExecution": "Uncommitted implementation; source hashes below identify exact build/run inputs. Committed manifest/docs do not affect the binary.",
+  "host": "homelab-dev Debian 13, six-vCPU headless VM; owned Ubuntu 24.04 SDK container, no host audio/display/bus/device mounts",
+  "containerImage": "sha256:664855933a9601186497d2b4c4a2da5fc97abc5c47e0301916a0c3d9ca64a113",
+  "binary": {
+    "sha256": "205bf1f5ee7b200633d92fb6fb675690a22f11b580f7325f4d3f82c919fbaea4",
+    "bytes": 12550368
+  },
+  "build": "pnpm tauri build --no-bundle -- --locked --jobs 2",
+  "boundaryTests": "cargo test --locked --offline --manifest-path verification/desktop-inspection/Cargo.toml --jobs 2: 4 passed",
+  "frontend": "pnpm check: strict types + 15 tests passed; pnpm build passed",
+  "nativeRun": "bash verification/desktop-inspection/run-linux.sh /cache/inspection-evidence/mixyard-desktop /cache/inspection-evidence/run2",
+  "nativeSteps": [
+    {
+      "case": "accepted-import",
+      "all_paths": 28,
+      "trusted_activation": "xdotool Return",
+      "native_reply": "accepted-core-report.json"
+    },
+    {
+      "case": "rejected-monitor-consent-including-zero",
+      "coefficients": "all null"
+    },
+    {
+      "case": "headroom-rejection-visible"
+    },
+    {
+      "case": "missing-ambiguous-unknown-format-reasons"
+    },
+    {
+      "case": "input-change-suppresses-delayed-real-native-response",
+      "overlap": "button disabled"
+    },
+    {
+      "case": "oversized-selected-content-clears-result-and-input",
+      "file_origin": "explicit synthetic File/DataTransfer, not OS picker"
+    },
+    {
+      "case": "malformed-paste-no-invoke-no-previous-result"
+    },
+    {
+      "case": "640px-compact-no-page-overflow"
+    }
+  ],
+  "browserPreview": "Explicit native-inspector-unavailable message and no substituted result; route controls locked, no page overflow at 1280px",
+  "failedAttempt": {
+    "artifact": "run1/linux-inspection.json",
+    "reason": "Harness attempted to assign read-only Tauri invoke property; report rendered but response observer stayed unset. Corrected harness wraps debug callback map. No product-code change."
+  },
+  "rawArtifacts": "~/.cache/mixyard-desktop-native/inspection-evidence (local, retained; not uploaded or embedded)",
+  "artifactHashes": {
+    "host-before.json": {
+      "sha256": "5ad4ec75ffe5b2769dcbd015ef4eda4f18d556195e51da053d615ddee15e8a77",
+      "bytes": 28708
+    },
+    "host-built.json": {
+      "sha256": "a258124bff12ec8246a7557d76f82621ec7d295f2b73ca4b14597a1fd6bd1984",
+      "bytes": 28883
+    },
+    "run1/driver.log": {
+      "sha256": "533364669b55cb25ebb0fc1c269bc9bfe64d017cbad59d799c73dfaca34af7c5",
+      "bytes": 211
+    },
+    "run1/linux-inspection.json": {
+      "sha256": "bd65dd50e0ffd3d57fb3488b12e1dfd6156e4282180429b71d8095a6cf146726",
+      "bytes": 30517
+    },
+    "run1/wm.log": {
+      "sha256": "1ccc2d46ecc087d339aae73bc1fc54379687b8caec9a5c33aa31e5fdb2fbd21c",
+      "bytes": 187
+    },
+    "run2/accepted-core-report.json": {
+      "sha256": "96e29347a5dffe953cdb8af2a3355191820368e752c027c053cb641d3a96e660",
+      "bytes": 37763
+    },
+    "run2/driver.log": {
+      "sha256": "2ed1847e73091f372cf1219a81f734b78aeb606a2ea133b9df13090f4c4c1eae",
+      "bytes": 211
+    },
+    "run2/linux-inspection.json": {
+      "sha256": "9a2ff7b7bcdd762b93c1810e459eb49048ac0eb3cdc34633d5ed136f89f220bc",
+      "bytes": 30684
+    },
+    "run2/rejected-core-report.json": {
+      "sha256": "e407e2940caf4a8d5c47527fa091dfcd4a32a307bbbdc5a144ad020b814d9a09",
+      "bytes": 27220
+    },
+    "run2/wm.log": {
+      "sha256": "1ccc2d46ecc087d339aae73bc1fc54379687b8caec9a5c33aa31e5fdb2fbd21c",
+      "bytes": 187
+    },
+    "sdk-image-id.txt": {
+      "sha256": "3479441e12d4b7e820ece39065a34bcd9faa0aca870ce09bd3c1db430e8384cb",
+      "bytes": 72
+    }
+  },
+  "buildSourceHashes": {
+    ".github/workflows/desktop-native.yml": "817bcb28dbf56367e49dd63f0a13ab9fa9defd8cc3c7aa36ca53bf32a5c2aa07",
+    ".github/workflows/runtime.yml": "0415feb8ef9d07066f7f47ee4a9307afa805d93d62db28402fb4a1568d86f92c",
+    "Cargo.lock": "74b8b80a678a9711ec547640c84c003fbba69e115a5b3a729dce006d5f98e134",
+    "Cargo.toml": "d9b12a868403d1e1dbe4d06158eb113a224394253fcdedaccb20ece8f6de3dad",
+    "apps/desktop/index.html": "d32606e94a85df23d5ee406f6b5d8f816d27a449a81364891dd1ee1839c8814f",
+    "apps/desktop/package.json": "eb04a5f2758e567e5428e895b3d207ddf6e3c1f7a18b627e580308fed0a23833",
+    "apps/desktop/pnpm-lock.yaml": "90f43562bd61935cbc1a6267c9bf01110d4ab3bbc229bab4729f9bad7a5488d8",
+    "apps/desktop/src/App.vue": "f1364b48c917a330e8b4e2f2f62f17e50689b433df8a201efba7402d25b7ca2e",
+    "apps/desktop/src/InspectionPanel.vue": "052a4ce16ed6c86bbf782091412c9941a4c671db9a189d8406376e7c5a652882",
+    "apps/desktop/src/SendControl.vue": "156b05db87549b2f3008b424ef6de1cd7198fedfdb4b39396abcee9c7b5c0fdc",
+    "apps/desktop/src/bridge.ts": "1af6f6ba931b0fa3f162704d0305c1abda97d2a58fae375a85989cb01d110161",
+    "apps/desktop/src/inspection.test.ts": "4e4989c723c14775f8ec649c24a3ec2af08062c744b5cf43065f095c1dd7db76",
+    "apps/desktop/src/inspection.ts": "e1c518e04f4199f7265c6680d693551ed253954ffb1cd8d1e830db6684643e8c",
+    "apps/desktop/src/main.ts": "0d42fb6bb74a51d647f20a0cd2bcdcc7b89b146f4cdfbf6f1f7b640e7e036119",
+    "apps/desktop/src/model.test.ts": "e0d953465aab50e8e3139a8e634a88b90c2f9c461914e6d1b70454b7045aa871",
+    "apps/desktop/src/model.ts": "57c244dca755dda2f11fbe33f849bba8612972f1b14a64d96de755129ed70036",
+    "apps/desktop/src/runtime.test.ts": "77a7b7d794b42befbbbaf45bd12745c5906b0a5101222edfaccc2af4a6ff4ae8",
+    "apps/desktop/src/runtime.ts": "9b173c772590e6737c7152083b1ea34600d732b8573efc57b8bb34789e94d4ba",
+    "apps/desktop/src/style.css": "789e32a5d9938c77c63c5dea6633a7992ee36b22b8fc038b93535de05a55b427",
+    "apps/desktop/src-tauri/Cargo.lock": "ccef7a1131622e16aefffc7a5a1f1e4c6304275ad592c65ffd396b19377324eb",
+    "apps/desktop/src-tauri/Cargo.toml": "82b4501f5cbce8ee9905690df941683592f3c7caf4a0440a71421bad68255b2c",
+    "apps/desktop/src-tauri/build.rs": "b1506ebea1d30d77d0b3bc9c4a749cdb58df9c9e3bd2f653e2de8bef0c2df022",
+    "apps/desktop/src-tauri/capabilities/mixer-shell.json": "4df9fab603e13a9ac61b1f3b93b7b42269dc853652c64ff9ce81b281ea584af1",
+    "apps/desktop/src-tauri/src/connection.rs": "8a33388d37444156c6cf9c74fd32e6b367a15b348e1ac9953d60cf6febeb451c",
+    "apps/desktop/src-tauri/src/inspection.rs": "91c22ecbe035ba220a010c76dd55d619e5f22ba63b18d0979a2a0cfab9027311",
+    "apps/desktop/src-tauri/src/main.rs": "3a249b83803bbad24c0296a4bcbaf29480c42103cd83e6be9adae5d5509ae348",
+    "apps/desktop/src-tauri/tauri.conf.json": "47f246b9d60c403ffa823dc5bc66518b16762d6017603079f2d22cd71bd4e398",
+    "apps/desktop/tsconfig.json": "3357590b68e5c418abe903616dd3173b02a3ae8b080bee01b20d78c93c66cd5d",
+    "apps/desktop/vite.config.ts": "7ceee5d305e58abfbdcd59d308f8e7f95951163431b140c98871ec9a8698baa8",
+    "src/bin/mixyard-runtime.rs": "85f8e82c9ac7ec4f12290f1ae617a2db5d735e2c66d6b9697ad00b1e8dfea028",
+    "src/diagnostics.rs": "ede695a1c82587a7803ad54d980823575d14fb4d8d6b5418677ba7de8381fa1e",
+    "src/lib.rs": "6fb14240ca666336a39aa34951673b3845b5a08c3fee63c0b465ce137ebf9c64",
+    "src/main.rs": "a1321e7be222bfc036e163262d3dbfe851603eef00d1448289e03aac0d7017de",
+    "src/profiles/tests.rs": "aa7bb53c86cb9792d5fb981375b5363d5e28757b3f733fc992c0b5800a9362d0",
+    "src/profiles.rs": "4535be98b204f7cbdd6fd94656cbf7e293916e0e087e381caf2b736a1ccd6dca",
+    "src/runtime/client.rs": "84d5612c8b5aed625869012cfe129ef5e6cfd55e7a990cd0632e6d58f92642a9",
+    "src/runtime/mod.rs": "15a4b5819aaba772eede9d32a8718d1faa309b01b98479278f7b3393ec3b1ec8",
+    "src/runtime/unix.rs": "9b2079852c346e12d5c4e5bf45605ebd5c44bbf70a4f6a4b92de82f1117203c2",
+    "src/runtime/windows.rs": "837b37f97d7936aed3ae0867a8074655ac090709795fc5651b502a1e4fdef379",
+    "src/tests.rs": "4478580656c4e50c80077d2dda50681505e027481712ec6b7ad4bb9d6b6e63aa",
+    "tests/runtime_lifecycle.rs": "9911b6214a3f53cbf0496c4986638fede3041c3b8d55cd08d0d0f84a7d9ea6e7",
+    "tests/runtime_readonly.rs": "04265f59172b9eaee9f91684f014c2249ee285650b5bb59965b162d67b1db8fc",
+    "verification/desktop-native/Dockerfile": "26feaee0f2cc9850c443f61d9ab40dac964891e990f03ec8205c2d73709b966d",
+    "verification/desktop-native/README.md": "5c9feec3f3aa2e6e99c89a31b458a1b0e937d29221619eba88250f556dc13978",
+    "verification/desktop-native/evidence.py": "660891b07eeca71bbe85bed801b78bcb08f5ca9b7a1d3ffa8fbf8a93dc9b2383",
+    "verification/desktop-native/run-linux.sh": "c11fea2d5d23d0f23ff4eeb4d98d6799fc88d7ef5a070fae8752893c030daedb",
+    "verification/desktop-native/webdriver.py": "f27623eca88aca164d38212cc2cefe55e86982de361bd8bed762d16c45f9bdd8"
+  },
+  "inspectionHarnessHashes": {
+    "verification/desktop-inspection/.gitignore": "32dae3052f331ee34d628ef535709b301259a45df7c7522c4d35dcf49873f00b",
+    "verification/desktop-inspection/Cargo.lock": "96e711b38dafb02fd8c91c99eff5b1a79f8c8a12c5a6981b0a1c417c5e01f170",
+    "verification/desktop-inspection/Cargo.toml": "326e64a88f2d4acba3d447d13f47fb0d9a9deef28a4374ceada0cead7968f3c6",
+    "verification/desktop-inspection/README.md": "e670f53a0d2cdde4d37648c8a4a2a974f5d32049158de03506beac09fca2a4cb",
+    "verification/desktop-inspection/run-linux.sh": "13ad71f17214fef2c151f5c13d3e24651e61dc98dd4889c181a6f7911288d747",
+    "verification/desktop-inspection/webview.py": "92de9a8a7a896d02d8098e5aa88289180c02f3f614a46e2ca72fb84f99d5b493"
+  },
+  "diskReserveBytes": 10737418240,
+  "freeBytes": {
+    "beforeBuild": 56760127488,
+    "afterBuild": 56500211712,
+    "nativeRunBefore": 56357662720,
+    "nativeRunAfter": 56338907136,
+    "afterAllJobs": 55767441408
+  },
+  "blocked": [
+    "Real microphone/app -> external call/record/headphone PCM",
+    "Physical file picker / display / audio / assistive technology",
+    "Windows/macOS GUI execution; three-OS compilation belongs to fresh CI",
+    "Authenticated live discovery, current native revisions, granted permission, consumer selection, applied sharing and live levels"
+  ],
+  "productionApply": "disabled; no changes to core/schema/diagnostics/runtime/profiles/adapters"
+}

@@ -50,7 +50,40 @@ explicit CLI operations; the app never starts, owns or stops the process.
 
 **Show demo** opens a visibly labelled, in-memory preview. Leaving demo resets
 its edits. Fixtures are neither discovery results nor schema-2 runtime config.
-There is no import/export or live apply operation.
+The demo does not import/export or apply routes. The separate read-only snapshot
+inspection below uses real schema-2 inputs and the Rust core.
+
+## Why silent / what is sharing
+
+Open **Why silent · What is sharing**, select config and inventory JSON files or
+paste their contents, then **Inspect snapshots**. This calls the existing
+`diagnostics::inspect(config, inventory)` directly, independently of the runtime
+connection and demo. No filesystem path is sent to Rust. Browser preview reports
+that native inspection is unavailable; it never substitutes a fixture.
+
+The panel shows imported config/inventory revisions, platform and declared
+inventory evidence, with freshness unverified and snapshot age/current native
+revisions unknown. `native-discovery` in an imported file is not authenticated
+live discovery. Core preflight detail, reason codes, capacity, accepted-plan
+headroom, selectors/candidates/formats and every source/output path are shown.
+Configured potential sharing includes muted/zero and invalid excluded sends;
+accepted dry-run coefficients alone are displayed as numbers. Rejected preflight
+leaves all coefficients unavailable. Permission, consumer selection, applied
+sharing, capture/native/pause state and live levels remain unknown.
+
+Imports are content-only and bounded: 128 KiB UTF-8 per input, 32 configured
+sources/mixes/outputs each, 256 sends, 64 media policies and source/output
+observations each, 128 sessions, and a 2 MiB reply. These are desktop work limits,
+not product/backend capacities. Oversized snapshots are rejected whole; CLI
+`inspect` is available for larger inputs. Revisions beyond JavaScript's exact
+integer range (9007199254740991) are explicitly rejected. Rust admits one worker
+at a time off the UI thread; the bridge has a two-second response timeout. Editing,
+selecting another file, rejection or Clear removes the previous report; generation
+checks discard late results. Inputs/results stay in window memory and are not saved.
+
+The focused [boundary tests and native inspection harness](../../verification/desktop-inspection/README.md)
+are separate from the existing lifecycle/three-OS shell compile gates. No routing,
+profile writes, permission granting, backend enablement or audio processing is added.
 
 - Mixes have stable IDs and editable names; add/remove is dynamic with no fixed
   mix-count limit. Call, Record and Monitor are starter templates only.
@@ -98,9 +131,10 @@ Linux uses the native context-menu Open Mixer fallback; Tauri tray mouse events
 are unsupported there. Rich anchored panels are not implemented or promised.
 See [Tauri tray support](https://v2.tauri.app/learn/system-tray/).
 
-Only five local commands are exposed through an explicit main-window
+Only six local commands are exposed through an explicit main-window
 capability: `shell_status`, `connect_runtime`, `disconnect_runtime`, `hide_mixer`,
-`quit_ui`. Connect accepts only a validated local instance name. No shell, filesystem,
+`quit_ui`, `inspect_snapshot`. Inspection accepts bounded JSON content, not paths.
+Connect accepts only a validated local instance name. No shell, filesystem,
 device-control, remote-origin or generic runtime permissions are granted.
 The existing `hide_mixer` command name is retained, with the platform-specific
 close behavior above; native qualification adds no test command or plugin.

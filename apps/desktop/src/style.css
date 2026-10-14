@@ -92,6 +92,33 @@ input[type=checkbox] { accent-color: #333; width: 14px; height: 14px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 
 .runtime-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.inspection-panel { border-bottom: 1px solid var(--line); padding: 16px 24px; font-size: 12px; line-height: 1.7; }
+.inspection-panel > summary { font-size: 14px; font-weight: 600; cursor: pointer; }
+.inspection-panel > summary span { display: inline-block; margin-left: 12px; font-size: 11px; font-weight: 400; color: #666; }
+.inspection-content { margin-top: 14px; max-width: 1200px; }
+.inspection-content p { margin: 9px 0; }
+.inspection-content h2 { font-size: 18px; margin-top: 22px; }
+.inspection-content h3 { font-size: 15px; margin-top: 24px; }
+.inspection-content h4 { font-size: 13px; }
+.inspection-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 18px; }
+.inspection-inputs label { display: block; margin: 8px 0 4px; }
+.inspection-inputs input { max-width: 100%; }
+.inspection-inputs textarea { width: 100%; resize: vertical; padding: 9px; border: 1px solid #c7c7c7; border-radius: 5px; font: 11px/1.5 monospace; }
+.inspection-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 12px; }
+.inspection-actions span, .inspection-limits { color: #666; font-size: 11px; }
+.inspection-warning { border-left: 2px solid #b98638; padding-left: 12px; color: #75521c; }
+.inspection-card { border: 1px solid var(--line); border-radius: 5px; padding: 16px; margin: 12px 0; min-width: 0; }
+.inspection-content pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 monospace; max-height: 380px; overflow: auto; padding: 8px 0; }
+.inspection-content code { font-size: 11px; overflow-wrap: anywhere; }
+.inspection-content ul { padding-left: 20px; }
+.inspection-table-wrap { overflow-x: auto; }
+.inspection-content table { width: 100%; border-collapse: collapse; margin: 12px 0; text-align: left; }
+.inspection-content caption { text-align: left; font-size: 11px; padding-bottom: 8px; }
+.inspection-content th, .inspection-content td { vertical-align: top; padding: 10px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.inspection-content th { font-weight: 500; }
+.inspection-content th span { display: block; font-size: 11px; font-weight: 400; }
+.inspection-content td ul { margin: 0 0 8px; }
+@media (max-width: 760px) { .inspection-panel { padding: 16px; }.inspection-inputs { grid-template-columns: 1fr; gap: 4px; }.inspection-content th, .inspection-content td { padding: 8px 4px; } }
 .runtime-actions label { display: grid; gap: 6px; color: #555; font-size: 11px; }
 .runtime-actions input { min-width: 100px; width: 160px; padding: 8px; border: 1px solid #c7c7c7; border-radius: 5px; background: white; color: var(--ink); }
 @media (max-width: 760px) { .connection-banner { flex-wrap: wrap; gap: 14px; } }
