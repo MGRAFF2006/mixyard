@@ -39,6 +39,8 @@
 //! 2 usage/unsupported, 3 invalid input/policy, 4 I/O. Future GUI/tray/CLI must share
 //! an independent native runtime surviving UI closure; this crate has no UI deps.
 
+pub mod diagnostics;
+
 use serde::{Deserialize, Serialize};
 pub mod runtime;
 use std::collections::{BTreeMap, BTreeSet};
