@@ -24,6 +24,9 @@ def main():
     if baseline["status"] != "pass":
         print(json.dumps(baseline, indent=2))
         return 2 if baseline["status"] == "blocked" else 1
+    output_mute_trigger = 'if any(o["id"] == "call-input" and o["mute"] for o in plan["outputs"]):\n'
+    record_master = '    master = next(m["master"] for m in plan["mixes"] if m["id"] == "record")\n'
+    record_sends = '    for send in plan["sends"]:\n        if send["mix"] == "record":\n'
     mutations = {
         "wrong mix": 'for output in plan["outputs"]: output["mix"] = "call"',
         "wrong target": 'for output in plan["outputs"]: output["target"] = {"kind": "device", "deviceUid": "unrequested"}',
@@ -35,6 +38,18 @@ def main():
         "duplicate resolved outputs": 'for output in plan["outputs"]: output["observedIds"] *= 2',
         "wrong effective gain": 'for output in plan["outputs"]: output["effectiveGain"] = 0',
         "effective gain ignores mute": 'for output in plan["outputs"]: output["effectiveGain"] = output["gain"]',
+        "output mute silences Record": output_mute_trigger + record_master + '    master["mute"] = True\n'
+            + record_sends + '            send["effectiveGain"] = 0',
+        "output mute changes sibling master mute": output_mute_trigger + record_master + '    master["mute"] = True',
+        "output mute changes sibling master gain": output_mute_trigger + record_master + '    master["gain"] = 0.5',
+        "output mute changes sibling send mute": output_mute_trigger + record_sends
+            + '            send.update(mute=True, effectiveGain=0)',
+        "output mute changes sibling send gain": output_mute_trigger + record_sends
+            + '            send.update(gain=0.125, effectiveGain=0.125)',
+        "output mute changes sibling effective gain": output_mute_trigger + record_sends
+            + '            send["effectiveGain"] = 0',
+        "output mute drops sibling sends": output_mute_trigger
+            + '    plan["sends"] = [s for s in plan["sends"] if s["mix"] != "record"]',
         "empty players": 'plan["players"] = []',
         "private player": 'plan["players"][0].update(sessionId="simulated:session:private-player", applicationId="example:private-player")',
         "wrong action": 'plan["players"][0]["plannedAction"] = "play"',
@@ -50,7 +65,7 @@ def main():
                 "out = process.stdout\n"
                 f"if process.returncode == 0 and sys.argv[1] == {command!r}:\n"
                 "    plan = json.loads(out)\n"
-                f"    {mutation}\n"
+                "    " + mutation.replace("\n", "\n    ") + "\n"
                 "    out = json.dumps(plan)\n"
                 "sys.stdout.write(out)\n"
                 "sys.stderr.write(process.stderr)\n"
@@ -62,7 +77,7 @@ def main():
                                               "duplicate-stable-id-rejected", "superseded-v1-not-used-as-v2-contract"}}
             if command == "plan-media":
                 expected = {"public-v2-plan-media-argument-order-no-dispatch"}
-            elif label == "effective gain ignores mute":
+            elif label == "effective gain ignores mute" or label.startswith("output mute "):
                 expected = {"output-gain-mute-preserves-siblings"}
             if report["status"] != "fail" or failures != expected:
                 raise AssertionError((label, report))

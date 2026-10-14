@@ -41,6 +41,25 @@ def check(binary, examples, runner=()):
     if {o["id"] for o in config["outputs"]} != set(expected_resolved_outputs):
         return {"status": "blocked", "reason": "No independent output resolutions for this config fixture.",
                 "native_routing_verified": False}
+    # Unaffected public fixture sends, including resolved state, not a CLI baseline.
+    expected_sends = [
+        {"source": source, "mix": mix, "gain": gain, "mute": False,
+         "observedId": observed, "effectiveGain": gain, "channelMapping": mapping,
+         "rateConversionRequired": False}
+        for source, mix, gain, observed, mapping in (
+            ("mic", "call", 1.0, "simulated:source:0", "mono"),
+            ("mic", "monitor", 0.0, "simulated:source:0", "duplicate-mono"),
+            ("mic", "record", 0.5, "simulated:source:0", "duplicate-mono"),
+            ("return", "monitor", 0.5, "simulated:source:3", "stereo"),
+            ("return", "record", 0.25, "simulated:source:3", "stereo"),
+            ("spotify", "desk-a", 1.0, "simulated:source:1", "stereo"),
+            ("spotify", "monitor", 0.5, "simulated:source:1", "stereo"),
+            ("spotify", "record", 0.25, "simulated:source:1", "stereo"),
+            ("spotify", "shared", 0.5, "simulated:source:1", "stereo"),
+            ("vlc", "desk-b", 1.0, "simulated:source:2", "stereo"),
+            ("vlc", "shared", 0.5, "simulated:source:2", "stereo"),
+        )
+    ]
     results = []
     with tempfile.TemporaryDirectory(prefix="mixyard-policy-v2-") as directory:
         root = Path(directory)
@@ -81,8 +100,13 @@ def check(binary, examples, runner=()):
                         expected_outputs = [{**o, **resolved_outputs[o["id"]], "mute": o.get("mute", False),
                                              "allowMicMonitor": o.get("allowMicMonitor", False)}
                                             for o in desired["outputs"]]
-                        passed = passed and len(plan["mixes"]) == len(desired["mixes"]) \
-                            and {m["id"] for m in plan["mixes"]} == {m["id"] for m in desired["mixes"]} \
+                        expected_masters = [
+                            {"id": m["id"], "master": {"gain": 1.0, "mute": False, **m.get("master", {})}}
+                            for m in desired["mixes"]
+                        ]
+                        passed = passed and sorted([{k: m[k] for k in ("id", "master")} for m in plan["mixes"]],
+                                                   key=lambda m: m["id"]) == sorted(expected_masters, key=lambda m: m["id"]) \
+                            and sorted(plan["sends"], key=lambda s: (s["source"], s["mix"])) == expected_sends \
                             and sorted([{k: o[k] for k in fields} for o in plan["outputs"]], key=lambda o: o["id"]) \
                             == sorted([{k: o[k] for k in fields} for o in expected_outputs], key=lambda o: o["id"])
             except (ValueError, KeyError, TypeError):
