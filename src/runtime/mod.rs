@@ -357,7 +357,12 @@ pub fn client(instance: &str, command: &str, output: &mut impl Write) -> io::Res
                             "runtime rejected request (see JSON response)",
                         ));
                     }
-                    if command != "events" {
+                    // The terminal event completes the subscription; close before
+                    // Windows disconnects the pipe at the server's drain deadline.
+                    if command != "events"
+                        || (reply["result"]["event"] == "lifecycle"
+                            && reply["result"]["lifecycle"] == "stopping")
+                    {
                         return Ok(());
                     }
                 }
