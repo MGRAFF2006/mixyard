@@ -9,19 +9,25 @@ import subprocess
 import tempfile
 
 
-def check(binary, examples):
+def check(binary, examples, runner=()):
     config = json.loads((examples / "config.json").read_text())
     inventory = json.loads((examples / "inventory.json").read_text())
     if config.get("schemaVersion") != 2 or inventory.get("schemaVersion") != 2:
         return {"status": "blocked", "reason": "Schema-2 public config/inventory fixtures not present; fixed-three v1 expectations are superseded.",
                 "native_routing_verified": False}
-    if not isinstance(config.get("mixes"), list) or not config["mixes"] or not isinstance(config.get("outputs"), list):
+    if not isinstance(config.get("mixes"), list) or not config["mixes"] \
+            or not isinstance(config.get("outputs"), list) or not config["outputs"]:
         return {"status": "blocked", "reason": "Schema-2 mixes/outputs command fixture contract unavailable.",
                 "native_routing_verified": False}
     media_request = json.loads((examples / "media-request.json").read_text())
     if media_request.get("schemaVersion") != 2:
         return {"status": "blocked", "reason": "Schema-2 public media request fixture unavailable.",
                 "native_routing_verified": False}
+    # Hand-written public fixture oracle, not a second media resolver.
+    if (media_request.get("deviceUid"), media_request.get("action")) != ("example:device-a", "pause"):
+        return {"status": "blocked", "reason": "No independent media expectation for this request fixture.",
+                "native_routing_verified": False}
+    expected_players = [("simulated:session:spotify", "example:spotify", "pause", "planned", "not-dispatched")]
     results = []
     with tempfile.TemporaryDirectory(prefix="mixyard-policy-v2-") as directory:
         root = Path(directory)
@@ -30,7 +36,7 @@ def check(binary, examples):
             desired_path, observed_path = root / "config.json", root / "inventory.json"
             desired_path.write_text(json.dumps(desired))
             observed_path.write_text(json.dumps(inventory))
-            arguments = [str(binary), command, str(desired_path)]
+            arguments = [*runner, str(binary), command, str(desired_path)]
             if command == "plan":
                 arguments.append(str(observed_path))
             elif command == "plan-media":
@@ -53,21 +59,31 @@ def check(binary, examples):
                             and plan["requestedAction"] == media_request["action"] \
                             and plan["configRevision"] == desired["revision"] \
                             and plan["inventoryRevision"] == inventory["revision"] \
-                            and all(p["dispatchOutcome"] == "not-dispatched" for p in plan["players"])
+                            and plan["deviceUid"] == media_request["deviceUid"] \
+                            and plan["status"] == "ready" \
+                            and sorted((p["sessionId"], p["applicationId"], p["plannedAction"],
+                                        p["decision"], p["dispatchOutcome"]) for p in plan["players"]) == expected_players
                     else:
+                        fields = ("id", "mix", "target", "gain", "mute", "allowMicMonitor")
+                        expected_outputs = [{**o, "mute": o.get("mute", False),
+                                             "allowMicMonitor": o.get("allowMicMonitor", False)}
+                                            for o in desired["outputs"]]
                         passed = passed and len(plan["mixes"]) == len(desired["mixes"]) \
                             and {m["id"] for m in plan["mixes"]} == {m["id"] for m in desired["mixes"]} \
-                            and len(plan["outputs"]) == len(desired["outputs"]) \
-                            and {o["id"] for o in plan["outputs"]} == {o["id"] for o in desired["outputs"]}
+                            and sorted([{k: o[k] for k in fields} for o in plan["outputs"]], key=lambda o: o["id"]) \
+                            == sorted([{k: o[k] for k in fields} for o in expected_outputs], key=lambda o: o["id"])
             except (ValueError, KeyError, TypeError):
                 passed = False
                 diagnostic = diagnostic or "Public CLI result did not match the schema-2 contract."
             results.append({"case": label, "status": "pass" if passed else "fail",
-                            "diagnostic": "" if passed else diagnostic})
+                            "diagnostic": "" if passed else diagnostic or "Public CLI result did not match independent fixture expectations."})
 
         run("public-v2-validate", config, command="validate")
         run("public-v2-plan-media-argument-order-no-dispatch", config, command="plan-media")
         run("all-mix-and-output-ids-accounted-for", config)
+        output_levels = copy.deepcopy(config)
+        output_levels["outputs"][0].update(gain=.25, mute=True)
+        run("output-gain-mute-preserves-siblings", output_levels)
         expanded = copy.deepcopy(config)
         ids = {m["id"] for m in expanded["mixes"]}
         serial = 0
