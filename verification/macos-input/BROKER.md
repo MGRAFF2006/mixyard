@@ -33,11 +33,30 @@ anonymous endpoint, and attempts an early PCM message with a forbidden marker.
 It must get a native rejection, with no hello/packet admission or delivery.
 The reverse stale-broker pin must yield `NSCocoaErrorDomain` with
 `NSXPCConnectionCodeSigningRequirementFailure`, using the selected SDK constant.
-The stranger and stale inbound producer must also receive that specific native
-requirement-failure error; generic invalidation cannot qualify any live mismatch.
-The evidence additionally binds the anonymous listener's inherited pin or the
-supervisor connection's configured exact pin to the actual broker process.
-A configured-pin event alone proves no rejection.
+That locally enforcing error is not assumed to propagate to a caller rejected
+by a remote listener. Stranger rejection instead requires native causal controls:
+the same early PCM bytes and endpoint return `not_admitted` to the exact accepted
+producer immediately before and after the stranger attempt; both controls
+complete pinned native readiness without hello/admission. The stranger's actual
+result is received on the parent's exact-stranger-pinned, confirmed connection.
+Its PCM, subsequent hello and authentication must all return documented native
+connection errors, its connection must invalidate, and no PCM delegate session
+may exist for it. Complete broker state, cursors and credits remain unchanged.
+Both control sessions need correlated native probe/readiness/closure evidence.
+No producer authority is given to the stranger. A generic error, UID/PID,
+configured pin, signature dump or timeout alone proves no rejection.
+
+Stale inbound service policy uses accepted/stale/accepted controls of the same
+signed producer and broker binaries with identical `ready()` requests. Only the
+expected inbound producer hash changes; transport and outgoing broker pins stay
+valid. The accepted controls complete native pinned readiness, with zero hello,
+packet or state mutation. The stale session must close with no exported identity,
+authentication, confirmation, hello or packet invocation, no verified/ready
+state, and complete zero-authority state. Its remote error remains an observation
+pending both successful causal controls; the aggregate evidence explicitly says
+it is not a direct enforcing-side error. These assertions are unqualified until
+exact native CI executes them. The seven local receiver-pinning 4102 checks are
+retained unchanged.
 Malformed/missing supervisor policy instead requires
 the live listener's distinct `policy_unavailable` event, with valid transport
 policy so startup failure cannot substitute. PID fields correlate diagnostics;
@@ -75,6 +94,11 @@ probes, early attempts, wrong/replayed confirmation, unconfirmed invalidation an
 exact stale/wrong receiver failures. Correlated actor events must show zero
 endpoint uses for those sessions and exactly the two intended stranger/crash
 attempts after readiness. RPC/stage labels remain in stderr on timeout/failure.
+Native errors/timeouts, actor early results, the actor's returned rejection and
+the parent's actual received object are also persisted before assertions in
+`native-observations`; XPC service stderr need not reach the parent's stderr.
+Local invalidation handlers are installed before resume and their results are
+retained across errors, so terminal closure is observed rather than assumed.
 These are proposed assertions until exact native CI executes them successfully.
 
 The PCM authority protocol has only hello and packet operations, after readiness.

@@ -8,6 +8,20 @@
 #include <limits>
 #include <unistd.h>
 
+// XPC services do not necessarily inherit the parent's stderr. Persist failures
+// before assertions, including the actual returned object and terminal lifetime.
+static void observation(NSString *stage, id value) {
+    NSMutableDictionary *record = [@{@"stage": stage ?: @"unlabeled", @"pid": @(getpid()),
+        @"value_class": value ? NSStringFromClass([value class]) : @"nil",
+        @"description": [value description] ?: @"nil"} mutableCopy];
+    if ([value isKindOfClass:NSError.class]) record[@"error"] = mixyard::errorDetails(value);
+    if ([value isKindOfClass:NSDictionary.class]) record[@"result"] = value;
+    NSData *json = [NSJSONSerialization dataWithJSONObject:record options:0 error:nil];
+    NSString *path = [[mixyard::fixtureRoot() stringByAppendingPathComponent:@"native-observations"]
+        stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingString:@".json"]];
+    assert(json && [json writeToFile:path atomically:YES]);
+}
+
 @interface MYResult : NSObject
 @property(strong) NSCondition *condition;
 @property(strong) id value;
@@ -19,6 +33,7 @@
 @implementation MYResult
 - (instancetype)init { if ((self = [super init])) _condition = [NSCondition new]; return self; }
 - (void)finish:(id)value {
+    if ([value isKindOfClass:NSError.class]) observation(_stage, value);
     [_condition lock];
     if (!_done) { _value = value; _done = YES; [_condition signal]; }
     [_condition unlock];
@@ -27,7 +42,7 @@
     [_condition lock];
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10];
     while (!_done && [_condition waitUntilDate:deadline]) {}
-    if (!_done) NSLog(@"TIMEOUT stage=%@", _stage ?: @"unlabeled");
+    if (!_done) { observation(_stage, @{@"outcome": @"timeout"}); NSLog(@"TIMEOUT stage=%@", _stage ?: @"unlabeled"); }
     assert(_done && "native XPC reply/error timed out; timeout is never auth evidence");
     id value = _value; [_condition unlock]; return value;
 }
@@ -35,6 +50,7 @@
 
 @interface MYProbe : NSObject <MYAuthorityProbe>
 @property(strong) MYResult *held;
+@property(strong) MYResult *closed;
 @property BOOL receiverVerified;
 @end
 @implementation MYProbe
@@ -44,16 +60,34 @@
 }
 @end
 static void exportProbe(NSXPCConnection *connection, MYProbe *probe = nil) {
+    probe = probe ?: [MYProbe new];
+    probe.closed = [MYResult new]; probe.closed.stage = @"local terminal invalidation";
+    MYResult *closed = probe.closed;
+    connection.invalidationHandler = ^{ observation(@"local terminal invalidation", @YES); [closed finish:@YES]; };
     connection.exportedInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYAuthorityProbe)];
-    connection.exportedObject = probe ?: [MYProbe new];
+    connection.exportedObject = probe;
 }
 static NSDictionary *rejection(id result, bool enforcingSide) {
+    observation(enforcingSide ? @"local requirement rejection" : @"unavailable policy rejection", result);
     NSLog(@"native rejection (enforcing=%d): %@", enforcingSide, result);
     assert([result isKindOfClass:NSError.class]);
     NSError *error = result;
     assert([error.domain isEqual:NSCocoaErrorDomain]);
     assert(error.code == NSXPCConnectionCodeSigningRequirementFailure ||
            (!enforcingSide && error.code == NSXPCConnectionInvalid));
+    return mixyard::errorDetails(error);
+}
+// A remote rejecting listener has no public enforcing-side error callback. This
+// observation is NOT authentication proof on its own. The native checker also
+// requires live exact signed peers, identical-request positive controls on the
+// same endpoint, unchanged authority, and terminal closure (or policy A/B/A for
+// the bundled inbound case). Local receiver mismatch tests still require 4102.
+static NSDictionary *remoteRejection(id result) {
+    observation(@"remote listener rejection observation", result);
+    assert([result isKindOfClass:NSError.class]);
+    NSError *error = result;
+    assert([error.domain isEqual:NSCocoaErrorDomain]);
+    assert(error.code == NSXPCConnectionInterrupted || error.code == NSXPCConnectionInvalid);
     return mixyard::errorDetails(error);
 }
 
@@ -99,6 +133,10 @@ static NSData *packet(mixyard::Header h, float sample = 0.25f) {
         std::memcpy(static_cast<char *>(data.mutableBytes) + sizeof(h) + i * 4, &sample, 4);
     return data;
 }
+static NSData *boundaryPacket() {
+    mixyard::Header h; h.generation = h.epoch = h.revision = 1; h.frames = 1; h.bytes = 8;
+    return packet(h, 0.875f);
+}
 static id send(NSXPCConnection *connection, NSData *data) {
     MYResult *r = [MYResult new]; r.stage = @"send"; [(id<MYPCMTransport>)proxy(connection, r)
         packet:data reply:^(NSDictionary *value) { [r finish:value]; }]; return [r wait];
@@ -128,6 +166,22 @@ static NSXPCConnection *actorConnection(NSString *service, NSString *requirement
     NSXPCConnection *c = [[NSXPCConnection alloc] initWithServiceName:service];
     c.remoteObjectInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYStranger)];
     assert(mixyard::pin(c, requirement)); exportProbe(c, probe); [c resume]; return c;
+}
+static void invalidateAndWait(NSXPCConnection *connection, MYResult *closed) {
+    assert(closed);
+    [connection invalidate]; assert([[closed wait] isEqual:@YES]);
+}
+static NSDictionary *listenerControl(NSXPCListenerEndpoint *endpoint, NSString *requirement) {
+    // Same connection setup and exact early PCM bytes as the stranger, without
+    // admission. A pinned identify/probe/confirmation proves the live peers too.
+    NSXPCConnection *c = connect(endpoint, requirement); assert(c);
+    MYResult *closed = [(MYProbe *)c.exportedObject closed];
+    NSData *data = boundaryPacket(); id early = send(c, data); expect(early, @"not_admitted");
+    expect(ready(c), @"ready");
+    NSDictionary *proof = @{@"request_base64": [data base64EncodedStringWithOptions:0],
+        @"early": early, @"ready": @YES, @"broker_pid": @(c.processIdentifier)};
+    observation(@"accepted listener control", proof);
+    invalidateAndWait(c, closed); return proof;
 }
 static id attempt(NSXPCConnection *actor, NSXPCListenerEndpoint *endpoint, NSString *requirement) {
     MYResult *r = [MYResult new]; r.stage = @"actor attempt";
@@ -273,14 +327,23 @@ static void actorEvent(NSDictionary *context, NSString *outcome, uint64_t uses, 
         }
         ++_endpointUses; actorEvent(self.context, @"endpoint_use", _endpointUses);
         NSXPCConnection *c = connect(endpoint, requirement); assert(c);
-        mixyard::Header h; h.generation = h.epoch = h.revision = 1; h.frames = 1; h.bytes = 8;
-        id early = send(c, packet(h, 0.875f));
+        MYResult *closed = [(MYProbe *)c.exportedObject closed];
+        id early = send(c, boundaryPacket());
+        observation(@"actor early PCM returned", early);
 #ifdef MIXYARD_STRANGER
         // This path intentionally differs in executable code, not only bundle name.
-        NSDictionary *error = rejection(early, true);
-        reply(@{@"rejection_observed": @YES, @"pid": @(getpid()), @"uid": @(getuid()), @"error": error});
-        [c invalidate];
+        NSDictionary *error = remoteRejection(early);
+        NSDictionary *lateHello = remoteRejection(hello(c));
+        NSDictionary *lateAuthentication = remoteRejection(authenticate(c));
+        invalidateAndWait(c, closed);
+        NSDictionary *result = @{@"remote_rejection_observed": @YES, @"pid": @(getpid()),
+            @"uid": @(getuid()), @"error": error, @"late_hello_error": lateHello,
+            @"late_authentication_error": lateAuthentication, @"terminal_invalidated": @YES,
+            @"request_base64": [boundaryPacket() base64EncodedStringWithOptions:0]};
+        observation(@"stranger result before reply", result); reply(result);
 #else
+        (void)closed;
+        mixyard::Header h; h.generation = h.epoch = h.revision = 1; h.frames = 1; h.bytes = 8;
         expect(early, @"not_admitted");
         expect(ready(c), @"ready");
         NSDictionary *admitted = hello(c); expect(admitted, @"admitted");
@@ -314,15 +377,28 @@ int main(int argc, char **argv) {
         NSXPCConnection *control = [[NSXPCConnection alloc] initWithServiceName:@"org.mixyard.broker.fixture"];
         control.remoteObjectInterface = controlInterface(); assert(mixyard::pin(control, brokerRequirement));
         exportProbe(control);
+        MYResult *controlClosed = [(MYProbe *)control.exportedObject closed];
         [control resume];
         id controlReady = ready(control);
         if ([mode isEqual:@"positive"]) expect(controlReady, @"ready");
+        if ([mode isEqual:@"inbound_control"]) {
+            expect(controlReady, @"ready");
+            NSDictionary *unchanged = snapshot(control);
+            for (NSString *key in @[@"active", @"generation", @"packets", @"hellos", @"cursor0", @"cursor1", @"start", @"end", @"revision"])
+                assert([unchanged[key] unsignedLongLongValue] == 0);
+            assert([unchanged[@"credit_frames"] unsignedIntValue] == 4096);
+            NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"status": @"accepted_control",
+                @"producer_pid": @(getpid()), @"uid": @(getuid()), @"broker": unchanged} options:0 error:nil];
+            assert(json); fwrite(json.bytes, 1, json.length, stdout); putchar('\n');
+            invalidateAndWait(control, controlClosed); return 0;
+        }
         if (![mode isEqual:@"positive"]) {
-            NSDictionary *error = rejection(controlReady, [mode isEqual:@"inbound_requirement_mismatch"]);
+            NSDictionary *error = [mode isEqual:@"inbound_requirement_mismatch"]
+                ? remoteRejection(controlReady) : rejection(controlReady, false);
             NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"status": @"rejection_observed",
                 @"case": mode, @"producer_pid": @(getpid()), @"error": error} options:0 error:nil];
             assert(json); fwrite(json.bytes, 1, json.length, stdout); putchar('\n');
-            [control invalidate]; return 0;
+            invalidateAndWait(control, controlClosed); return 0;
         }
         MYResult *endpointResult = [MYResult new]; endpointResult.stage = @"initial endpoint"; [(id<MYFixtureControl>)proxy(control, endpointResult)
             endpoint:^(NSXPCListenerEndpoint *endpoint) { [endpointResult finish:endpoint]; }];
@@ -457,17 +533,25 @@ int main(int argc, char **argv) {
             assert([snapshot(control) isEqual:initial]);
         }
         NSLog(@"CASE accepted stranger rejection");
+        NSDictionary *listenerBefore = listenerControl(endpoint, brokerRequirement);
+        assert([snapshot(control) isEqual:initial]);
         // Same UID, different signed executable gets the genuine anonymous endpoint.
         NSXPCConnection *stranger = [[NSXPCConnection alloc] initWithServiceName:@"org.mixyard.stranger.fixture"];
         stranger.remoteObjectInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYStranger)];
         assert(mixyard::pin(stranger, strangerRequirement)); exportProbe(stranger); [stranger resume]; expect(ready(stranger), @"ready");
         MYResult *attack = [MYResult new]; attack.stage = @"stranger attempt"; [(id<MYStranger>)proxy(stranger, attack)
             attempt:endpoint requirement:brokerRequirement reply:^(NSDictionary *value) { [attack finish:value]; }];
-        id rejected = [attack wait]; assert([rejected isKindOfClass:NSDictionary.class]);
-        assert([rejected[@"rejection_observed"] boolValue] && [rejected[@"uid"] unsignedIntValue] == getuid());
+        id rejected = [attack wait]; observation(@"parent stranger result before assertion", rejected);
+        assert([rejected isKindOfClass:NSDictionary.class]);
+        assert([rejected[@"remote_rejection_observed"] boolValue] && [rejected[@"uid"] unsignedIntValue] == getuid());
         assert([rejected[@"pid"] intValue] != [initial[@"pid"] intValue]);
         assert([snapshot(control)[@"packets"] unsignedLongLongValue] == 0);
         assert([snapshot(control)[@"hellos"] unsignedLongLongValue] == 0);
+        assert([snapshot(control) isEqual:initial]);
+        NSDictionary *listenerAfter = listenerControl(endpoint, brokerRequirement);
+        assert([snapshot(control) isEqual:initial]);
+        assert([listenerBefore isEqual:listenerAfter]);
+        assert([rejected[@"request_base64"] isEqual:listenerBefore[@"request_base64"]]);
         samples(read(control, 0, 0, 8), 0, 8); samples(read(control, 1, 0, 8), 0, 8);
         NSLog(@"CASE producer packet and credit corpus");
         NSXPCConnection *producer = connect(endpoint, brokerRequirement); assert(producer);
@@ -557,6 +641,7 @@ int main(int argc, char **argv) {
         NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"schema_version": @1, @"status": @"pass",
             @"evidence_kind": @"native_authenticated_anonymous_XPC_with_in_process_Apple_ABI_reads",
             @"producer_pid": @(getpid()), @"broker": finalState, @"stranger": rejected,
+            @"listener_control_before": listenerBefore, @"listener_control_after": listenerAfter,
             @"stale_broker_error": staleError, @"stale_supervisor_broker_error": staleControlError,
             @"wrong_broker_error": wrongReceiverError,
             @"actor_readiness_checks": actorChecks,

@@ -40,9 +40,11 @@ void authorityEvent(NSDictionary *event) {
 
 @interface MYSession : NSObject <MYPCMTransport, MYFixtureControl> {
     uint64_t _generation;
+    uint64_t _identityRequests, _authenticationRequests, _confirmationRequests, _helloRequests, _packetRequests;
     mixyard::Readiness _readiness;
 }
 @property(strong) NSXPCListenerEndpoint *endpoint;
+@property(strong) NSDictionary *context;
 @property(copy) void (^beginProbe)(void);
 - (BOOL)probeCompleted;
 - (void)expire:(NSXPCConnection *)connection;
@@ -53,12 +55,14 @@ void authorityEvent(NSDictionary *event) {
 - (void)identify:(void (^)(NSDictionary *))reply {
     // Reply only: no reverse invocation can race this receiver-identity check.
     std::lock_guard<std::mutex> lock(state.mutex);
+    ++_identityRequests;
     reply(status(_readiness.closed ? @"closed" : @"identity"));
 }
 - (void)authenticate:(void (^)(NSDictionary *))reply {
     void (^probe)(void) = nil;
     {
         std::lock_guard<std::mutex> lock(state.mutex);
+        ++_authenticationRequests;
         _readiness.authenticate(reply);
         if (!_readiness.closed) { probe = self.beginProbe; self.beginProbe = nil; }
     }
@@ -70,6 +74,7 @@ void authorityEvent(NSDictionary *event) {
 }
 - (void)confirm:(NSString *)challenge reply:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
+    ++_confirmationRequests;
     const bool accepted = _readiness.confirm(challenge);
     if (!accepted) [self closeLocked];
     reply(status(accepted ? @"ready" : @"rejected"));
@@ -85,6 +90,7 @@ void authorityEvent(NSDictionary *event) {
 }
 - (void)hello:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
+    ++_helloRequests;
     if (_readiness.closed || !_readiness.ready || self.endpoint) { reply(status(@"not_ready")); return; }
     if (_generation || state.active || state.nextGeneration == UINT64_MAX) {
         reply(status(@"busy")); return;
@@ -101,6 +107,7 @@ void authorityEvent(NSDictionary *event) {
             @"sample_rate": @48000, @"channels": @2, @"format": @"Float32-interleaved"});
 }
 - (void)packet:(NSData *)data reply:(void (^)(NSDictionary *))reply {
+    { std::lock_guard<std::mutex> lock(state.mutex); ++_packetRequests; }
     // Foundation decoding is OS-owned. Application validates before any PCM copy;
     // max message bytes is 32824, not a pre-decode allocation guarantee for NSXPC.
     mixyard::Header h{};
@@ -136,11 +143,25 @@ void authorityEvent(NSDictionary *event) {
             @"effective_delivery_ack": @NO});
 }
 - (void)closeLocked {
+    const bool wasClosed = _readiness.closed, wasReady = _readiness.ready;
     _readiness.close();
     self.beginProbe = nil;
     if (_generation && state.active == _generation) {
         (void)MixyardInputTest_Disconnect(2, _generation);
         state.active = 0;
+    }
+    if (!wasClosed) {
+        NSMutableDictionary *event = [self.context mutableCopy];
+        event[@"outcome"] = @"session_closed";
+        event[@"verified"] = @(_readiness.verified); event[@"ready"] = @(wasReady);
+        event[@"requests"] = @[@(_identityRequests), @(_authenticationRequests), @(_confirmationRequests),
+            @(_helloRequests), @(_packetRequests)];
+        event[@"state"] = @{@"active": @(state.active), @"generation": @(state.nextGeneration),
+            @"packets": @(state.packets), @"hellos": @(state.hellos),
+            @"credit_frames": @(state.credits()), @"cursor0": @(state.cursors[0]),
+            @"cursor1": @(state.cursors[1]), @"start": @(state.start), @"end": @(state.end),
+            @"revision": @(state.revision)};
+        authorityEvent(event);
     }
 }
 - (void)close {
@@ -199,7 +220,8 @@ void authorityEvent(NSDictionary *event) {
 - (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
     NSString *requirement = listener == self.anonymous ? self.requirement : mixyard::fixturePolicy()[@"producer"];
     NSDictionary *context = @{@"channel": listener == self.anonymous ? @"pcm" : @"control",
-        @"peer_pid": @(connection.processIdentifier), @"requirement": requirement ?: @"<unavailable>"};
+        @"peer_pid": @(connection.processIdentifier), @"requirement": requirement ?: @"<unavailable>",
+        @"connection": NSUUID.UUID.UUIDString};
     // Anonymous connections inherit their listener pin (single-assignment).
     // serviceListener does not support listener pins; pin its connection before
     // resume, replies, reverse probes or authority instead.
@@ -218,6 +240,7 @@ void authorityEvent(NSDictionary *event) {
         [self.connections addObject:connection];
     }
     MYSession *session = [MYSession new];
+    session.context = context;
     if (listener == self.anonymous) {
         connection.exportedInterface = pcmInterface();
         connection.exportedObject = session;
