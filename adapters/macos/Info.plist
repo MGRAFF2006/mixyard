@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>org.mixyard.coreaudio-probe</string>
+  <key>CFBundleName</key><string>Mixyard Core Audio Probe</string>
+  <key>CFBundleExecutable</key><string>mixyard-coreaudio-probe</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Record only the processes you explicitly select to a local WAV file for Mixyard audio qualification.</string>
+</dict></plist>
