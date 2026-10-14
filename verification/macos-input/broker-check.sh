@@ -172,8 +172,7 @@ def run(case, args):
             if case=='stale-producer':
                 assert proof['error']['domain']=='NSCocoaErrorDomain'
                 assert proof['error']['code']==requirement_failure_code
-                expected = [e for e in events if e['channel']=='control' and e['outcome']=='listener_pinned'
-                            and e['requirement']==policy['producer']]
+                expected = matching(events, 'control', proof['producer_pid'], policy['producer'], 'connection_pinned')
             else:
                 expected = matching(events, 'control', proof['producer_pid'], policy.get('producer','<unavailable>'),
                                     'policy_unavailable')

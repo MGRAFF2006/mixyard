@@ -12,10 +12,14 @@ installed, registered into system bootstrap, loaded into HAL, or launched throug
 `launchctl`. This launch mechanism is part of the native experiment and may fail;
 raw stdout/stderr/exit files remain uploaded. No source-only API assumption passes.
 
-The broker and actors pin incoming connections with Foundation's supported
-`setConnectionCodeSigningRequirement:` on each listener before `resume`; clients
-pin receivers with `setCodeSigningRequirement:` before `resume`. Both APIs are
-macOS 13+; malformed, broad,
+The broker's anonymous listener uses Foundation's supported
+`setConnectionCodeSigningRequirement:` before `resume`; its connections inherit
+that pin and never assign it twice. This listener setter supports only anonymous
+or Mach-service listeners, not bundled `serviceListener` instances. The broker
+supervisor and actor service delegates instead install the exact expected peer
+requirement with `setCodeSigningRequirement:` on each accepted connection before
+resume, replies, reverse probes or authority. Clients pin receivers with the same
+connection setter before `resume`. Both APIs are macOS 13+; malformed, broad,
 missing or unavailable requirements fail closed. Peer authentication never uses
 UID, PID, executable paths or bundle names. Per-build exact cdhash policy is
 generated **after signing**, outside the bundles, to avoid circular code hashes;
@@ -31,8 +35,9 @@ The reverse stale-broker pin must yield `NSCocoaErrorDomain` with
 `NSXPCConnectionCodeSigningRequirementFailure`, using the selected SDK constant.
 The stranger and stale inbound producer must also receive that specific native
 requirement-failure error; generic invalidation cannot qualify any live mismatch.
-The evidence additionally binds the rejecting listener's configured exact pin
-to the actual broker process. A configured-pin event alone proves no rejection.
+The evidence additionally binds the anonymous listener's inherited pin or the
+supervisor connection's configured exact pin to the actual broker process.
+A configured-pin event alone proves no rejection.
 Malformed/missing supervisor policy instead requires
 the live listener's distinct `policy_unavailable` event, with valid transport
 policy so startup failure cannot substitute. PID fields correlate diagnostics;
@@ -132,7 +137,8 @@ Primary API contracts:
   supported live peer checks before resume, malformed requirement errors and
   invalidation on a mismatch; availability macOS 13+.
 - [Foundation listener requirements](https://developer.apple.com/documentation/foundation/nsxpclistener/setconnectioncodesigningrequirement(_:)):
-  supported live requirements for incoming connections; availability macOS 13+.
+  supported live requirements for anonymous/Mach-service listeners only;
+  bundled service listeners use per-connection pins; availability macOS 13+.
 - [Creating XPC services](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingXPCServices.html):
   app-owned bundled services and native endpoint transfer; no system helper proof.
 - [Anonymous listener](https://developer.apple.com/documentation/foundation/nsxpclistener/anonymous()):

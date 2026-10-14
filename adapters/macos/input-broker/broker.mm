@@ -200,11 +200,17 @@ void authorityEvent(NSDictionary *event) {
     NSString *requirement = listener == self.anonymous ? self.requirement : mixyard::fixturePolicy()[@"producer"];
     NSDictionary *context = @{@"channel": listener == self.anonymous ? @"pcm" : @"control",
         @"peer_pid": @(connection.processIdentifier), @"requirement": requirement ?: @"<unavailable>"};
-    // A valid requirement was installed on this listener before resume. Do not
-    // set it again on its inherited connection (the API is single-assignment).
-    if (!mixyard::exactRequirement(requirement)) {
+    // Anonymous connections inherit their listener pin (single-assignment).
+    // serviceListener does not support listener pins; pin its connection before
+    // resume, replies, reverse probes or authority instead.
+    if (!mixyard::exactRequirement(requirement) ||
+        (listener != self.anonymous && !mixyard::pin(connection, requirement))) {
         NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"policy_unavailable";
         authorityEvent(event); return NO;
+    }
+    if (listener != self.anonymous) {
+        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"connection_pinned";
+        authorityEvent(event);
     }
     @synchronized (self) {
         // Finite fixture budget, not product capacity. Reclaimed on invalidation.
@@ -235,7 +241,7 @@ void authorityEvent(NSDictionary *event) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC),
         dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{ [weakSession expire:weakConnection]; });
     // The client checks an identify reply before asking for this reverse probe.
-    // Listener pinning also rejects mismatched inbound peers before dispatch.
+    // The incoming connection's exact requirement checks received messages.
     session.beginProbe = ^{
         MYSession *pending = weakSession;
         NSXPCConnection *live = weakConnection;
@@ -277,11 +283,7 @@ int main() {
         authorityEvent(@{@"channel": @"pcm", @"outcome": @"listener_pinned", @"requirement": requirement});
         broker.anonymous.delegate = broker; [broker.anonymous resume];
         NSXPCListener *service = NSXPCListener.serviceListener;
-        NSString *producer = mixyard::fixturePolicy()[@"producer"];
-        if (mixyard::exactRequirement(producer)) {
-            if (!mixyard::pinListener(service, producer)) return 2;
-            authorityEvent(@{@"channel": @"control", @"outcome": @"listener_pinned", @"requirement": producer});
-        } // Unavailable policy is rejected by the delegate, never accepted unpinned.
+        // The delegate pins each service connection or rejects unavailable policy.
         service.delegate = broker; [service resume];
         dispatch_main();
     }

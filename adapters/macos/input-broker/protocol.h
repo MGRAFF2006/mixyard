@@ -70,6 +70,8 @@ inline bool pin(NSXPCConnection *connection, NSString *requirement) {
     }
     return false;
 }
+// Only anonymousListener/initWithMachServiceName support this setter. Bundled
+// serviceListener delegates must pin each accepted connection before resume.
 inline bool pinListener(NSXPCListener *listener, NSString *requirement) {
     if (!listener || !exactRequirement(requirement)) return false;
     if (@available(macOS 13.0, *)) {

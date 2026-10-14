@@ -206,8 +206,9 @@ static void actorEvent(NSDictionary *context, NSString *outcome, uint64_t uses, 
 }
 - (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
     (void)listener;
-    // Inherited from the exact listener requirement installed before resume.
-    if (!mixyard::exactRequirement(self.producerRequirement)) return NO;
+    // serviceListener cannot carry a listener requirement. Install its exact
+    // peer pin once, before resume or any exported/reverse invocation.
+    if (!mixyard::pin(connection, self.producerRequirement)) return NO;
     @synchronized (self) {
         if (self.connections.count >= 8) return NO;
         [self.connections addObject:connection];
@@ -302,7 +303,6 @@ int main(int argc, char **argv) {
             actor.producerRequirement = mixyard::fixturePolicy()[@"producer"];
             if (!mixyard::exactRequirement(actor.producerRequirement)) return 2;
             NSXPCListener *listener = NSXPCListener.serviceListener;
-            if (!mixyard::pinListener(listener, actor.producerRequirement)) return 2;
             listener.delegate = actor; [listener resume]; dispatch_main();
         }
         assert(argc == 5);
