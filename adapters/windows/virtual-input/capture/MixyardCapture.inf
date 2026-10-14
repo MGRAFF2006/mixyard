@@ -1,0 +1,81 @@
+; SPDX-License-Identifier: MIT
+; Original single capture adapter. Software-device provisioning is a future gate.
+[Version]
+Signature="$WINDOWS NT$"
+Class=MEDIA
+ClassGuid={4D36E96C-E325-11CE-BFC1-08002BE10318}
+Provider=%Provider%
+DriverVer=10/14/2026,0.1.0.0
+CatalogFile=MixyardCapture.cat
+PnpLockdown=1
+
+[Manufacturer]
+%Provider%=Models,NTamd64.10.0...19041
+
+[Models.NTamd64.10.0...19041]
+%DeviceName%=Capture,SWD\MixyardCapture
+
+[Capture.NT]
+Include=ks.inf,wdmaudio.inf
+Needs=KS.Registration,WDMAUDIO.Registration
+CopyFiles=DriverCopy
+AddReg=Names
+
+[Capture.NT.Services]
+AddService=MixyardCapture,0x00000002,CaptureService
+
+[CaptureService]
+DisplayName=%DeviceName%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\MixyardCapture.sys
+
+[Capture.NT.Interfaces]
+AddInterface=%KSCATEGORY_AUDIO%,WaveCapture,WaveInterface
+AddInterface=%KSCATEGORY_CAPTURE%,WaveCapture,WaveInterface
+AddInterface=%KSCATEGORY_REALTIME%,WaveCapture,WaveInterface
+AddInterface=%KSCATEGORY_AUDIO%,TopologyCapture,TopologyInterface
+AddInterface=%KSCATEGORY_TOPOLOGY%,TopologyCapture,TopologyInterface
+
+[WaveInterface]
+AddReg=WaveProperties
+[WaveProperties]
+HKR,,CLSID,,%AudioProxy%
+HKR,,FriendlyName,,%DeviceName%
+
+[TopologyInterface]
+AddReg=TopologyProperties
+[TopologyProperties]
+HKR,,CLSID,,%AudioProxy%
+HKR,,FriendlyName,,%DeviceName%
+; Never eligible for any default role; native verification still required.
+HKR,"EP\0",%Association%,,"{00000000-0000-0000-0000-000000000000}"
+HKR,"EP\0",%NeverDefault%,0x00010001,0x00000307
+
+[Names]
+HKR,%MediaCategories%\%MicrophonePin%,Name,,%EndpointName%
+
+[DestinationDirs]
+DriverCopy=13
+[DriverCopy]
+MixyardCapture.sys
+[SourceDisksNames]
+1=%MediaName%,,,
+[SourceDisksFiles]
+MixyardCapture.sys=1
+
+[Strings]
+Provider="Mixyard"
+DeviceName="Mixyard capture artifact"
+EndpointName="Mixyard input proof"
+MediaName="Mixyard unsigned capture artifact"
+MediaCategories="MediaCategories"
+MicrophonePin="{622A2115-C0DC-4F04-B622-8ADFD85D8D75}"
+Association="{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2"
+NeverDefault="{F3E80BEF-1723-4FF2-BCC4-7F83DC5E46D4},3"
+AudioProxy="{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO="{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_CAPTURE="{65E8773D-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME="{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+KSCATEGORY_TOPOLOGY="{DDA54A40-1E4C-11D1-A050-405705C10000}"

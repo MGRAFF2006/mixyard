@@ -8,10 +8,12 @@ import struct
 import sys
 
 
-def validate(package: Path) -> dict:
+def validate(package: Path, stem: str = "MixyardIngress") -> dict:
+    if stem not in ("MixyardIngress", "MixyardCapture"):
+        raise ValueError("unknown package")
     entries = list(package.iterdir())
     files = []
-    for name in ("MixyardIngress.sys", "MixyardIngress.inf", "MixyardIngress.cat", "LICENSE"):
+    for name in (f"{stem}.sys", f"{stem}.inf", f"{stem}.cat", "LICENSE"):
         matches = [p for p in entries if p.name.casefold() == name.casefold()]
         if not matches:
             raise ValueError(f"missing artifact: {name}")
@@ -38,7 +40,7 @@ def validate(package: Path) -> dict:
         raise ValueError("expected unsigned driver, found embedded certificate table")
     return {
         "schema_version": 1,
-        "kind": "unsigned-private-ingress-build",
+        "kind": "unsigned-private-ingress-build" if stem == "MixyardIngress" else "unsigned-capture-artifact-build",
         "files": {p.name: {"bytes": p.stat().st_size,
                             "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in files},
         "endpoint_published": False,
@@ -50,9 +52,9 @@ def validate(package: Path) -> dict:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: artifact_check.py UNSIGNED_PACKAGE_DIRECTORY")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit("usage: artifact_check.py UNSIGNED_PACKAGE_DIRECTORY [MixyardIngress|MixyardCapture]")
     directory = Path(sys.argv[1])
-    result = validate(directory)
+    result = validate(directory, sys.argv[2] if len(sys.argv) == 3 else "MixyardIngress")
     (directory / "artifact.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print("PASS: x64 native unsigned package headers/hash inventory only; no load or audio evidence")

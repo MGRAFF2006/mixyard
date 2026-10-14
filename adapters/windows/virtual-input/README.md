@@ -1,4 +1,9 @@
-# Windows private ingress scaffold — publication BLOCKED
+# Windows ingress and capture artifacts — native publication BLOCKED
+
+The reviewed **System-class ingress package** below is retained. A separate
+[original capture package](capture/README.md) now adds PortCls/WaveRT source and a
+matching Media INF. No installed/observed endpoint or consumer PCM is established.
+The remaining ingress-only descriptions below refer to `MixyardIngress.sys`.
 
 Original MIT code under the repository license. No SysVAD or other upstream
 implementation was copied. This is the small fallback artifact for an original
@@ -21,7 +26,7 @@ extension/toolset, NuGet and Python, from the repository root:
 ./adapters/windows/virtual-input/build.ps1
 ```
 
-The script restores project-local SDK/WDK packages pinned to **10.0.26100.6584**,
+The script builds both packages and restores project-local SDK/WDK packages pinned to **10.0.26100.6584**,
 requires matching build **26100**, records exact VS/MSVC revisions, builds with
 `/m:2`, runs the queue check, invokes the pinned WDK's `InfVerif /w` and `Inf2Cat
 /os:10_GE_X64`, and inspects the unsigned x64 native PE headers and file hashes.
