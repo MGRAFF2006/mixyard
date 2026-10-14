@@ -1789,9 +1789,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mixyard"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "mixyard-desktop"
 version = "0.1.0"
 dependencies = [
+ "mixyard",
  "serde",
  "tauri",
  "tauri-build",

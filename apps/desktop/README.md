@@ -24,16 +24,29 @@ pnpm tauri build --no-bundle -- --locked --jobs 2 # Release binary; no installer
 On a qualifying desktop, detach longer native builds in tmux and report their
 result. `pnpm tauri dev` starts its own frontend server; stop an existing server
 on port 1420 before using it. The shell package has its own Cargo workspace and
-lockfile under `src-tauri/`; it does not alter the root Cargo package.
+lockfile under `src-tauri/`. Its only core dependency points desktop → root library; root Cargo remains GUI/display-free.
 
 ## Implemented versus simulated
 
 The default state is **Not connected**. It never enumerates devices, opens a mic,
 changes system defaults, starts an audio service, or invokes the headless CLI.
-Send, master, target, source and media-policy mutations are locked. Connection
-checking only reads shell availability; the live control runtime is not
-implemented. Missing IPC or an unsupported shell response leaves controls locked.
-No runtime revision, accepted command or applied route is invented.
+Send, master, target, source and media-policy mutations stay locked even when connected.
+Start the existing runtime separately (`cargo run --bin mixyard-runtime -- serve
+--instance default`), then use **Connect** with that local instance name. The
+read-only subscription uses the same Unix peer-UID / Windows SID-checked
+transport as the CLI. There is no second transport or CLI subprocess bridge.
+It displays IPC v1 snapshot/sequence/lifecycle, `backendAvailable: false`, and
+null audio/applied/desired revisions. Connected means lifecycle IPC only;
+it never means working audio. Missing IPC, capability/version mismatch, stopped
+runtime and unexpected disconnect fail closed. Reconnect is explicit and resyncs.
+No runtime revision, accepted audio command or applied route is invented.
+
+One worker owns at most one subscription; there are no per-connect threads,
+queued commands, automatic retry loops or event history. All transport work stays
+off the UI thread, startup is bounded to five seconds, partial frames expire,
+and status polling has one outstanding request at most. **Disconnect**, window
+close and Quit UI drop only the UI connection. Runtime startup/shutdown remain
+explicit CLI operations; the app never starts, owns or stops the process.
 
 **Show demo** opens a visibly labelled, in-memory preview. Leaving demo resets
 its edits. Fixtures are neither discovery results nor schema-2 runtime config.
@@ -67,8 +80,8 @@ There is no import/export or live apply operation.
 
 ## Native shell and tray
 
-The Rust shell constructs a native tray/menu with Open Mixer, disconnected
-status, Close mixer window, Quit UI, and a disabled Stop runtime item. It has
+The Rust shell constructs a native tray/menu with Open Mixer, an instruction
+to inspect read-only runtime state in the mixer, Close mixer window, Quit UI, and a disabled Stop runtime item. It has
 no pretend mute/recording actions. On Linux/Windows, titlebar close, Close window
 and the tray Close mixer window action exit only the UI. A fresh launch opens
 a new window. Tray construction cannot establish visible host recovery, so
@@ -85,11 +98,12 @@ Linux uses the native context-menu Open Mixer fallback; Tauri tray mouse events
 are unsupported there. Rich anchored panels are not implemented or promised.
 See [Tauri tray support](https://v2.tauri.app/learn/system-tray/).
 
-Only three local commands are exposed through an explicit main-window
-capability: `shell_status`, `hide_mixer`, `quit_ui`. No shell, filesystem,
+Only five local commands are exposed through an explicit main-window
+capability: `shell_status`, `connect_runtime`, `disconnect_runtime`, `hide_mixer`,
+`quit_ui`. Connect accepts only a validated local instance name. No shell, filesystem,
 device-control, remote-origin or generic runtime permissions are granted.
 The existing `hide_mixer` command name is retained, with the platform-specific
-close behavior above; native qualification adds no command or plugin.
+close behavior above; native qualification adds no test command or plugin.
 Release CSP excludes network control endpoints; the development CSP permits
 only the local frontend/HMR origin. See
 [Tauri capability rules](https://v2.tauri.app/security/capabilities/).
@@ -150,8 +164,13 @@ Still required on unexercised platforms/hosts: native compilation, window close 
 reopen / Quit UI lifecycle, visible tray/menu behavior and no-tray fallback,
 keyboard/screen-reader and compact-window checks, and measured native-webview
 local interaction p95 <=100 ms under defined normal/contended load. The scoped
-container result does not certify those shipping gates. No audio runtime or IPC meter transport exists here,
-so UI-induced audio gaps, runtime survival during UI exit, bounded/coalesced
-meter delivery, live accepted-versus-applied revisions, stale edits, reconnects,
-virtual-input transport, device latency and sound quality remain unproved.
+container result above predates the lifecycle bridge and does not certify those
+shipping gates. The extended native harness starts a private real headless
+runtime explicitly, connects through trusted keyboard input, and checks the
+same runtime PID with CLI status after each UI close/Quit before explicit CLI
+shutdown. Only a passing current `linux-webview.json` result with same-runtime survival steps proves that scope;
+it is lifecycle process/IPC survival, with audio still unavailable.
+UI-induced audio gaps, meter delivery, live accepted-versus-applied audio
+revisions, stale edits, virtual-input transport, device latency and sound quality
+remain unproved.
 No UI screenshot or browser timing substitutes for those gates.

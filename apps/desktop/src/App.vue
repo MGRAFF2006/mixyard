@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import SendControl from './SendControl.vue'
 import { blockedSend, controlPlayers, createPreview, devices, gainDb, needsMonitorConsent, newMix, newOutput, peakBound, previewPlayback, routedPlayers, sources, updateSend } from './model.ts'
 import type { Mode, Output, Send } from './model.ts'
-import { inDesktopShell, shellAction, shellStatus } from './bridge'
+import { inDesktopShell, runtimeAction, shellAction, shellStatus } from './bridge'
+import { connectionLabel, disconnected } from './runtime.ts'
 
 const mode = ref<Mode>('disconnected')
 const preview = ref(createPreview())
@@ -11,7 +12,14 @@ const selectedId = ref(preview.value.mixes[0]!.id)
 const selected = computed(() => preview.value.mixes.find(mix => mix.id === selectedId.value))
 const demo = computed(() => mode.value === 'demo')
 const checking = ref(false)
-const connectionNote = ref('Live control is not available in this prototype. No devices have been discovered.')
+const connection = ref(disconnected())
+const instance = ref('default')
+const connectionNote = ref('Connect to an existing runtime started separately with the CLI. Closing this UI leaves it running.')
+const label = computed(() => connectionLabel(connection.value))
+const active = computed(() => ['connecting', 'connected'].includes(connection.value.phase))
+let timer: ReturnType<typeof setTimeout> | undefined
+let mounted = true
+let generation = 0
 const notice = ref('')
 const trayCreated = ref(false)
 const devicePanel = ref(false)
@@ -31,17 +39,44 @@ const issues = computed(() => !demo.value ? [] : [
 ])
 
 async function checkConnection() {
-  if (checking.value) return
+  if (checking.value || !mounted) return
   checking.value = true
+  const current = generation
   try {
     const status = await shellStatus()
+    if (current !== generation || !mounted) return
     trayCreated.value = status?.trayCreated ?? false
-    connectionNote.value = status
-      ? `Desktop shell available on ${status.platform}. Live control runtime is not implemented; controls stay disconnected.`
-      : 'Browser preview only. Live control runtime is not implemented; no system devices or audio are accessed.'
+    if (status) connection.value = status.runtime
+    else connectionNote.value = 'Browser preview only. Use the desktop app to connect to a separately started local runtime.'
   } catch (error) {
-    connectionNote.value = `Connection check failed: ${error instanceof Error ? error.message : String(error)} Controls stay disconnected.`
-  } finally { checking.value = false }
+    connection.value = disconnected()
+    connectionNote.value = `Connection check failed: ${error instanceof Error ? error.message : String(error)}`
+    // Drop any native subscription after an incompatible bridge response.
+    if (inDesktopShell) {
+      try { await runtimeAction('disconnect_runtime') }
+      catch (disconnectError) { connectionNote.value += ` Disconnect failed: ${String(disconnectError)}. Quit the UI to drop its connection.` }
+    }
+  } finally {
+    checking.value = false
+    if (mounted && active.value) timer = setTimeout(checkConnection, 250)
+  }
+}
+
+async function changeConnection() {
+  if (checking.value) return
+  clearTimeout(timer)
+  generation++
+  checking.value = true
+  try {
+    connection.value = await runtimeAction(active.value ? 'disconnect_runtime' : 'connect_runtime', instance.value)
+    connectionNote.value = 'Closing this UI drops its connection only. The CLI owns runtime startup and shutdown.'
+  } catch (error) {
+    connection.value = disconnected()
+    connectionNote.value = `Connection failed: ${error instanceof Error ? error.message : String(error)} Start the owned instance separately with the CLI, then Connect.`
+  } finally {
+    checking.value = false
+    if (mounted && active.value) timer = setTimeout(checkConnection, 250)
+  }
 }
 
 function toggleDemo() {
@@ -109,6 +144,7 @@ async function windowAction(action: 'hide_mixer' | 'quit_ui') {
 function deviceName(id: string) { return devices.find(device => device.id === id)?.name ?? 'Unknown target' }
 function sourceMissing(id: string) { return id === 'fixture:return' || (id === 'fixture:mic' && preview.value.micMissing) }
 onMounted(checkConnection)
+onUnmounted(() => { mounted = false; generation++; clearTimeout(timer) })
 </script>
 
 <template>
@@ -116,17 +152,24 @@ onMounted(checkConnection)
     <header class="topbar">
       <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>mixyard</span><span class="prototype">prototype</span></div>
       <div class="header-actions">
-        <span class="connection-state"><span class="status-dot"></span>Not connected</span>
+        <span id="runtime-status" class="connection-state" role="status"><span class="status-dot"></span>{{ label }}</span>
         <button class="quiet-button" :aria-expanded="devicePanel" aria-controls="device-controls" @click="devicePanel = !devicePanel">Device controls</button>
         <button :class="['button', demo ? 'secondary' : 'primary']" @click="toggleDemo">{{ demo ? 'Exit demo' : 'Show demo' }}</button>
       </div>
     </header>
 
-    <section class="connection-banner" aria-label="Runtime connection" :aria-busy="checking">
-      <div><strong>{{ demo ? 'Demo · preview only' : checking ? 'Checking connection…' : 'Your runtime is not connected' }}</strong>
-        <p>{{ demo ? 'Fixture devices, static sample levels and local edits. No audio is routed, recorded or controlled.' : connectionNote }}</p></div>
-      <button v-if="!demo" class="button secondary" :disabled="checking" @click="checkConnection">{{ checking ? 'Checking…' : 'Check connection' }}</button>
-      <span v-else class="demo-tag">No live audio</span>
+    <section class="connection-banner" aria-label="Runtime connection" :aria-busy="checking || connection.phase === 'connecting'">
+      <div id="runtime-detail"><strong>{{ demo ? 'Demo · preview only' : label }}</strong>
+        <p v-if="demo">Fixture devices, static sample levels and local edits. No audio is routed, recorded or controlled. Runtime connection is separate.</p>
+        <p v-else>{{ connection.error ? `Connection lost or refused: ${connection.error}. Start the owned instance with the CLI, then Connect.` : connectionNote }}</p>
+        <p v-if="connection.event">IPC v1 · {{ connection.instance }} · {{ connection.event.event }} sequence {{ connection.event.sequence }} · {{ connection.event.lifecycle }} · read-only</p>
+        <p v-if="connection.phase === 'connected'">backendAvailable: false · audioRevision: null · appliedRevision: null · desiredRevision: null. No live audio or device control.</p>
+      </div>
+      <div class="runtime-actions">
+        <label for="runtime-instance">Local runtime instance<input id="runtime-instance" v-model="instance" :disabled="active || checking" maxlength="32" pattern="[A-Za-z0-9-]{1,32}" spellcheck="false" autocomplete="off" /></label>
+        <button :id="active ? 'runtime-disconnect' : 'runtime-connect'" class="button secondary" :disabled="checking || !inDesktopShell" @click="changeConnection">{{ active ? 'Disconnect' : 'Connect' }}</button>
+        <span v-if="demo" class="demo-tag">No live audio</span>
+      </div>
     </section>
 
     <main>
@@ -146,7 +189,7 @@ onMounted(checkConnection)
         <template v-if="selected">
           <section class="mix-heading">
             <div><label class="sr-only" for="mix-name">Mix name</label><input id="mix-name" class="mix-name" :value="selected.name" :readonly="!demo" maxlength="80" @change="renameMix" />
-              <p>{{ demo ? 'Rename freely. Routing belongs to the mix, not its name.' : 'A starter preset. Connect a runtime before changing routes.' }}</p></div>
+              <p>{{ demo ? 'Rename freely. Routing belongs to the mix, not its name.' : 'A starter preset. Live route control is unavailable; demo edits stay in memory.' }}</p></div>
             <button class="quiet-button remove-mix" :disabled="!demo" @click="removeMix">Remove mix</button>
           </section>
 
@@ -216,7 +259,7 @@ onMounted(checkConnection)
       </div>
     </main>
 
-    <footer class="app-footer"><span>{{ demo ? 'Preview only · no accepted or applied changes' : 'No runtime session · revision unavailable' }}</span><div v-if="inDesktopShell"><button class="quiet-button" @click="windowAction('hide_mixer')">Close window</button><button class="quiet-button" @click="windowAction('quit_ui')">Quit UI</button><button class="quiet-button" disabled title="Live runtime control is not implemented">Stop runtime · unavailable</button></div><span v-else>Browser preview · native tray unverified</span></footer>
+    <footer class="app-footer"><span>{{ demo ? 'Preview only · no accepted or applied changes' : connection.phase === 'connected' ? 'Read-only lifecycle session · audio unavailable · revisions null' : 'No runtime session · revision unavailable' }}</span><div v-if="inDesktopShell"><button class="quiet-button" @click="windowAction('hide_mixer')">Close window</button><button class="quiet-button" @click="windowAction('quit_ui')">Quit UI</button><button class="quiet-button" disabled title="Live runtime control is not implemented">Stop runtime · unavailable</button></div><span v-else>Browser preview · native tray unverified</span></footer>
     <div class="notice" role="status" aria-live="polite">{{ notice }}</div>
     <p v-if="inDesktopShell && !trayCreated" class="tray-note">Tray creation unavailable or not yet checked. Close window exits the UI on Linux/Windows; on macOS it hides the mixer, restored from the Dock. Quit UI exits only the interface.</p>
   </div>
