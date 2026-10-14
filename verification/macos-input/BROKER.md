@@ -38,8 +38,25 @@ in the evidence. If the runtime does not produce the required event, the test
 fails; a timeout or unrelated error never qualifies. Both directions pin
 their expected peers, including actor/supervisor fixture connections.
 
-The PCM protocol has only hello and packet operations. It cannot choose or modify
-endpoints, read PCM, rename or retire devices. The authenticated fixture supervisor
+Pinning checks received messages; it does not delay outgoing authority requests.
+Each broker connection therefore has a separate non-authority readiness exchange.
+The broker first receives a pinned native probe reply, then returns a fresh
+connection-local challenge to `authenticate`. The client receives that pinned
+broker response before echoing the challenge in `confirm`. Only confirmation
+opens admission or supervisor authority. An early/wrong/replayed confirmation
+closes the session permanently; interruption/invalidation and probe errors also
+close it. A ten-second pending lifetime only revokes, never grants authority.
+No generation, hello, PCM, endpoint, read, cursor or credit mutation occurs while
+pending or closed. The native fixture holds reverse replies on both channels,
+tries early authority, closes with early confirmation, then releases the replies;
+correlated `late_probe_ignored` events must prove they actually arrived after
+close. Both stale receiver pins require exact native 4102 errors and unchanged
+broker state, including the retained zero-hello assertion. Actor relays also
+receive a pinned probe response before the supervisor transfers an endpoint.
+These are proposed assertions until exact native CI executes them successfully.
+
+The PCM authority protocol has only hello and packet operations, after readiness.
+It cannot choose or modify endpoints, read PCM, rename or retire devices. The authenticated fixture supervisor
 alone invokes the Apple ABI in the broker's ordinary process. There are two
 independent readers on endpoint A; the existing ring and ABI harness supply A/B
 fanout coverage. Neither is a HAL or external consumer. Release exports still

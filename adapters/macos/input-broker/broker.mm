@@ -38,16 +38,62 @@ void authorityEvent(NSDictionary *event) {
 }
 }
 
-@interface MYSession : NSObject <MYPCMTransport> {
+@interface MYSession : NSObject <MYPCMTransport, MYFixtureControl> {
     uint64_t _generation;
-    BOOL _closed;
+    BOOL _closed, _verified, _challengeSent, _ready;
+    NSString *_challenge;
+    void (^_authenticationReply)(NSDictionary *);
 }
+@property(strong) NSXPCListenerEndpoint *endpoint;
+- (BOOL)probeCompleted;
+- (void)expire:(NSXPCConnection *)connection;
+- (void)closeLocked;
 - (void)close;
 @end
 @implementation MYSession
+- (NSDictionary *)challengeLocked {
+    _challengeSent = YES;
+    return @{@"status": @"challenge", @"challenge": _challenge};
+}
+- (void)authenticate:(void (^)(NSDictionary *))reply {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    if (_closed) { reply(status(@"closed")); return; }
+    if (_challengeSent || _authenticationReply) { reply(status(@"pending")); return; }
+    if (_verified) reply([self challengeLocked]);
+    else _authenticationReply = [reply copy];
+}
+- (BOOL)probeCompleted {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    if (_closed) return NO;
+    _verified = YES;
+    _challenge = NSUUID.UUID.UUIDString;
+    if (_authenticationReply) {
+        _authenticationReply([self challengeLocked]); _authenticationReply = nil;
+    }
+    return YES;
+}
+- (void)confirm:(NSString *)challenge reply:(void (^)(NSDictionary *))reply {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    if (_closed || _ready || !_verified || !_challengeSent ||
+        ![challenge isKindOfClass:NSString.class] || ![_challenge isEqual:challenge]) {
+        [self closeLocked]; reply(status(@"rejected")); return;
+    }
+    _challenge = nil; _ready = YES;
+    reply(status(@"ready"));
+}
+- (void)expire:(NSXPCConnection *)connection {
+    // A finite pending-session lifetime only revokes; time never grants authority.
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (_ready) return;
+        [self closeLocked];
+    }
+    [connection invalidate];
+}
 - (void)hello:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (_closed || _generation || state.active || state.nextGeneration == UINT64_MAX) {
+    if (_closed || !_ready || self.endpoint) { reply(status(@"not_ready")); return; }
+    if (_generation || state.active || state.nextGeneration == UINT64_MAX) {
         reply(status(@"busy")); return;
     }
     const auto generation = ++state.nextGeneration;
@@ -79,7 +125,7 @@ void authorityEvent(NSDictionary *event) {
     for (uint32_t i = 0; i < h.frames * 2; ++i)
         if (!std::isfinite(pcm[i])) { reply(status(@"invalid")); return; }
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (_closed || !_generation || state.active != _generation) {
+    if (_closed || !_ready || self.endpoint || !_generation || state.active != _generation) {
         reply(status(@"not_admitted")); return;
     }
     if (h.generation != _generation || h.epoch != state.epoch ||
@@ -96,76 +142,35 @@ void authorityEvent(NSDictionary *event) {
             @"next_position": @(state.end), @"credit_frames": @(state.credits()),
             @"effective_delivery_ack": @NO});
 }
-- (void)close {
-    std::lock_guard<std::mutex> lock(state.mutex);
-    _closed = YES;
+- (void)closeLocked {
+    _closed = YES; _ready = NO; _challenge = nil;
+    if (_authenticationReply) { _authenticationReply(status(@"closed")); _authenticationReply = nil; }
     if (_generation && state.active == _generation) {
         (void)MixyardInputTest_Disconnect(2, _generation);
         state.active = 0;
     }
 }
-@end
-
-@interface MYBroker : NSObject <NSXPCListenerDelegate, MYFixtureControl>
-@property(strong) NSXPCListener *anonymous;
-@property(strong) NSString *requirement;
-@property(strong) NSMutableSet<NSXPCConnection *> *connections;
-@end
-@implementation MYBroker
-- (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
-    NSString *requirement = listener == self.anonymous ? self.requirement : mixyard::fixturePolicy()[@"producer"];
-    NSDictionary *context = @{@"channel": listener == self.anonymous ? @"pcm" : @"control",
-        @"peer_pid": @(connection.processIdentifier), @"requirement": requirement ?: @"<unavailable>"};
-    if (!mixyard::pin(connection, requirement)) {
-        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"policy_unavailable";
-        authorityEvent(event); return NO;
-    }
-    @synchronized (self) {
-        // Finite fixture budget, not product capacity. Reclaimed on invalidation.
-        if (self.connections.count >= 8) return NO;
-        [self.connections addObject:connection];
-    }
-    MYSession *session = nil;
-    if (listener == self.anonymous) {
-        session = [MYSession new]; connection.exportedInterface = pcmInterface();
-        connection.exportedObject = session;
-    } else {
-        connection.exportedInterface = controlInterface(); connection.exportedObject = self;
-    }
-    __weak MYBroker *weakSelf = self;
-    __weak NSXPCConnection *weakConnection = connection;
-    // Both interruption and invalidation revoke immediately outside RT. No retry,
-    // no retained producer authority, and a reconnect must perform fresh admission.
-    connection.interruptionHandler = ^{ [session close]; [weakConnection invalidate]; };
-    connection.invalidationHandler = ^{
-        [session close];
-        MYBroker *owner = weakSelf;
-        NSXPCConnection *closed = weakConnection;
-        @synchronized (owner) { if (closed) [owner.connections removeObject:closed]; }
-    };
-    connection.remoteObjectInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYAuthorityProbe)];
-    [connection resume];
-    // Foundation's enforcing-side error identifies requirement failure. The peer
-    // can see generic invalidation; neither that nor a timeout proves auth.
-    [(id<MYAuthorityProbe>)[connection remoteObjectProxyWithErrorHandler:^(NSError *error) {
-        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"probe_error";
-        event[@"error"] = mixyard::errorDetails(error); authorityEvent(event);
-    }] probe:^{
-        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"probe_reply";
-        authorityEvent(event);
-    }];
-    return YES;
+- (void)close {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    [self closeLocked];
 }
-- (void)endpoint:(void (^)(NSXPCListenerEndpoint *))reply { reply(self.anonymous.endpoint); }
+- (void)endpoint:(void (^)(NSXPCListenerEndpoint *))reply {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    reply(!_closed && _ready ? self.endpoint : nil);
+}
 - (void)snapshot:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
+    if (_closed || !_ready || !self.endpoint) { reply(status(@"not_ready")); return; }
     reply(@{@"active": @(state.active), @"generation": @(state.nextGeneration),
             @"packets": @(state.packets), @"hellos": @(state.hellos),
-            @"credit_frames": @(state.credits()), @"pid": @(getpid()), @"uid": @(getuid())});
+            @"credit_frames": @(state.credits()), @"cursor0": @(state.cursors[0]),
+            @"cursor1": @(state.cursors[1]), @"start": @(state.start), @"end": @(state.end),
+            @"revision": @(state.revision), @"pid": @(getpid()), @"uid": @(getuid())});
 }
 - (void)read:(uint32_t)reader frame:(uint64_t)frame count:(uint32_t)count
        reply:(void (^)(NSDictionary *))reply {
     std::lock_guard<std::mutex> lock(state.mutex);
+    if (_closed || !_ready || !self.endpoint) { reply(status(@"not_ready")); return; }
     if (reader >= 2 || !count || count > mixyard::packetFrames ||
         frame != state.cursors[reader] || frame > mixyard::maxPosition - count) {
         reply(status(@"invalid")); return;
@@ -189,6 +194,65 @@ void authorityEvent(NSDictionary *event) {
             @"next_frame": @(e.nextFrame), @"delivered_frames": @(e.deliveredFrames),
             @"zero_frames": @(e.zeroFrames), @"credit_frames": @(state.credits()),
             @"external_consumer_pcm": @NO});
+}
+@end
+
+@interface MYBroker : NSObject <NSXPCListenerDelegate>
+@property(strong) NSXPCListener *anonymous;
+@property(strong) NSString *requirement;
+@property(strong) NSMutableSet<NSXPCConnection *> *connections;
+@end
+@implementation MYBroker
+- (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
+    NSString *requirement = listener == self.anonymous ? self.requirement : mixyard::fixturePolicy()[@"producer"];
+    NSDictionary *context = @{@"channel": listener == self.anonymous ? @"pcm" : @"control",
+        @"peer_pid": @(connection.processIdentifier), @"requirement": requirement ?: @"<unavailable>"};
+    if (!mixyard::pin(connection, requirement)) {
+        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"policy_unavailable";
+        authorityEvent(event); return NO;
+    }
+    @synchronized (self) {
+        // Finite fixture budget, not product capacity. Reclaimed on invalidation.
+        if (self.connections.count >= 8) return NO;
+        [self.connections addObject:connection];
+    }
+    MYSession *session = [MYSession new];
+    if (listener == self.anonymous) {
+        connection.exportedInterface = pcmInterface();
+        connection.exportedObject = session;
+    } else {
+        session.endpoint = self.anonymous.endpoint;
+        connection.exportedInterface = controlInterface(); connection.exportedObject = session;
+    }
+    __weak MYBroker *weakSelf = self;
+    __weak NSXPCConnection *weakConnection = connection;
+    // Both interruption and invalidation revoke immediately outside RT. No retry,
+    // no retained producer authority, and a reconnect must perform fresh admission.
+    connection.interruptionHandler = ^{ [session close]; [weakConnection invalidate]; };
+    connection.invalidationHandler = ^{
+        [session close];
+        MYBroker *owner = weakSelf;
+        NSXPCConnection *closed = weakConnection;
+        @synchronized (owner) { if (closed) [owner.connections removeObject:closed]; }
+    };
+    connection.remoteObjectInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYAuthorityProbe)];
+    [connection resume];
+    __weak MYSession *weakSession = session;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC),
+        dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{ [weakSession expire:weakConnection]; });
+    // Foundation's enforcing-side error identifies requirement failure. The peer
+    // can see generic invalidation; neither that nor a timeout proves auth.
+    [(id<MYAuthorityProbe>)[connection remoteObjectProxyWithErrorHandler:^(NSError *error) {
+        [session close]; [weakConnection invalidate];
+        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"probe_error";
+        event[@"error"] = mixyard::errorDetails(error); authorityEvent(event);
+    }] probe:^{
+        const BOOL accepted = [session probeCompleted];
+        NSMutableDictionary *event = [context mutableCopy];
+        event[@"outcome"] = accepted ? @"probe_reply" : @"late_probe_ignored";
+        authorityEvent(event);
+    }];
+    return YES;
 }
 @end
 

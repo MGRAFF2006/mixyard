@@ -131,6 +131,18 @@ def run(case, args):
                         and e['error']['code']==proof['requirement_failure_code']]
             accepted = matching(events, 'control', proof['producer_pid'], policy['producer'], 'probe_reply')
             accepted = [e for e in accepted if e['broker_pid']==proof['broker']['pid']]
+            # Held native probe replies must actually arrive after terminal close
+            # on both channels; a source-only guard or an absent reply cannot pass.
+            late = {e['channel'] for e in events if e['outcome']=='late_probe_ignored'
+                    and e['broker_pid']==proof['broker']['pid'] and e['peer_pid']==proof['producer_pid']}
+            if late != {'pcm', 'control'}: accepted = []
+            assert proof['authentication_before_authority'] is True
+            initial = proof['early_authority_unchanged']
+            assert all(initial[k]==0 for k in ('active','generation','packets','hellos','cursor0','cursor1','start','end','revision'))
+            assert initial['credit_frames']==4096
+            for key in ('stale_broker_error','stale_supervisor_broker_error','wrong_broker_error'):
+                assert proof[key]['domain']=='NSCocoaErrorDomain'
+                assert proof[key]['code']==proof['requirement_failure_code']
             assert proof['status']=='pass' and proof['external_consumer_pcm']=='BLOCKED'
         else:
             assert proof['status']=='rejection_observed' and proof['case']==args[-1]

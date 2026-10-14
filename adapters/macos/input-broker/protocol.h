@@ -84,21 +84,29 @@ inline NSDictionary *errorDetails(NSError *error) {
 - (void)probe:(void (^)(void))reply;
 @end
 
-@protocol MYPCMTransport
+// No endpoint, admission or PCM authority. The client receives a pinned broker
+// reply before echoing its connection-local challenge; failed confirmation closes
+// the session permanently. Pinning alone does not gate outgoing requests.
+@protocol MYReadiness
+- (void)authenticate:(void (^)(NSDictionary *))reply;
+- (void)confirm:(NSString *)challenge reply:(void (^)(NSDictionary *))reply;
+@end
+
+@protocol MYPCMTransport <MYReadiness>
 - (void)hello:(void (^)(NSDictionary *))reply;
 - (void)packet:(NSData *)packet reply:(void (^)(NSDictionary *))reply;
 @end
 
 // Test supervisor only. Separate authenticated bootstrap channel. The PCM
 // interface above has no read, endpoint, rename, registry or selection authority.
-@protocol MYFixtureControl
+@protocol MYFixtureControl <MYReadiness>
 - (void)endpoint:(void (^)(NSXPCListenerEndpoint *))reply;
 - (void)read:(uint32_t)reader frame:(uint64_t)frame count:(uint32_t)count
        reply:(void (^)(NSDictionary *))reply;
 - (void)snapshot:(void (^)(NSDictionary *))reply;
 @end
 
-@protocol MYStranger
+@protocol MYStranger <MYAuthorityProbe>
 - (void)attempt:(NSXPCListenerEndpoint *)endpoint requirement:(NSString *)requirement
           reply:(void (^)(NSDictionary *))reply;
 @end
