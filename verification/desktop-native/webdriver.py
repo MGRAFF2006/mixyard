@@ -1,4 +1,4 @@
-"""Actual Linux release webview, trusted keys and no-tray close/relaunch checks."""
+"""Owned Linux release webview and explicitly harness-started headless runtime."""
 import base64
 import http.client
 import json
@@ -6,13 +6,17 @@ import math
 import os
 from pathlib import Path
 import signal
+import socket
+import stat
+import struct
 import subprocess
 import sys
 import time
+import traceback
 import urllib.error
 import urllib.request
 
-from evidence import inventory
+from evidence import binary_info, disk_guard, inventory
 
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'
 
@@ -33,7 +37,10 @@ def xdotool(*args):
 
 
 class Driver:
-    session = None
+    def __init__(self):
+        self.session = None
+        self.window_id = None
+        self.input_attempts = []
 
     def request(self, method, path, body=None):
         request = urllib.request.Request(
@@ -63,7 +70,7 @@ class Driver:
         if self.session:
             try:
                 self.call('DELETE', '')
-            except (urllib.error.URLError, http.client.HTTPException, RuntimeError) as error:
+            except (OSError, http.client.HTTPException, RuntimeError) as error:
                 print(f'Session cleanup after UI exit: {error}', flush=True)
             self.session = None
 
@@ -89,16 +96,286 @@ def stop(process):
             process.wait(timeout=5)
 
 
-def main(binary, output):
+def headless_env():
+    return {key: value for key, value in os.environ.items() if key not in {
+        'DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS',
+        'DBUS_SYSTEM_BUS_ADDRESS', 'PULSE_SERVER', 'PIPEWIRE_REMOTE'}}
+
+
+def cli_request(cli, instance, command, ready=False):
+    result = subprocess.run([str(cli), command, '--instance', instance],
+                            env=headless_env(), capture_output=True, text=True, timeout=10)
+    if ready and result.returncode != 0:
+        return None
+    assert result.returncode == 0, f'CLI {command}: {result.stderr}'
+    assert not result.stderr, result.stderr
+    reply = json.loads(result.stdout)
+    assert reply['ipcVersion'] == 1 and reply['requestId'] and 'error' not in reply, reply
+    return reply
+
+
+def assert_unavailable(availability):
+    assert availability['daemonReachable'] is True, availability
+    assert availability['backendAvailable'] is False and availability['backend'] == 'unavailable', availability
+    assert availability['nativeAudioProof'] == 'unverified', availability
+    for revision in ['desiredRevision', 'audioRevision', 'appliedRevision']:
+        assert revision in availability and availability[revision] is None, availability
+    assert availability['capabilities'] == {'apply': False, 'mute': False, 'nativeActionDispatch': False}
+
+
+def runtime_alive(child, endpoint, cli, instance):
+    assert child.poll() is None, 'Harness runtime exited unexpectedly'
+    # CLI success plus the kernel peer PID ties this endpoint to our exact child,
+    # rather than to a sentinel or another runtime under the same OS user.
+    with socket.socket(socket.AF_UNIX) as peer:
+        peer.settimeout(5)
+        peer.connect(str(endpoint))
+        pid, uid, _ = struct.unpack('3i', peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+    assert pid == child.pid and uid == os.geteuid(), (pid, uid, child.pid)
+    reply = cli_request(cli, instance, 'status')
+    assert_unavailable(reply['result'])
+    assert child.poll() is None
+    return {'pid': pid, 'peer_uid': uid, 'cli_status': reply}
+
+
+def shell_status(driver):
+    return driver.call('POST', '/execute/async', {'script':
+        "const done = arguments[arguments.length - 1]; window.__TAURI_INTERNALS__.invoke('shell_status').then(done, error => done({error: String(error)}));",
+        'args': []})
+
+
+def input_state(driver):
+    return driver.script("""
+        const input = document.querySelector('#runtime-instance');
+        const active = document.activeElement;
+        const rect = input?.getBoundingClientRect();
+        return {documentFocused: document.hasFocus(),
+          active: active ? {tag: active.tagName, id: active.id, value: active.value,
+            text: active.textContent?.slice(0, 160)} : null,
+          input: input ? {value: input.value, disabled: input.disabled,
+            x: rect.x, y: rect.y, width: rect.width, height: rect.height} : null,
+          viewport: {width: innerWidth, height: innerHeight},
+          runtimeStatus: document.querySelector('#runtime-status')?.textContent,
+          runtimeDetail: document.querySelector('#runtime-detail')?.textContent};
+    """)
+
+
+def native_focus(driver, selector, click=False):
+    assert driver.window_id, 'Current UI native window must be known'
+    xdotool('windowactivate', '--sync', driver.window_id)
+    assert int(xdotool('getactivewindow')) == int(driver.window_id), 'Wrong native window active'
+    wait_for(lambda: driver.script(f"const e = document.querySelector({json.dumps(selector)}); return e && !e.disabled"), 'enabled ' + selector)
+    driver.script(f"document.querySelector({json.dumps(selector)}).scrollIntoView({{block: 'center', behavior: 'instant'}});")
+    if click:
+        # W3C element click also gives GTK/WebKit keyboard focus after resizing.
+        # Text entry below still comes only from trusted OS keyboard events.
+        driver.click(selector)
+    settled = driver.call('POST', '/execute/async', {'script': f"""
+        const done = arguments[arguments.length - 1];
+        const element = document.querySelector({json.dumps(selector)});
+        element.focus({{preventScroll: true}});
+        requestAnimationFrame(() => requestAnimationFrame(() => {{
+          const rect = element.getBoundingClientRect();
+          done(document.hasFocus() && document.activeElement === element && !element.disabled
+            && rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight);
+        }}));
+    """, 'args': []})
+    assert settled, f'Native focus did not settle for {selector}: {input_state(driver)!r}'
+
+
+def native_button(driver, selector):
+    native_focus(driver, selector)
+    driver.script("""
+        window.nativeActivation = null;
+        document.activeElement.addEventListener('keydown', event => {
+          if (event.key === 'Enter') window.nativeActivation = event.isTrusted;
+        }, {once: true});
+    """)
+    xdotool('key', '--clearmodifiers', 'Return')
+    assert driver.script('return window.nativeActivation') is True, 'Activation must be a trusted native key'
+
+
+def submit_connect(driver, instance):
+    native_focus(driver, '#runtime-instance', click=True)
+    attempt = {'requested_instance': instance, 'native_window': driver.window_id,
+               'active_window_before': xdotool('getactivewindow'), 'before': input_state(driver)}
+    driver.input_attempts.append(attempt)
+    xdotool('key', '--clearmodifiers', 'ctrl+a')
+    xdotool('type', '--clearmodifiers', '--delay', 10, instance)
+    attempt['after'] = input_state(driver)
+    attempt['active_window_after'] = xdotool('getactivewindow')
+    actual = attempt['after']['input']['value']
+    assert actual == instance, f'Native runtime instance entry: expected {instance!r}, actual {actual!r}; focus={attempt!r}'
+    xdotool('key', 'Tab')
+    assert driver.script("return document.activeElement.id") == 'runtime-connect'
+    native_button(driver, '#runtime-connect')
+
+
+def connected_status(driver, instance):
+    status = wait_for(lambda: (value if (value := shell_status(driver)).get('connected') else None),
+                      'connected real runtime snapshot')
+    assert status['schemaVersion'] == 1 and status['runtime']['instance'] == instance
+    assert status['runtime']['phase'] == 'connected'
+    event = status['runtime']['event']
+    assert event['event'] == 'snapshot' and event['sequence'] == 1
+    assert event['resync'] is True and event['historyAvailable'] is False
+    assert event['lifecycle'] == 'running'
+    assert_unavailable(event['availability'])
+    wait_for(lambda: driver.script("return document.querySelector('#runtime-status').textContent.toLowerCase().includes('connected · audio unavailable') && document.querySelector('#runtime-detail').textContent.toLowerCase().includes('unavailable')"),
+             'connected UI honestly reports unavailable audio backend')
+    assert driver.script("return ['IPC v1', 'snapshot sequence 1', 'backendAvailable: false', 'audioRevision: null', 'appliedRevision: null', 'desiredRevision: null'].every(text => document.querySelector('#runtime-detail').textContent.includes(text))"), 'Versioned snapshot and null revisions must be visible'
+    assert driver.script("return !document.querySelector('#runtime-status').matches('input, select, textarea, [contenteditable=true]')"), 'Connection status is read-only'
+    assert driver.script("return [...document.querySelectorAll('input[type=range]')].every(e => e.disabled)"), 'Connected IPC cannot unlock audio controls'
+    return status
+
+
+def connect(driver, instance):
+    submit_connect(driver, instance)
+    return connected_status(driver, instance)
+
+
+def worker_names(pid):
+    names = [path.read_text().strip() for path in Path(f'/proc/{pid}/task').glob('*/comm')]
+    workers = [name for name in names if name.startswith('runtime-readon')]
+    assert len(workers) == 1, f'Expected exactly one runtime worker, got {workers}'
+    return workers
+
+
+def disconnect(driver):
+    started = time.monotonic()
+    native_button(driver, '#runtime-disconnect')
+    wait_for(lambda: shell_status(driver)['runtime']['phase'] == 'disconnected', 'prompt disconnect')
+    elapsed = (time.monotonic() - started) * 1000
+    assert elapsed < 1000, f'Disconnect blocked for {elapsed:.1f} ms'
+    wait_for(lambda: driver.script("return document.querySelector('#runtime-connect') !== null"), 'disconnected UI button')
+    return elapsed
+
+
+def late_results(driver, ui_pid, child, instance, availability):
+    # One small, owned native socket fixture. Its generated frames never count
+    # as evidence from the real runtime used by the survival cases below.
+    fixture_instance = f'native-{os.getpid()}-late'
+    directory = Path(f'/tmp/mixyard-{os.geteuid()}-{fixture_instance}')
+    directory.mkdir(mode=0o700)
+    endpoint = directory / 'runtime.sock'
+    evidence = []
+    try:
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(str(endpoint))
+            endpoint.chmod(0o600)
+            listener.listen(1)
+            listener.settimeout(5)
+            for late in ['snapshot', 'lifecycle']:
+                submit_connect(driver, fixture_instance)
+                peer, _ = listener.accept()
+                with peer:
+                    peer.settimeout(5)
+                    peer_pid, uid, _ = struct.unpack('3i', peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                    assert peer_pid == ui_pid and uid == os.geteuid()
+                    request_bytes = b''
+                    while b'\n' not in request_bytes:
+                        chunk = peer.recv(1024)
+                        assert chunk, 'Native client closed before subscription'
+                        request_bytes += chunk
+                        assert len(request_bytes) <= 8192
+                    request = json.loads(request_bytes)
+                    assert request['ipcVersion'] == 1 and request['command'] == 'events'
+                    snapshot = {'event': 'snapshot', 'sequence': 1, 'resync': True,
+                                'lifecycle': 'running', 'availability': availability, 'historyAvailable': False}
+
+                    def send(event):
+                        peer.sendall((json.dumps({'ipcVersion': 1, 'requestId': request['requestId'],
+                                                 'result': event}) + '\n').encode())
+
+                    if late == 'lifecycle':
+                        send(snapshot)
+                        connected_status(driver, fixture_instance)
+                    else:
+                        assert shell_status(driver)['runtime']['phase'] == 'connecting'
+                    workers_before = worker_names(ui_pid)
+                    disconnect_ms = disconnect(driver)
+                    # Hold only our own headless child so a stale response cannot
+                    # hide behind an immediately arriving fresh real snapshot.
+                    os.kill(child.pid, signal.SIGSTOP)
+                    try:
+                        submit_connect(driver, instance)
+                        delivery = 'written-to-old-socket; consumption unverified'
+                        try:
+                            send(snapshot if late == 'snapshot' else {
+                                'event': 'lifecycle', 'sequence': 2,
+                                'lifecycle': 'stopping', 'backendAvailable': False})
+                        except (BrokenPipeError, ConnectionResetError):
+                            delivery = 'old subscription already closed; no delivery claimed'
+                            assert late == 'lifecycle', 'Delayed snapshot must be released on the open old peer'
+                        samples = []
+                        deadline = time.monotonic() + .35
+                        while time.monotonic() < deadline:
+                            current = shell_status(driver)
+                            assert current['connected'] is False and current['runtime']['phase'] == 'connecting', current
+                            assert current['runtime']['instance'] == instance and current['runtime']['event'] is None, current
+                            samples.append({'phase': current['runtime']['phase'],
+                                            'instance': current['runtime']['instance']})
+                            worker_names(ui_pid)
+                            time.sleep(.03)
+                    finally:
+                        os.kill(child.pid, signal.SIGCONT)
+                    current = connected_status(driver, instance)
+                    evidence.append({'action': f'old-generation-{late}-rejected',
+                        'fixture': 'owned private same-UID Unix lifecycle socket; generated test frames only',
+                        'old_instance': fixture_instance, 'new_instance': instance,
+                        'old_reply': delivery, 'disconnect_ms': disconnect_ms,
+                        'workers_before': workers_before, 'workers_after': worker_names(ui_pid),
+                        'fresh_snapshot_held_samples': samples, 'real_runtime_shell_status': current})
+                    disconnect(driver)
+    finally:
+        endpoint.unlink(missing_ok=True)
+        directory.rmdir()
+    return evidence
+
+
+def main(binary, runtime, cli, output):
     if os.environ.get('MIXYARD_NATIVE_ISOLATED') != '1':
         raise SystemExit('Use run-linux.sh: only an owned Xvfb/session bus is allowed.')
+    disk_guard()
     report = inventory(binary)
+    report['runtime_binaries'] = {'runtime': binary_info(runtime), 'cli': binary_info(cli)}
+    report['boundary'] = 'Actual private headless lifecycle IPC and native Linux webview only; backend unavailable, no audio engine, physical tray/Dock, assistive or other-platform GUI proof.'
     report.update(status='failed', display='owned Xvfb 1280x960, Openbox, software rendering, no tray host',
                   steps=[], timing={})
     driver = Driver()
     processes = []
     pid = None
+    runtime_child = None
+    events_child = None
+    instance = f'native-{os.getpid()}'
+    endpoint = Path(f'/tmp/mixyard-{os.geteuid()}-{instance}/runtime.sock')
+    directory_identity = None
+    report['runtime-survival'] = {'status': 'not-completed', 'audio_backend': 'unavailable'}
+    report['runtime'] = {'instance': instance, 'endpoint': str(endpoint),
+                         'startup_owner': 'test harness, never app', 'headless': True}
     try:
+        # The production endpoint ignores XDG_RUNTIME_DIR. Refuse any existing
+        # namespace; never unlink or reuse another process's endpoint.
+        assert not endpoint.parent.exists() and not endpoint.parent.is_symlink(), endpoint
+        with (output / 'runtime.log').open('w') as log:
+            runtime_child = subprocess.Popen([str(runtime), 'serve', '--instance', instance],
+                env=headless_env(), stdout=log, stderr=log, start_new_session=True)
+        processes.append(runtime_child)
+        report['runtime']['pid'] = runtime_child.pid
+
+        def runtime_ready():
+            assert runtime_child.poll() is None, 'Runtime exited before readiness'
+            return cli_request(cli, instance, 'status', ready=True)
+        wait_for(runtime_ready, 'explicit harness runtime readiness')
+        directory_identity = endpoint.parent.stat()
+        assert stat.S_IMODE(directory_identity.st_mode) == 0o700
+        assert directory_identity.st_uid == os.geteuid()
+        assert stat.S_ISSOCK(endpoint.stat().st_mode) and stat.S_IMODE(endpoint.stat().st_mode) == 0o600
+        report['runtime']['ready'] = runtime_alive(runtime_child, endpoint, cli, instance)
+        events_child = subprocess.Popen([str(cli), 'events', '--instance', instance],
+            env=headless_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True)
+        processes.append(events_child)
         with (output / 'wm.log').open('w') as log:
             processes.append(subprocess.Popen(['openbox'], stdout=log, stderr=log, start_new_session=True))
         with (output / 'tauri-driver.log').open('w') as log:
@@ -112,16 +389,17 @@ def main(binary, output):
                 return False
         wait_for(ready, 'tauri-driver ready')
 
-        for action in ['native-close', 'close-window', 'quit-ui']:
+        for action in ['native-close', 'close-window', 'quit-ui', 'runtime-shutdown']:
             session = driver.request('POST', '/session', {'capabilities': {'alwaysMatch': {
                 'browserName': 'wry', 'tauri:options': {'application': str(binary)}}}})
             driver.session = session['sessionId']
             report['steps'].append({'action': 'session-created', 'case': action,
                                     'url': driver.call('GET', '/url')})
             wait_for(lambda: driver.script(
-                "const banner = document.querySelector('.connection-banner'); return banner && banner.textContent.includes('Desktop shell available on linux')"),
-                'real shell IPC status')
+                "return document.querySelector('#runtime-instance') !== null"),
+                'runtime connection form')
             wid = wait_for(window, 'visible Mixyard native window')
+            driver.window_id = wid
             pid = int(xdotool('getwindowpid', wid))
             xdotool('windowactivate', '--sync', wid)
             report['steps'].append({'action': 'launch/relaunch', 'case': action, 'pid': pid,
@@ -130,10 +408,10 @@ def main(binary, output):
                                         "return [...document.querySelectorAll('input[type=range]')].every(e => e.disabled)")})
             assert report['steps'][-1]['controls_locked'], 'Disconnected controls must stay locked'
             assert driver.script("return '__TAURI_INTERNALS__' in window"), 'Must execute the Tauri webview'
-            status = driver.call('POST', '/execute/async', {'script':
-                "const done = arguments[arguments.length - 1]; window.__TAURI_INTERNALS__.invoke('shell_status').then(done);",
-                'args': []})
+            status = shell_status(driver)
             assert status['connected'] is False and status['platform'] == 'linux'
+            assert status['runtime']['phase'] == 'disconnected' and status['runtime']['event'] is None
+            assert driver.script("return document.querySelector('#runtime-instance').value") == 'default'
             report['steps'][-1]['shell_status'] = status
 
             if action == 'native-close':
@@ -187,8 +465,51 @@ def main(binary, output):
                 wait_for(lambda: driver.script('return innerWidth') <= 640, 'compact native window')
                 assert driver.script('return document.documentElement.scrollWidth <= innerWidth'), 'Compact overflow'
                 (output / 'compact-webview.png').write_bytes(base64.b64decode(driver.call('GET', '/screenshot')))
+                driver.script("[...document.querySelectorAll('.header-actions button')].find(e => e.textContent === 'Exit demo').focus();")
+                xdotool('key', 'Return')
+                wait_for(lambda: driver.script("return document.querySelector('.demo-tag') === null"), 'demo closed before real runtime connection')
+
+            if action == 'native-close':
+                report['steps'].extend(late_results(driver, pid, runtime_child, instance,
+                    report['runtime']['ready']['cli_status']['result']))
+            connected = connect(driver, instance)
+            report['steps'].append({'action': 'native-keyboard-connect', 'case': action,
+                                    'shell_status': connected})
+            if action == 'native-close':
+                disconnect(driver)
+                worker_names(pid)
+                report['steps'].append({'action': 'disconnect-runtime-survives',
+                    **runtime_alive(runtime_child, endpoint, cli, instance)})
+                report['steps'].append({'action': 'native-keyboard-reconnect', 'shell_status': connect(driver, instance)})
                 xdotool('key', 'Alt+F4')
             else:
+                if action == 'runtime-shutdown':
+                    shutdown = cli_request(cli, instance, 'shutdown')
+                    assert shutdown['result']['shutdown'] == 'requested'
+                    assert runtime_child.wait(timeout=10) == 0, 'Explicit shutdown must reap child successfully'
+                    stdout, stderr = events_child.communicate(timeout=10)
+                    assert events_child.returncode == 0 and not stderr, stderr
+                    events = [json.loads(line) for line in stdout.splitlines()]
+                    assert len(events) == 2 and all(event['ipcVersion'] == 1 and event['requestId'] for event in events)
+                    assert events[0]['result']['event'] == 'snapshot'
+                    assert_unavailable(events[0]['result']['availability'])
+                    assert events[1]['result']['event'] == 'lifecycle' and events[1]['result']['lifecycle'] == 'stopping'
+                    assert events[1]['result']['sequence'] == 2 and events[1]['result']['backendAvailable'] is False
+                    assert not endpoint.exists(), 'Graceful shutdown must remove its socket'
+                    stopped = wait_for(lambda: (value if (value := shell_status(driver))['runtime']['phase'] in ['stopped', 'disconnected'] else None),
+                                       'attached UI observes shutdown')
+                    assert stopped['connected'] is False
+                    wait_for(lambda: driver.script("return /stopping|stopped|disconnected|not connected/i.test(document.querySelector('#runtime-status').textContent)"), 'stopped/disconnected UI label')
+                    assert driver.script("return [...document.querySelectorAll('input[type=range]')].every(e => e.disabled)")
+                    report['steps'].append({'action': 'explicit-cli-shutdown-and-reap', 'reply': shutdown,
+                        'runtime_pid_reaped': runtime_child.pid, 'exit_code': runtime_child.returncode,
+                        'cli_events': events, 'shell_status': stopped})
+                    native_button(driver, '#runtime-connect')
+                    failed = wait_for(lambda: (value if (value := shell_status(driver))['runtime']['phase'] == 'disconnected' and value['runtime']['error'] else None),
+                                      'connecting stopped runtime fails without autospawn')
+                    assert failed['connected'] is False and failed['runtime']['event'] is None
+                    assert runtime_child.poll() == 0 and not endpoint.exists()
+                    report['steps'].append({'action': 'connect-stopped-no-autospawn', 'shell_status': failed})
                 try:
                     driver.click('.app-footer button:nth-child(1)' if action == 'close-window'
                                  else '.app-footer button:nth-child(2)')
@@ -200,12 +521,42 @@ def main(binary, output):
             report['steps'].append({'action': action, 'status': 'passed', 'pid_exited': pid})
             pid = None
             driver.delete()
+            if action != 'runtime-shutdown':
+                report['steps'].append({'action': 'same-runtime-survives-ui-exit', 'case': action,
+                    **runtime_alive(runtime_child, endpoint, cli, instance)})
         assert all(item['status'] == 'passed' for item in report['timing'].values()), 'Native p95 exceeds 100 ms'
+        survived = [step for step in report['steps'] if step['action'] == 'same-runtime-survives-ui-exit']
+        assert len(survived) == 3 and all(step['pid'] == runtime_child.pid for step in survived)
+        assert runtime_child.returncode == 0
+        report['runtime-survival'] = {'status': 'passed', 'pid': runtime_child.pid,
+            'ui_exit_cases': [step['case'] for step in survived],
+            'explicit_cli_shutdown': True, 'reaped_exit_code': runtime_child.returncode,
+            'audio_backend': 'unavailable', 'audio_proof': 'unverified'}
         report['status'] = 'passed'
     except Exception as error:
         report['failure'] = repr(error)
+        report['failure_traceback'] = traceback.format_exc()
+        diagnostics = {'native_window': driver.window_id, 'ui_pid': pid}
+        report['failure_evidence'] = diagnostics
+        for label, capture in [
+            ('active_native_window', lambda: xdotool('getactivewindow')),
+            ('native_keyboard_focus', lambda: xdotool('getwindowfocus')),
+            ('dom', lambda: input_state(driver)),
+            ('shell_status', lambda: shell_status(driver)),
+        ]:
+            try:
+                diagnostics[label] = capture()
+            except Exception as diagnostic_error:
+                diagnostics[label + '_error'] = repr(diagnostic_error)
+        try:
+            (output / 'failure-webview.png').write_bytes(base64.b64decode(driver.call('GET', '/screenshot')))
+            diagnostics['screenshot'] = 'failure-webview.png'
+        except Exception as diagnostic_error:
+            diagnostics['screenshot_error'] = repr(diagnostic_error)
+        print(f'Failure evidence: {diagnostics!r}', flush=True)
         raise
     finally:
+        report['native_input_attempts'] = driver.input_attempts
         # Keep failure evidence even if a terminated driver rejects cleanup.
         (output / 'linux-webview.json').write_text(json.dumps(report, indent=2) + '\n')
         driver.delete()
@@ -213,7 +564,15 @@ def main(binary, output):
             os.kill(pid, signal.SIGTERM)
         for process in reversed(processes):
             stop(process)
+        # Remove only the empty namespace created by this harness's child.
+        if directory_identity and endpoint.parent.exists():
+            current = endpoint.parent.stat()
+            if (current.st_dev, current.st_ino) == (directory_identity.st_dev, directory_identity.st_ino):
+                try:
+                    endpoint.parent.rmdir()
+                except OSError as error:
+                    print(f'Owned runtime directory retained: {error}', flush=True)
 
 
 if __name__ == '__main__':
-    main(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
+    main(*(Path(arg).resolve() for arg in sys.argv[1:5]))

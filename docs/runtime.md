@@ -109,9 +109,17 @@ with inheritance disabled. It runs in hosted Windows builds; it is not a model.
 
 `.github/workflows/runtime.yml` builds both binaries and runs core plus lifecycle
 checks on hosted Linux, Windows and macOS. A compile-only cross-target check is
-not proof of another OS's runtime. Native audio, device permission flows, GUI
-binding, audio/UI independence under load, routing, recovery, latency and quality
-remain unproved until a real native transport/engine is bound and qualified.
+not proof of another OS's runtime. The desktop can explicitly attach a typed read-only subscription to an already
+running owned instance. `mixyard::runtime::ReadOnlyClient` consumes a validated
+initial snapshot, exposes bounded nonblocking `poll`, and disconnects on drop;
+it cannot send mutations or shutdown. Unknown capabilities/fields, version or
+request-ID mismatch, oversized/partial frames and event order mismatch fail
+closed. No GUI dependency is added to the root library.
+The isolated native harness in `verification/desktop-native` checks actual
+WebKit Connect and runtime process/IPC survival across UI exit. Only a passing
+current artifact establishes that scope. Native audio, device permission flows,
+audio/UI independence under load, routing, recovery, latency and quality remain
+unproved until a real native transport/engine is bound and qualified.
 
 Implementation references: [Linux unix(7)](https://man7.org/linux/man-pages/man7/unix.7.html),
 [Apple getpeereid source](https://github.com/apple-oss-distributions/Libc/blob/main/gen/FreeBSD/getpeereid.c),
