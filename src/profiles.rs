@@ -6,7 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
     fs::{File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -191,6 +191,14 @@ impl Store {
         Ok(Self { directory })
     }
     pub fn read(&self) -> Result<Snapshot, Error> {
+        self.read_with_limit(None)
+    }
+    /// Opt-in byte bound for desktop work. Uses the same path checks, parser and
+    /// full snapshot validation as `read`; never truncates or repairs a store.
+    pub fn read_bounded(&self, max_bytes: usize) -> Result<Snapshot, Error> {
+        self.read_with_limit(Some(max_bytes))
+    }
+    fn read_with_limit(&self, max_bytes: Option<usize>) -> Result<Snapshot, Error> {
         if !self.check_directory()? {
             return Ok(Snapshot::default());
         }
@@ -199,7 +207,19 @@ impl Store {
             return Ok(Snapshot::default());
         }
         let file = File::open(&path).map_err(Error::io)?;
-        let snapshot: Snapshot = serde_json::from_reader(file).map_err(|e| {
+        let parsed = if let Some(limit) = max_bytes {
+            let mut bytes = Vec::new();
+            file.take((limit as u64).saturating_add(1))
+                .read_to_end(&mut bytes)
+                .map_err(Error::io)?;
+            if bytes.len() > limit {
+                return Err(Error::new("store-too-large", format!("Store exceeds the {limit}-byte desktop read limit; nothing was truncated. Use the profiles CLI for larger stores."), 3));
+            }
+            serde_json::from_slice(&bytes)
+        } else {
+            serde_json::from_reader(file)
+        };
+        let snapshot: Snapshot = parsed.map_err(|e| {
             if e.is_io() {
                 Error::io(e)
             } else {

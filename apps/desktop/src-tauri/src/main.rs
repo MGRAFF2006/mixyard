@@ -2,6 +2,7 @@
 
 mod connection;
 mod inspection;
+mod profiles;
 
 use connection::{Connection, ConnectionStatus};
 use serde::Serialize;
@@ -25,6 +26,17 @@ async fn inspect_snapshot(request: inspection::SnapshotRequest) -> Result<String
     })
     .await
     .map_err(|error| format!("Inspection worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn read_profiles(request: profiles::Request) -> Result<String, String> {
+    let admission = profiles::acquire()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
+        profiles::run(request)
+    })
+    .await
+    .map_err(|error| format!("Profile worker failed: {error}"))?
 }
 
 #[derive(Serialize)]
@@ -190,6 +202,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             inspect_snapshot,
+            read_profiles,
             shell_status,
             connect_runtime,
             disconnect_runtime,

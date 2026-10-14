@@ -1,5 +1,7 @@
 import { readConnection } from './runtime.ts'
 import type { ConnectionStatus } from './runtime.ts'
+import { readProfiles, readProfilePreview } from './profiles.ts'
+import type { PreviewRequest } from './profiles.ts'
 import { readInspection } from './inspection.ts'
 import type { SnapshotInput } from './inspection.ts'
 export type ShellStatus = { schemaVersion: 1; connected: boolean; runtime: ConnectionStatus; trayCreated: boolean; platform: string }
@@ -39,4 +41,13 @@ export async function inspectSnapshot(input: SnapshotInput) {
 export async function shellAction(action: 'hide_mixer' | 'quit_ui'): Promise<void> {
   if (!inDesktopShell) throw new Error('Window actions require the desktop shell.')
   await nativeInvoke(action)
+}
+
+export async function listProfiles() {
+  if (!inDesktopShell) throw new Error('Native local profile store is unavailable in browser preview. No sample profiles were substituted.')
+  return readProfiles(await nativeInvoke<unknown>('read_profiles', { request: { command: 'list' } }))
+}
+export async function previewProfile(request: PreviewRequest) {
+  if (!inDesktopShell) throw new Error('Native local profile preview is unavailable in browser preview. No sample profiles were substituted.')
+  return readProfilePreview(await nativeInvoke<unknown>('read_profiles', { request }), request)
 }
