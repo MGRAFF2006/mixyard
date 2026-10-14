@@ -136,6 +136,88 @@ class LinuxOffline(unittest.TestCase):
         m.props(graph[0])["bluez5.loopback"] = True
         self.assertEqual(m.plan(self.config, graph)["routes"], [])
 
+    def test_numeric_identities_match_exact_selectors_and_remain_ambiguous(self):
+        graph = source_graph()
+        m.props(graph[0]).update({"node.name": 123, "device.id": 100, "application.id": 456})
+        graph.append(obj(100, "Device", **{"device.serial": 123456789}))
+        selected = {"node.name": "123", "device.serial": "123456789", "application.id": "456"}
+        self.config["sources"][0]["selector"] = selected
+        self.assertEqual(len(m.plan(self.config, graph)["routes"]), 2)
+        for key, different in (("node.name", "0123"), ("node.name", "123.0"),
+                               ("device.serial", "123456788"), ("device.serial", "0123456789"),
+                               ("application.id", "457")):
+            with self.subTest(key=key, different=different):
+                config = deepcopy(self.config)
+                config["sources"][0]["selector"][key] = different
+                self.assertEqual(m.plan(config, graph)["routes"], [])
+        # Numeric and string encodings of the same observed identity cannot disambiguate.
+        duplicate = obj(90, "Node", **{"media.class": "Audio/Source", **selected})
+        planned = m.plan(self.config, graph + [duplicate])
+        self.assertEqual(planned["routes"], [])
+        self.assertEqual(planned["diagnostics"][0]["code"], "source-disconnected")
+        m.props(duplicate)["device.serial"] = "other"
+        self.assertEqual(len(m.plan(self.config, graph + [duplicate])["routes"]), 2)
+        # A node's serial overrides its parent device's serial.
+        m.props(graph[0])["device.serial"] = 123456788
+        self.assertEqual(m.plan(self.config, graph)["routes"], [])
+
+    def test_numeric_discovery_names_and_output_selectors(self):
+        for value in (0, 123, -(2**63), 2**63 - 1, "00123"):
+            with self.subTest(value=value):
+                graph = source_graph()
+                m.props(graph[0]).update({"node.name": value, "node.description": value})
+                self.config["sources"][0]["selector"] = {"node.name": str(value)}
+                self.assertEqual(len(m.plan(self.config, graph)["routes"]), 2)
+                with patch.object(m, "dump_graph", return_value=graph), \
+                        patch.object(sys, "argv", ["mixyard-linux", "snapshot"]), \
+                        patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                    self.assertEqual(m.main(), 0)
+                result = json.loads(stdout.getvalue())
+                self.assertEqual(result["schemaVersion"], 1)
+                self.assertEqual(result["devices"][0]["id"], "pipewire:node.name:" + str(value))
+                self.assertEqual(result["devices"][0]["name"], str(value))
+        self.config["outputs"][0].update(enabled=True, selector={"node.name": "789"})
+        graph = source_graph() + sink_graph(789)
+        self.config["sources"][0]["selector"] = {"node.name": "mixyard-test-mic"}
+        planned = m.plan(self.config, graph, True, consent_tokens(self.config))
+        self.assertTrue(any(r["to"] == {"node.name": "789"} for r in planned["routes"]))
+
+    def test_unsupported_identity_encodings_emit_json_and_fail_closed(self):
+        for key in m.IDENTITY_KEYS:
+            for value in (True, False, None, "", [], {}, 123.0, 1.23456789,
+                          float("inf"), float("nan"), -(2**63)-1, 2**63):
+                with self.subTest(key=key, value=value):
+                    graph = source_graph()
+                    if key == "device.serial":
+                        m.props(graph[0])["device.id"] = 100
+                        graph.append(obj(100, "Device", **{key: value}))
+                    else:
+                        m.props(graph[0])[key] = value
+                    graph = sink_graph() + graph  # Clear previously discovered valid devices on error.
+                    with patch.object(m, "dump_graph", return_value=graph), \
+                            patch.object(sys, "argv", ["mixyard-linux", "snapshot"]), \
+                            patch("sys.stdout", new_callable=io.StringIO) as stdout, \
+                            patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                        self.assertEqual(m.main(), 1)
+                    result = json.loads(stdout.getvalue())
+                    self.assertEqual(result["schemaVersion"], 1)
+                    self.assertEqual(result["devices"], [])
+                    self.assertFalse(any(result["capabilities"].values()))
+                    self.assertEqual(result["diagnostics"][0]["code"], "unsupported-identity-encoding")
+                    self.assertIn(key, result["diagnostics"][0]["message"])
+                    self.assertEqual(stderr.getvalue(), "")
+                    with patch.object(Path, "read_text", side_effect=[json.dumps(self.config), json.dumps(graph)]), \
+                            patch.object(sys, "argv", ["mixyard-linux", "plan", "config", "--dump", "dump"]), \
+                            patch("sys.stdout", new_callable=io.StringIO) as stdout, \
+                            patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                        self.assertEqual(m.main(), 1)
+                    result = json.loads(stdout.getvalue())
+                    self.assertEqual(result["schemaVersion"], 1)
+                    self.assertEqual(result["routes"], [])
+                    self.assertFalse(result["mutationAvailable"])
+                    self.assertEqual(result["diagnostics"][0]["code"], "unsupported-identity-encoding")
+                    self.assertEqual(stderr.getvalue(), "")
+
     def test_monitor_requires_explicit_arm_and_sink(self):
         self.config["outputs"][0].update(enabled=True, selector={"node.name": "headphones"})
         self.config["sources"][0]["gains"]["monitor"] = 0.1

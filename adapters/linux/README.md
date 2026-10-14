@@ -108,6 +108,14 @@ These describe the proposed offline graph; no endpoints or routes are published.
   config reload, endpoint publication or reconciliation in this version.
 - Exact `node.name` plus optional `device.serial` / `application.id` selectors
   are supported. Serial is resolved through the parent Device when needed.
+  `pw-dump` string properties remain exact; signed 64-bit JSON integers use their
+  canonical decimal string for discovery and matching. Configured selectors stay
+  strings: `"00123"` never matches observed integer `123`. Original numeric spelling
+  is unavailable after `pw-dump` conversion; duplicate canonical identities remain
+  ambiguous. Boolean, null, empty, container, out-of-range integer and floating-point
+  identities are rejected explicitly; `pw-dump` float conversion can lose precision.
+  `snapshot` and `plan` report unsupported encodings in versioned JSON with exit 1,
+  without publishing partial discovery or a route plan.
   Names may change with device profiles/drivers or app relaunch. IDs/PIDs are
   never persisted. Ambiguity is disconnected. No app grouping/tab isolation.
 - Mixyard nodes of any instance are forbidden as external sources. Excluded
@@ -228,3 +236,4 @@ recreating its grouping and policy system.
   [profile auto-switch settings](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/settings.html),
   [auto-switch graph traversal](https://github.com/PipeWire/wireplumber/blob/master/src/scripts/device/autoswitch-bluetooth-profile.lua).
 - [PipeWire native profiler counters](https://docs.pipewire.org/page_man_pw-top_1.html).
+- [PipeWire 1.4.9 `pw-dump` property encoding (`put_value` / `put_dict`)](https://github.com/PipeWire/pipewire/blob/1.4.9/src/tools/pw-dump.c#L269-L292).

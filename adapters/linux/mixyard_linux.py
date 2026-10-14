@@ -15,6 +15,7 @@ import sys
 
 PREFIX = "mixyard."
 TAG = "mixyard.owner"
+IDENTITY_KEYS = ("node.name", "device.serial", "application.id")
 MUTATION_UNAVAILABLE = (
     "external graph mutation unavailable: pw-* CLI linking cannot enforce observed "
     "node/port identities before audio flows, and command exit status does not "
@@ -28,6 +29,29 @@ def props(obj):
 
 def kind(obj, suffix):
     return obj.get("type", "").endswith(":" + suffix)
+
+
+class IdentityEncodingError(ValueError):
+    pass
+
+
+def semantic_identity(value, key):
+    # pw-dump put_value emits int64 properties as numbers; floats lose precision.
+    if isinstance(value, str) and value:
+        return value
+    if type(value) is int and -(2**63) <= value < 2**63:
+        return str(value)
+    raise IdentityEncodingError(
+        f"{key}: unsupported identity encoding ({type(value).__name__}); "
+        "expected nonempty string or signed 64-bit integer; no lossy coercion"
+    )
+
+
+def node_identity(node, devices):
+    p = props(node)
+    combined = dict(devices.get(str(p.get("device.id")), {}), **p)
+    return {key: semantic_identity(combined[key], key)
+            for key in IDENTITY_KEYS if key in combined}
 
 
 def checked_keys(value, allowed, label):
@@ -46,7 +70,7 @@ def gain(value, label, master=False):
 
 
 def selector(value):
-    checked_keys(value, ("node.name", "device.serial", "application.id"), "selector")
+    checked_keys(value, IDENTITY_KEYS, "selector")
     if not value.get("node.name") or any(not isinstance(v, str) or not v for v in value.values()):
         raise ValueError("selector requires exact nonempty node.name and string properties")
     if value["node.name"].startswith(PREFIX):
@@ -152,9 +176,9 @@ def matches(objects, selected, media):
         p = props(obj)
         if not kind(obj, "Node") or p.get("media.class") not in media:
             continue
-        identity = dict(devices.get(str(p.get("device.id")), {}), **p)
+        identity = node_identity(obj, devices)
         if all(identity.get(k) == v for k, v in selected.items()):
-            if TAG in p or str(p.get("node.name", "")).startswith(PREFIX):
+            if TAG in p or identity.get("node.name", "").startswith(PREFIX):
                 raise ValueError("selected node is a Mixyard producer; feedback rejected")
             if p.get("bluez5.loopback") in (True, "true"):
                 # Linking this placeholder asks WirePlumber to change the headset profile.
@@ -353,16 +377,19 @@ def discover(remote):
         "independentMixes": False, "routeRecovery": False}, "devices": [], "diagnostics": []}
     try:
         objects = dump_graph(remote)
+        devices = {str(o["id"]): props(o) for o in objects if kind(o, "Device")}
         envelope["capabilities"]["deviceDiscovery"] = True
         for obj in objects:
             p = props(obj)
             direction = {"Audio/Source": "input", "Audio/Sink": "output"}.get(p.get("media.class"))
             if kind(obj, "Node") and direction:
-                name = p.get("node.name")
-                if not name:
+                identity = node_identity(obj, devices)
+                if "node.name" not in identity:
                     continue
+                name = identity["node.name"]
                 envelope["devices"].append({"id": "pipewire:node.name:" + name,
-                    "name": p.get("node.description", name), "direction": direction,
+                    "name": semantic_identity(p["node.description"], "node.description")
+                            if "node.description" in p else name, "direction": direction,
                     "virtual": p.get("node.virtual") in (True, "true") or TAG in p})
                 if obj.get("info", {}).get("state") == "error":
                     envelope["diagnostics"].append({"code": "node-error", "severity": "error",
@@ -374,6 +401,10 @@ def discover(remote):
         return envelope, 0
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         code = "permission-denied" if isinstance(error, PermissionError) else "pipewire-unavailable"
+        if isinstance(error, IdentityEncodingError):
+            code = "unsupported-identity-encoding"
+            envelope["capabilities"]["deviceDiscovery"] = False
+            envelope["devices"] = []
         if isinstance(error, FileNotFoundError):
             code = "dependency-unavailable"
         envelope["diagnostics"].append({"code": code, "severity": "error",
@@ -481,6 +512,11 @@ def main():
                 raise ValueError("interval must be finite and >= 0.1 seconds")
             apply(args.config, args.remote, args.runtime_dir, args.arm_outputs, args.interval)
         return 0
+    except IdentityEncodingError as error:
+        print(json.dumps({"schemaVersion": 1, "platform": "linux", "evidence": "command-plan-only",
+            "mutationAvailable": False, "routes": [], "diagnostics": [{
+                "code": "unsupported-identity-encoding", "severity": "error", "message": str(error)}]}))
+        return 1
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
         print(f"mixyard-linux: {error}", file=sys.stderr)
         return 1
