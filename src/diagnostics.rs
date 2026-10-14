@@ -88,7 +88,7 @@ pub struct PathInspection<'a> {
 #[serde(rename_all = "camelCase")]
 pub struct OutputInspection<'a> {
     pub configured: &'a OutputRoute,
-    pub mix: Option<&'a Mix>,
+    pub mix: Option<Mix>,
     pub candidates: Vec<&'a OutputObservation>,
     pub planned_resolution: Option<ResolutionStatus>,
     pub consumer: Unknown,
@@ -118,7 +118,7 @@ pub struct Inspection<'a> {
     pub capacity: Vec<CapacityInspection>,
     pub sources: Vec<SourceInspection<'a>>,
     /// Full configured identities, including unused mixes and orphan sends.
-    pub mixes: Vec<&'a Mix>,
+    pub mixes: Vec<Mix>,
     pub sends: Vec<&'a Send>,
     pub outputs: Vec<OutputInspection<'a>>,
     pub plan: Option<Plan>,
@@ -211,7 +211,7 @@ pub fn inspect<'a>(config: &'a Config, inventory: &'a Inventory) -> Inspection<'
     configured_sources.sort_by(|a, b| a.id.cmp(&b.id));
     let sources: Vec<_> = configured_sources.into_iter().map(|source| {
         let mut candidates: Vec<_> = inventory.sources.iter().filter(|o| o.selector == source.selector).collect();
-        candidates.sort_by(|a,b| a.observed_id.cmp(&b.observed_id));
+        candidates.sort_by_key(|o| (&o.observed_id, &o.selector, o.origin as u8, o.format.map(|f| (f.channels, f.sample_rate_hz))));
         candidates.dedup();
         let mut reasons = Vec::new();
         let unique_ids = candidates.iter().map(|o| &o.observed_id).collect::<BTreeSet<_>>();
@@ -242,7 +242,10 @@ pub fn inspect<'a>(config: &'a Config, inventory: &'a Inventory) -> Inspection<'
             reasons,
         }
     }).collect();
-    let mut mixes: Vec<_> = config.mixes.iter().collect();
+    let mut mixes: Vec<_> = config.mixes.clone();
+    for mix in &mut mixes {
+        mix.exclude_groups.sort();
+    }
     mixes.sort_by(|a, b| a.id.cmp(&b.id));
     let mut sends: Vec<_> = config.sends.iter().collect();
     sends.sort_by(|a, b| (&a.source, &a.mix).cmp(&(&b.source, &b.mix)));
@@ -274,10 +277,10 @@ pub fn inspect<'a>(config: &'a Config, inventory: &'a Inventory) -> Inspection<'
     let mut configured_outputs: Vec<_> = config.outputs.iter().collect();
     configured_outputs.sort_by(|a, b| a.id.cmp(&b.id));
     let outputs = configured_outputs.into_iter().map(|output| {
-        let mix = mixes.iter().copied().find(|m| m.id == output.mix);
+        let mix = mixes.iter().find(|m| m.id == output.mix);
         let planned_output = plan.as_ref().and_then(|p| p.outputs.iter().find(|o| o.id == output.id));
         let mut candidates: Vec<_> = inventory.outputs.iter().filter(|o| o.target == output.target).collect();
-        candidates.sort_by(|a,b| a.observed_id.cmp(&b.observed_id));
+        candidates.sort_by_key(|o| (&o.observed_id, &o.target, o.format.map(|f| (f.channels, f.sample_rate_hz))));
         candidates.dedup();
         let mut reasons = Vec::new();
         match candidates.iter().map(|o| &o.observed_id).collect::<BTreeSet<_>>().len() {
@@ -320,7 +323,7 @@ pub fn inspect<'a>(config: &'a Config, inventory: &'a Inventory) -> Inspection<'
                 reasons: path_reasons,
             }
         }).collect();
-        OutputInspection { configured: output, mix, candidates, planned_resolution: planned_output.map(|o| o.status), consumer: Unknown::Unknown, native_state: Unknown::Unknown, reasons, paths }
+        OutputInspection { configured: output, mix: mix.cloned(), candidates, planned_resolution: planned_output.map(|o| o.status), consumer: Unknown::Unknown, native_state: Unknown::Unknown, reasons, paths }
     }).collect();
     Inspection {
         schema_version: 1,

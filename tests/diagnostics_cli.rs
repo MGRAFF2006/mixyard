@@ -353,6 +353,73 @@ fn many_arbitrary_mixes_fanout_and_reordered_input_are_deterministic() {
 }
 
 #[test]
+fn reordered_exclusions_preserve_the_plan_and_entire_inspection() {
+    let (mut config, inventory) = fixture();
+    config["mixes"][0]["excludeGroups"] = json!(["unused:b", "group:private", "unused:a"]);
+    let report = run("inspect", &config, &inventory, 0);
+    config["mixes"][0]["excludeGroups"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    let reordered = run("explain", &config, &inventory, 0);
+    assert_eq!(report["plan"], reordered["plan"]);
+    assert_eq!(report, reordered);
+    let exclusions = json!(["group:private", "unused:a", "unused:b"]);
+    assert_eq!(report["mixes"][0]["excludeGroups"], exclusions);
+    for id in ["o:a", "o:b"] {
+        assert_eq!(output(&report, id)["mix"]["excludeGroups"], exclusions);
+        assert_eq!(path(&report, id, "return")["excluded"], true);
+    }
+}
+
+fn check_conflicting_candidate_permutations(field: &str) {
+    let (config, mut inventory) = fixture();
+    let original = inventory[field][0].clone();
+    let mut conflicting = original.clone();
+    conflicting["format"]["sampleRateHz"] = json!(44100);
+    let mut baseline = None;
+    for records in [
+        vec![original.clone(), conflicting.clone(), original.clone()],
+        vec![original.clone(), original.clone(), conflicting.clone()],
+        vec![conflicting.clone(), original.clone(), original.clone()],
+    ] {
+        inventory[field] = json!(records);
+        let report = run("inspect", &config, &inventory, 3);
+        rejected(&report);
+        let subject = if field == "sources" {
+            report["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["configured"]["id"] == "voice")
+                .unwrap()
+        } else {
+            output(&report, "o:a")
+        };
+        let candidates = subject["candidates"].as_array().unwrap();
+        assert_eq!(candidates.len(), 2, "{field}: {candidates:?}");
+        assert!(candidates.contains(&original));
+        assert!(candidates.contains(&conflicting));
+        assert!(reason(subject, "conflicting-observation"));
+        if let Some(baseline) = &baseline {
+            assert_eq!(&report, baseline);
+        } else {
+            baseline = Some(report);
+        }
+    }
+}
+
+#[test]
+fn conflicting_source_candidates_deduplicate_across_permutations() {
+    check_conflicting_candidate_permutations("sources");
+}
+
+#[test]
+fn conflicting_output_candidates_deduplicate_across_permutations() {
+    check_conflicting_candidate_permutations("outputs");
+}
+
+#[test]
 fn orphan_references_remain_visible_and_never_become_an_applicable_plan() {
     let (mut config, inventory) = fixture();
     config["sends"]
