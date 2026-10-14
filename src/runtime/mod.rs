@@ -1,4 +1,10 @@
 //! Independent lifecycle IPC. This module does not own or dispatch audio.
+pub mod client;
+pub use client::{
+    Availability, Backend, Capabilities, Lifecycle, LifecycleEvent, NativeAudioProof,
+    ReadOnlyClient, RuntimeEvent, ServerError, Snapshot,
+};
+
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{

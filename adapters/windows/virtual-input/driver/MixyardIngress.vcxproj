@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<Project DefaultTargets="Build" InitialTargets="RequireSupportedConfiguration" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{B5761B65-8327-4DB9-A095-7FB933A95B0A}</ProjectGuid>
+    <RootNamespace>MixyardIngress</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <MixyardPackagesDir Condition="'$(MixyardPackagesDir)' == ''">$(MSBuildThisFileDirectory)packages\</MixyardPackagesDir>
+  </PropertyGroup>
+  <!-- Import the pinned kits before toolset selection. No machine-wide WDK fallback. -->
+  <Import Project="$(MixyardPackagesDir)Microsoft.Windows.WDK.x64.10.0.26100.6584\build\native\Microsoft.Windows.WDK.x64.props" />
+  <Import Project="$(MixyardPackagesDir)Microsoft.Windows.SDK.CPP.x64.10.0.26100.6584\build\native\Microsoft.Windows.SDK.cpp.x64.props" />
+  <Import Project="$(MixyardPackagesDir)Microsoft.Windows.SDK.CPP.10.0.26100.6584\build\native\Microsoft.Windows.SDK.cpp.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>WDM</DriverType>
+    <DriverTargetPlatform>Desktop</DriverTargetPlatform>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(MSBuildThisFileDirectory)build\x64\Release\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)build\obj\</IntDir>
+    <TargetName>MixyardIngress</TargetName>
+    <!-- Pinned WindowsDriver.Common.targets gates signing on SignMode. -->
+    <SignMode>Off</SignMode>
+    <GenerateTestCertificate>false</GenerateTestCertificate>
+    <EnableInf2Cat>false</EnableInf2Cat>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <ExceptionHandling>false</ExceptionHandling>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <AdditionalOptions>/kernel /Zc:threadSafeInit- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>wdmsec.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="ingress.cpp" />
+    <ClInclude Include="ioctl.hpp" />
+    <ClInclude Include="..\transport.hpp" />
+    <Inf Include="MixyardIngress.inf" />
+    <None Include="packages.config" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(MixyardPackagesDir)Microsoft.Windows.SDK.CPP.10.0.26100.6584\build\native\Microsoft.Windows.SDK.cpp.targets" />
+  <Target Name="RequireSupportedConfiguration">
+    <Error Condition="'$(Platform)' != 'x64' or '$(Configuration)' != 'Release'" Text="Only unsigned Release|x64 is defined for this scaffold." />
+    <Error Condition="'$(SignMode)' != 'Off' or '$(GenerateTestCertificate)' != 'false'" Text="BLOCKED: signing and certificate creation must be disabled." />
+    <Message Importance="high" Text="Unsigned build guard: SignMode=$(SignMode), GenerateTestCertificate=$(GenerateTestCertificate)." />
+  </Target>
+  <Target Name="RefuseSigning" BeforeTargets="TestSign;ProductionSign">
+    <Error Text="BLOCKED: signing targets are not authorized for this scaffold." />
+  </Target>
+</Project>

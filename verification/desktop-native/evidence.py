@@ -26,6 +26,13 @@ def command(args):
         return {'command': args, 'unavailable': str(error)}
 
 
+def binary_info(binary):
+    path = Path(binary)
+    with path.open('rb') as file:
+        digest = hashlib.file_digest(file, 'sha256').hexdigest()
+    return {'path': str(path), 'bytes': path.stat().st_size, 'sha256': digest}
+
+
 def inventory(binary=None):
     repo = Path(__file__).resolve().parents[2]
     desktop = repo / 'apps/desktop'
@@ -34,7 +41,16 @@ def inventory(binary=None):
                *desktop.glob('src-tauri/permissions/*'),
                desktop / 'package.json', desktop / 'pnpm-lock.yaml',
                desktop / 'src-tauri/Cargo.toml', desktop / 'src-tauri/Cargo.lock',
-               desktop / 'src-tauri/tauri.conf.json', desktop / 'src-tauri/build.rs']
+               desktop / 'src-tauri/tauri.conf.json', desktop / 'src-tauri/build.rs',
+               *desktop.glob('*.json'), *desktop.glob('*.ts'), desktop / 'index.html',
+               repo / 'Cargo.toml', repo / 'Cargo.lock', *repo.glob('src/**/*'),
+               *repo.glob('tests/runtime*.rs'),
+               *repo.glob('verification/desktop-native/*.py'),
+               *repo.glob('verification/desktop-native/*.sh'),
+               repo / 'verification/desktop-native/Dockerfile',
+               repo / 'verification/desktop-native/README.md',
+               repo / '.github/workflows/desktop-native.yml',
+               repo / '.github/workflows/runtime.yml']
     commands = [['rustc', '-vV'], ['cargo', '--version'], ['node', '--version'],
                 ['pnpm', '--version'], ['cargo', 'install', '--list']]
     if platform.system() == 'Linux':
@@ -68,7 +84,7 @@ def inventory(binary=None):
         'head': command(['git', 'rev-parse', 'HEAD']),
         'source_files': {str(path.relative_to(repo)):
                          hashlib.sha256(path.read_bytes()).hexdigest()
-                         for path in sorted(sources) if path.is_file()},
+                         for path in sorted(set(sources)) if path.is_file()},
         'host': platform.platform(), 'machine': platform.machine(),
         'cpu_count': os.cpu_count(), 'load': os.getloadavg() if hasattr(os, 'getloadavg') else None,
         'runner': {key: os.environ.get(key) for key in
@@ -79,15 +95,11 @@ def inventory(binary=None):
         'blocked': ['physical visible tray/menu and no-tray desktop hosts',
                     'Windows/macOS UI lifecycle, keyboard, accessibility and timing',
                     'screen-reader accessibility on every platform',
-                    'independent audio runtime survival (runtime absent)',
-                    'audio gaps, device latency, live IPC and sound quality'],
+                    'audio engine survival across UI exit (no audio backend)',
+                    'live meters, audio gaps, device latency and sound quality'],
     }
     if binary:
-        path = Path(binary)
-        with path.open('rb') as file:
-            digest = hashlib.file_digest(file, 'sha256').hexdigest()
-        report['binary'] = {'path': str(path), 'bytes': path.stat().st_size,
-                            'sha256': digest}
+        report['binary'] = binary_info(binary)
     return report
 
 

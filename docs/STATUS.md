@@ -24,7 +24,22 @@ After assembly, Git blobs and modes were checked against the pins for new module
 
 Native private-client #13 is **excluded**: no proof code, client/server evidence paths or audio enablement are imported.
 
+## Desktop lifecycle connection slice (2026-10-14)
+
+Based on merged main `8fbd97c0f64e442643476f3d7841353f8b7d56cc`, the desktop now explicitly connects read-only to an already-running owned runtime. A typed core client reuses the existing transport; the separate desktop workspace depends on the GUI-free root library. One worker owns one subscription, with bounded startup/partial-frame handling and generation checks after Disconnect/reconnect. No server, CLI, profile, diagnostics or audio semantics change.
+
+The [scoped native manifest](../verification/desktop-native/linux-container-evidence.json) records actual Linux WebKit Connect and the same runtime PID/status surviving three UI exit paths, followed by explicit CLI shutdown/reaping. Late old-generation responses cannot restore a cancelled connection. Eight new client tests, five existing lifecycle tests, ten frontend model checks and a locked Linux native build passed locally. The hosted three-OS gates still qualify this slice's exact HEAD. These checks establish lifecycle IPC survival with `backendAvailable: false` and null audio/applied/desired revisions; audio and the physical/platform GUI gates remain blocked. The integration smoke below is historical evidence for the merged baseline.
+
 ## Compatibility and evidence
+
+The desktop additionally imports bounded schema-2 config/inventory content for
+read-only **Why silent / What is sharing** inspection through the unchanged core
+`diagnostics::inspect`. Revisions/platform/declared evidence and stale/imported
+status are explicit; every intended path is retained, while accepted dry-run
+coefficients remain separate from unknown applied/permission/consumer/live state.
+The lifecycle connection supplies no routing snapshots. No protocol, runtime,
+profile, core policy, discovery adapter or production-apply behavior changes.
+See the focused [inspection checks and evidence limits](../verification/desktop-inspection/README.md).
 
 | Present component | Runnable evidence / compatibility boundary | First complete workflow gate |
 | --- | --- | --- |
@@ -33,7 +48,7 @@ Native private-client #13 is **excluded**: no proof code, client/server evidence
 | [Linux](../adapters/linux/README.md) | Separate adapter config/schema; read-only discovery/health and offline PipeWire command plans | External mutation disabled; not connected to Rust policy; hostile relinking safety unproven |
 | [Windows](../adapters/windows/README.md) | WASAPI discovery/explicit selected capture probe plus portable queue/WAV model | Virtual microphone injection unimplemented/unqualified; no mixer transport |
 | [macOS](../adapters/macos/README.md) | Core Audio discovery/explicit selected capture probe plus portable buffer/writer checks | Virtual microphone injection unimplemented/unqualified; no qualified HAL transport |
-| [Desktop](../apps/desktop/README.md) | Disconnected Vue UI, labelled in-memory demo, isolated Tauri shell; reviewed three-OS release compilation and scoped Linux webview checks | No runtime GUI bridge; physical tray/menu/Dock, Windows/macOS GUI, assistive technology and broader performance remain blocked |
+| [Desktop](../apps/desktop/README.md) | Explicit read-only local lifecycle connection, labelled in-memory demo, separate Tauri shell; scoped Linux webview/runtime survival proof and three-OS compile gates | Audio unavailable; physical tray/menu/Dock, Windows/macOS GUI, assistive technology and broader performance remain blocked |
 | [Runtime](runtime.md) | Real foreground-process local IPC: status, events, shutdown; protected Unix sockets / Windows named pipes | `backendAvailable: false`; desired/audio/applied revisions null; audio mutations unavailable |
 | [Diagnostics](diagnostics.md) | `inspect` / `explain` trace all configured branches through the authoritative planner | Projected intent/planning only; capture, permissions, consumers, applied/live levels and native sharing unknown |
 | [Profiles](profiles.md) | Local named desired configs, validated drafts, preview and fresh-revision undo; revision/locking/atomic replacement checks | Never applies audio; `confirmedWorkingSetup: null`; stored consent is not fresh native consent; trusted local filesystem/cooperating writers only |

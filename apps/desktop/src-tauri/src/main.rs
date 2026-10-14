@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod connection;
+mod inspection;
+
+use connection::{Connection, ConnectionStatus};
 use serde::Serialize;
 use tauri::{
     image::Image,
@@ -12,23 +16,50 @@ struct ShellState {
     tray_created: bool,
 }
 
+#[tauri::command]
+async fn inspect_snapshot(request: inspection::SnapshotRequest) -> Result<String, String> {
+    let admission = inspection::acquire()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
+        inspection::inspect(request)
+    })
+    .await
+    .map_err(|error| format!("Inspection worker failed: {error}"))?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ShellStatus {
     schema_version: u8,
     connected: bool,
+    runtime: ConnectionStatus,
     tray_created: bool,
     platform: &'static str,
 }
 
 #[tauri::command]
-fn shell_status(state: State<'_, ShellState>) -> ShellStatus {
+fn shell_status(state: State<'_, ShellState>, connection: State<'_, Connection>) -> ShellStatus {
+    let runtime = connection.status();
     ShellStatus {
         schema_version: 1,
-        connected: false,
+        connected: runtime.phase == "connected",
+        runtime,
         tray_created: state.tray_created,
         platform: std::env::consts::OS,
     }
+}
+
+#[tauri::command]
+fn connect_runtime(
+    instance: String,
+    connection: State<'_, Connection>,
+) -> Result<ConnectionStatus, String> {
+    connection.connect(instance)
+}
+
+#[tauri::command]
+fn disconnect_runtime(connection: State<'_, Connection>) -> ConnectionStatus {
+    connection.disconnect()
 }
 
 #[tauri::command]
@@ -52,6 +83,7 @@ fn open_mixer(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 fn close_mixer(app: &tauri::AppHandle) -> tauri::Result<()> {
+    app.state::<Connection>().disconnect();
     // Construction does not prove the host displays the tray. Only macOS has
     // an independent reopen path (Dock); never strand a hidden UI elsewhere.
     #[cfg(target_os = "macos")]
@@ -82,7 +114,13 @@ fn tray_image() -> Image<'static> {
 }
 
 fn create_tray(app: &tauri::App) -> tauri::Result<()> {
-    let status = MenuItem::with_id(app, "status", "Runtime: not connected", false, None::<&str>)?;
+    let status = MenuItem::with_id(
+        app,
+        "status",
+        "Runtime: see mixer (read-only)",
+        false,
+        None::<&str>,
+    )?;
     let open = MenuItem::with_id(app, "open", "Open Mixer", true, None::<&str>)?;
     let close = MenuItem::with_id(app, "close", "Close mixer window", true, None::<&str>)?;
     let stop = MenuItem::with_id(
@@ -104,7 +142,7 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
     TrayIconBuilder::with_id("mixyard-tray")
         .icon(tray_image())
         .icon_as_template(cfg!(target_os = "macos"))
-        .tooltip("Mixyard — runtime not connected")
+        .tooltip("Mixyard — read-only runtime connection")
         .menu(&menu)
         // Linux cannot deliver tray mouse events. The context menu is the baseline
         // on every host; richer anchored panels require separate native proof.
@@ -130,6 +168,7 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
 fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
+            app.manage(Connection::new()?);
             let tray_created = match create_tray(app) {
                 Ok(()) => true,
                 Err(error) => {
@@ -149,7 +188,14 @@ fn main() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![shell_status, hide_mixer, quit_ui])
+        .invoke_handler(tauri::generate_handler![
+            inspect_snapshot,
+            shell_status,
+            connect_runtime,
+            disconnect_runtime,
+            hide_mixer,
+            quit_ui
+        ])
         .build(tauri::generate_context!())
         .expect("failed to initialize Mixyard desktop UI");
 

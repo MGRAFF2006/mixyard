@@ -4,11 +4,21 @@ on:
   workflow_dispatch:
   push:
     paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'tests/runtime*.rs'
+      - '.github/workflows/runtime.yml'
       - 'apps/desktop/**'
       - 'verification/desktop-native/**'
       - '.github/workflows/desktop-native.yml'
   pull_request:
     paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'tests/runtime*.rs'
+      - '.github/workflows/runtime.yml'
       - 'apps/desktop/**'
       - 'verification/desktop-native/**'
       - '.github/workflows/desktop-native.yml'
@@ -77,6 +87,19 @@ jobs:
           pnpm check 2>&1 | tee ../../evidence/frontend-check.log
           pnpm tauri info 2>&1 | tee ../../evidence/tauri-info.txt
           cargo fmt --check --manifest-path src-tauri/Cargo.toml
+      - name: Build root lifecycle binaries separately, headless and locked
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          python verification/desktop-native/evidence.py --guard
+          echo 'env -u DISPLAY -u WAYLAND_DISPLAY -u DBUS_SESSION_BUS_ADDRESS -u DBUS_SYSTEM_BUS_ADDRESS CARGO_TARGET_DIR=target/headless-runtime cargo build --release --locked --bins --jobs 2' > evidence/runtime-build-command.txt
+          env -u DISPLAY -u WAYLAND_DISPLAY -u DBUS_SESSION_BUS_ADDRESS -u DBUS_SYSTEM_BUS_ADDRESS \
+            CARGO_TARGET_DIR=target/headless-runtime \
+            cargo build --release --locked --bins --jobs 2 2>&1 | tee evidence/runtime-build.log
+          python verification/desktop-native/evidence.py --guard \
+            --output evidence/runtime-build.json --binary target/headless-runtime/release/mixyard-runtime
+          python verification/desktop-native/evidence.py \
+            --output evidence/cli-build.json --binary target/headless-runtime/release/mixyard
       - name: SDK inventory and disk guard before native compilation
         run: python verification/desktop-native/evidence.py --guard --output evidence/host-sdk.json
       - name: Build actual release Tauri shell (locked, two jobs, no installers)
@@ -100,9 +123,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          echo 'bash verification/desktop-native/run-linux.sh apps/desktop/src-tauri/target/release/mixyard-desktop evidence' > evidence/lifecycle-command.txt
+          echo 'bash verification/desktop-native/run-linux.sh apps/desktop/src-tauri/target/release/mixyard-desktop target/headless-runtime/release/mixyard-runtime target/headless-runtime/release/mixyard evidence' > evidence/lifecycle-command.txt
           bash verification/desktop-native/run-linux.sh \
-            apps/desktop/src-tauri/target/release/mixyard-desktop evidence 2>&1 | tee evidence/linux-lifecycle.log
+            apps/desktop/src-tauri/target/release/mixyard-desktop \
+            target/headless-runtime/release/mixyard-runtime \
+            target/headless-runtime/release/mixyard evidence 2>&1 | tee evidence/linux-lifecycle.log
       - name: Record final disk state and evidence boundary
         if: always()
         run: |
@@ -113,8 +138,9 @@ jobs:
             echo 'Linux execution counts only if linux-webview.json status is passed; no tray host in owned Xvfb.'
             echo 'Timing covers trusted keydown to second rAF, on this software-rendered host under the recorded loads only.'
             echo 'Windows/macOS UI lifecycle, keyboard, accessibility and native p95: BLOCKED (not exercised).'
-            echo 'Physical tray/menu, screen readers, hardware presentation and independent audio-runtime survival: BLOCKED.'
-            echo 'No live audio, IPC meter, device latency, signing or installer qualification.'
+            echo 'Linux private lifecycle survival counts only when real CLI status and kernel peer PID identify the same harness-started runtime after every UI exit.'
+            echo 'Physical tray/menu, macOS Dock, screen readers, hardware presentation and audio engine survival: BLOCKED.'
+            echo 'Headless lifecycle IPC does not establish working audio, live meters, device latency, signing or installer qualification.'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Labelled release binary
         if: always() && steps.build.outcome == 'success'
