@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2,
+  "deviceUid": "example:device-a",
+  "action": "pause",
+  "originAttribution": "device-attributed",
+  "dispatchOwnership": "mixyard",
+  "rememberedPlayingSessionIds": []
+}
