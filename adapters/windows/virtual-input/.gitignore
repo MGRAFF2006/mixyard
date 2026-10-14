@@ -1,0 +1,5 @@
+/build/
+/driver/packages/
+/driver/x64/
+/driver/Release/
+/driver/*.vcxproj.user

@@ -1,0 +1,47 @@
+name: Windows private ingress artifacts (no endpoint or driver load)
+on:
+  workflow_dispatch:
+  push:
+    paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml']
+  pull_request:
+    paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml']
+permissions:
+  contents: read
+jobs:
+  transport:
+    name: Bounded ingress queue model (no kernel or PCM delivery)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile and run focused sanitizer check
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -g verification/windows-input/transport_check.cpp -o /tmp/mixyard-ingress-check
+          /tmp/mixyard-ingress-check
+  unsigned:
+    name: Unsigned x64 WDM package (no installation)
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile with matched pinned kits and validate INF/catalog
+        shell: pwsh
+        run: ./adapters/windows/virtual-input/build.ps1
+      - name: Preserve unsigned review artifacts and toolchain/log evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-private-ingress-unsigned-${{ github.sha }}
+          path: |
+            adapters/windows/virtual-input/build/unsigned/
+            adapters/windows/virtual-input/build/toolchain.json
+            adapters/windows/virtual-input/build/msbuild.log
+          if-no-files-found: warn
+      - name: Record proof boundary
+        if: always()
+        shell: pwsh
+        run: "'Unsigned ingress artifacts only. No PortCls/WaveRT, installed driver, selectable endpoint, producer guest test, consumer PCM or production apply.' >> $env:GITHUB_STEP_SUMMARY"

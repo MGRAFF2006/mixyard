@@ -1,0 +1,42 @@
+; SPDX-License-Identifier: MIT
+; Private ingress-only primitive driver. No Media class, KS interfaces, or endpoint.
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider=%Provider%
+DriverVer=10/14/2026,0.1.0.0
+CatalogFile=MixyardIngress.cat
+PnpLockdown=1
+
+[DefaultInstall.NTamd64]
+CopyFiles=DriverCopy
+
+[DefaultInstall.NTamd64.Services]
+AddService=MixyardIngress,0,IngressService
+
+[IngressService]
+DisplayName=%ServiceName%
+Description=%ServiceDescription%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\MixyardIngress.sys
+
+[DestinationDirs]
+DriverCopy=13
+
+[DriverCopy]
+MixyardIngress.sys
+
+[SourceDisksNames]
+1=%MediaName%,,,
+
+[SourceDisksFiles]
+MixyardIngress.sys=1
+
+[Strings]
+Provider="Mixyard"
+ServiceName="Mixyard private ingress scaffold"
+ServiceDescription="Private PCM ingress only; audio endpoint publication unavailable"
+MediaName="Mixyard private ingress scaffold package"

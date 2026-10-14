@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "status": "blocked",
+  "slice": "original MIT Windows private ingress and unsigned native package scaffold",
+  "native_driver_execution": "not attempted",
+  "endpoint_published": false,
+  "external_consumer_pcm": "not attempted; no endpoint implementation",
+  "production_apply": "disabled",
+  "prerequisites": [
+    "CI must establish native .sys compilation/link and INF/catalog validation using pinned matched SDK/WDK 10.0.26100.6584 and existing VS2022 17.14 / MSVC14.44 tools",
+    "An explicitly owned disposable Windows11 x64 guest with snapshot/rollback, console access, test-signing authorization and no physical microphone passthrough; no such guest is established on homelab-dev",
+    "Reviewed local self-test-signed binary/catalog and guest-only trust setup; EV/Partner Center enrollment is not required for the separate local test-signing route",
+    "Original PortCls/WaveRT capture miniports and a matching software-device package, producer/RT lifetime integration, then a provisioning broker; this private System-class INF cannot publish audio",
+    "Fresh instance identities across driver reload plus approved broker admission and adversarial handle/ACL/lifecycle tests",
+    "Separate explicit-MMDevice WASAPI consumers and full native A/B/fanout/first-tail-frame/delivery-ACK evidence"
+  ],
+  "evidence_limits": [
+    "Portable tests exercise queue models and file-key comparisons, not the Windows kernel, DACLs, IRPs, audio engine or real consumer fanout",
+    "Native build results belong to each CI run artifact and logs; this record does not predeclare compile or package validation success",
+    "No signing, driver installation, VM creation, reboot, host audio/service/default change, privilege operation or microphone access was performed",
+    "No producer queue inspection or acceptance is an endpoint delivery acknowledgment"
+  ]
+}

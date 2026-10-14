@@ -1,0 +1,38 @@
+name: macOS input publication artifact (no HAL execution)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'adapters/macos/virtual-input/**'
+      - 'verification/macos-input/**'
+      - '.github/workflows/macos-input.yml'
+  pull_request:
+    paths:
+      - 'adapters/macos/virtual-input/**'
+      - 'verification/macos-input/**'
+      - '.github/workflows/macos-input.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  artifact:
+    name: Apple ABI harness and signed artifact only
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, sign, and test in-process only (no install or audio access)
+        run: bash verification/macos-input/build-check.sh
+      - name: Evidence boundary
+        if: always()
+        run: |
+          echo 'Artifact compile/ad-hoc signature/in-process ABI only.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'HAL loading, external consumer PCM, TCC, authenticated producer, restart and production apply remain BLOCKED.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-input-artifact-${{ github.sha }}
+          path: verification/macos-input/build/
+          if-no-files-found: warn
