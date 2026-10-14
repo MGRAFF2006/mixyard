@@ -7,6 +7,7 @@
 #include <wdmsec.h>
 #include "control.hpp"
 #include "delivery.hpp"
+#include "buffer.hpp"
 
 void* __cdecl operator new(size_t bytes, POOL_TYPE, ULONG pool_tag) noexcept {
     return ExAllocatePool2(POOL_FLAG_NON_PAGED, bytes, pool_tag);
@@ -30,6 +31,9 @@ volatile LONG stream_claimed;
 uint64_t stream_epoch;
 uint32_t* active_buffer;
 ULONG active_bytes;
+// PortCls retains these writable reference strings for the device lifetime.
+WCHAR topology_name[] = L"TopologyCapture";
+WCHAR wave_name[] = L"WaveCapture";
 
 // A nonpaged object is owned by COM refs; streams retain their parent miniport.
 #define OBJECT_REFS(Type) \
@@ -215,7 +219,8 @@ private:
         while (frames_ < target) {
             const auto copied = reader_.copied_frames;
             reader_.frame(transport, buffer_ + (frames_ % capacity) * 2);
-            if (reader_.copied_frames != copied) diagnostics.endpoint_frame = frames_;
+            if (reader_.copied_frames != copied)
+                record_capture_copy(diagnostics, transport, reader_, frames_, now);
             ++frames_;
         }
         KeMemoryBarrier(); // Publish positions only after writing all corresponding samples.
@@ -223,9 +228,6 @@ private:
         diagnostics.copied_frames = reader_.copied_frames;
         diagnostics.silent_frames = reader_.silent_frames;
         diagnostics.lost_packets = reader_.lost_packets;
-        diagnostics.revision = reader_.revision;
-        diagnostics.producer_frame = reader_.producer_frame;
-        diagnostics.qpc = now;
         diagnostics.qpc_frequency = frequency_;
         if (event_ && notification_frames_ && before / notification_frames_ != frames_ / notification_frames_)
             KeSetEvent(event_, IO_NO_INCREMENT, FALSE);
@@ -284,10 +286,10 @@ NTSTATUS Stream::AllocateBufferWithNotification(ULONG count, ULONG requested, PM
     const ULONG alignment = count == 2 ? 16 : 8;
     requested -= requested % alignment;
     PHYSICAL_ADDRESS high; high.QuadPart = MAXLONGLONG;
-    auto* allocated = port_->AllocatePagesForMdl(high, requested);
+    uint32_t* mapped = nullptr;
+    auto* allocated = allocate_capture_buffer<PMDL>(port_, high, requested, MmCached,
+        [](PMDL pages) { return MmGetMdlByteCount(pages); }, &mapped);
     if (!allocated) return STATUS_INSUFFICIENT_RESOURCES;
-    auto* mapped = static_cast<uint32_t*>(port_->MapAllocatedPages(allocated, MmCached));
-    if (!mapped) { port_->FreePagesFromMdl(allocated); return STATUS_INSUFFICIENT_RESOURCES; }
     RtlZeroMemory(mapped, requested);
     KIRQL irql; KeAcquireSpinLock(&gate, &irql);
     mdl_ = allocated; buffer_ = mapped; bytes_ = requested;
@@ -434,11 +436,7 @@ NTSTATUS Dispatch(PDEVICE_OBJECT device, PIRP irp) {
         if (irp->RequestorMode != UserMode || !key || transport.owner != key) status = STATUS_ACCESS_DENIED;
         else if (!buffer) status = STATUS_INVALID_PARAMETER;
         else if (code == ioctl_capture_status && !input && output >= sizeof(CaptureStatus)) {
-            auto snapshot = diagnostics;
-            snapshot.version = 1; snapshot.bytes = sizeof(snapshot);
-            snapshot.generation = transport.generation; snapshot.producer_epoch = transport.epoch;
-            snapshot.next_sequence = transport.next_sequence; snapshot.next_frame = transport.next_frame;
-            snapshot.overwritten_packets = transport.overwritten_packets;
+            const auto snapshot = capture_status_snapshot(diagnostics, transport);
             RtlCopyMemory(buffer, &snapshot, sizeof(snapshot)); bytes = sizeof(snapshot); status = STATUS_SUCCESS;
         } else if (code == ioctl_submit && output >= sizeof(SubmitReply)) {
             const auto result = transport.submit(key, buffer, input);
@@ -458,7 +456,7 @@ NTSTATUS Dispatch(PDEVICE_OBJECT device, PIRP irp) {
 }
 
 NTSTATUS Register(PDEVICE_OBJECT device, PIRP irp, PRESOURCELIST resources, REFCLSID cls,
-                  PCWSTR name, PUNKNOWN miniport, PPORT* result) {
+                  PWSTR name, PUNKNOWN miniport, PPORT* result) {
     *result = nullptr;
     PPORT port = nullptr;
     NTSTATUS status = PcNewPort(&port, cls);
@@ -473,8 +471,8 @@ NTSTATUS Start(PDEVICE_OBJECT device, PIRP irp, PRESOURCELIST resources) {
     auto* topo = new (NonPagedPoolNx, tag) Topology;
     if (!wave || !topo) { if (wave) wave->Release(); if (topo) topo->Release(); return STATUS_INSUFFICIENT_RESOURCES; }
     PPORT wp = nullptr, tp = nullptr;
-    NTSTATUS status = Register(device, irp, resources, CLSID_PortTopology, L"TopologyCapture", topo, &tp);
-    if (NT_SUCCESS(status)) status = Register(device, irp, resources, CLSID_PortWaveRT, L"WaveCapture", wave, &wp);
+    NTSTATUS status = Register(device, irp, resources, CLSID_PortTopology, topology_name, topo, &tp);
+    if (NT_SUCCESS(status)) status = Register(device, irp, resources, CLSID_PortWaveRT, wave_name, wave, &wp);
     if (NT_SUCCESS(status)) status = PcRegisterPhysicalConnection(device, tp, 1, wp, 0);
     if (wp) wp->Release(); if (tp) tp->Release(); wave->Release(); topo->Release();
     return status; // PortCls owns registered subdevices and failed-start PnP cleanup.

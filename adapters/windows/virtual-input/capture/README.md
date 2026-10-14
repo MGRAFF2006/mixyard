@@ -33,8 +33,9 @@ The existing ingress status ABI is unchanged. Invalid submissions revoke admissi
 and clear retained PCM; cleanup cannot retire a different producer file object.
 Cleanup and revocation scrub the currently mapped cyclic buffer under the same lock.
 
-The stream owns its port-allocated MDL and kernel mapping; initialization precedes
-exposure. The port independently maps pages for its client. The stream retains
+The stream owns its port-allocated MDL and kernel mapping; a short allocation is
+freed before mapping, and initialization precedes exposure. The port independently
+maps pages for its client. The stream retains
 its port and parent miniport. A periodic timer's DPC writes the ring under one
 nonpaged spinlock shared with bounded submit/cleanup. No callback allocation,
 blocking IPC, logging, floating-point arithmetic or user-pointer copies occur.
@@ -54,7 +55,12 @@ coarse synchronization and timer are artifact hypotheses, not measured RT qualit
 Diagnostic `endpoint_frames` includes zeros; `copied_frames`, `revision`,
 `producer_frame`, `endpoint_frame` and QPC describe writes to cyclic storage only.
 They are **not consumer sample-effective ACKs**. The absolute endpoint clock resets
-at STOP, with a fresh stream epoch on RUN. Producer epoch is separate. Native QPC,
+at STOP, with a fresh stream epoch on RUN. Status preserves the last copy's producer
+identity internally; cleanup/revocation or a different generation/epoch returns a
+zero revision/source-frame/endpoint-frame/QPC tuple before any further callback.
+Revision zero means no copy for the current producer; cumulative stream counters
+remain separate. QPC records the last copy rather than later silence-only callbacks.
+Producer epoch is separate. Native QPC,
 pause/restart, notification timing, overrun and lifetime behavior require guest tests.
 
 ## Build and gates
@@ -64,8 +70,9 @@ SDK/WDK **26100.6584**, unsigned guards, `/m:2`, exact 10737418240-byte reserve,
 InfVerif, Inf2Cat and PE/hash inventory are mandatory for both packages. Outputs:
 `../build/capture-unsigned`, `capture-msbuild.log` and shared `toolchain.json`.
 CI results establish compile/package facts only and are tied to their sourceHead.
-`verification/windows-input/delivery_check.cpp` tests the actual compiled cursor
-and integer clock helper with sanitizers. It does not execute the native miniport.
+`verification/windows-input/delivery_check.cpp` tests the actual compiled cursor,
+integer clock, allocation failure path and diagnostic provenance helpers with
+sanitizers. Injected allocation results do not execute native MDLs or the miniport.
 
 No driver install/load, certificate, signing, boot-policy, VM creation, host audio,
 service/default or real microphone operation is part of this milestone. Native

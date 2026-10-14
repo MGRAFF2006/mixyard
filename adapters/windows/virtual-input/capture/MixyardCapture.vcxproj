@@ -53,6 +53,8 @@
   <ItemGroup>
     <ClCompile Include="endpoint.cpp" />
     <ClInclude Include="control.hpp" />
+    <ClInclude Include="buffer.hpp" />
+    <ClInclude Include="status.hpp" />
     <ClInclude Include="delivery.hpp" />
     <ClInclude Include="..\transport.hpp" />
     <Inf Include="MixyardCapture.inf" />
