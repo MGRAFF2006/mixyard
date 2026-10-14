@@ -24,8 +24,18 @@ are admitted on the anonymous listener: the ordinary producer and a trusted
 crash relay. The separate supervisor channel accepts only the ordinary producer.
 The stranger is a different signed executable at the same UID, receives the real
 anonymous endpoint, and attempts an early PCM message with a forbidden marker.
-It must get an actual native error, with no hello/packet admission or delivery;
-a timeout is a failed test, never authentication evidence. Both directions pin
+It must get a native rejection, with no hello/packet admission or delivery.
+The reverse stale-broker pin must yield `NSCocoaErrorDomain` with
+`NSXPCConnectionCodeSigningRequirementFailure`, using the selected SDK constant.
+The broker also sends an authority probe on each pinned connection so its own
+error callback can record that enforcing-side failure. Generic invalidation at
+the stranger or stale-producer side qualifies only with a correlated broker
+requirement-failure event. Malformed/missing supervisor policy instead requires
+the live listener's distinct `policy_unavailable` event, with valid transport
+policy so startup failure cannot substitute. PID fields correlate diagnostics;
+they never authorize a peer. Raw error domain/code/description and events remain
+in the evidence. If the runtime does not produce the required event, the test
+fails; a timeout or unrelated error never qualifies. Both directions pin
 their expected peers, including actor/supervisor fixture connections.
 
 The PCM protocol has only hello and packet operations. It cannot choose or modify
@@ -59,9 +69,14 @@ trusted subprocess also exits abruptly after enqueueing. Every unread sample
 must become zero, followed by a complete zero tail longer than the retained ring.
 
 Each run writes a fresh ignored directory with source/artifact SHA-256 hashes,
-executed git HEAD and parents (a PR test merge is distinct from source HEAD),
+distinct source HEAD, current base, merge-base, executed HEAD and nonempty parents
+(a PR test merge must have exactly current base and source HEAD as parents),
 runtime/SDK/compiler, actual SDK declarations, all strict ad-hoc signatures,
-accepted/stale/invalid policy files and raw test results. CI uploads failures too.
+accepted/stale/invalid/missing policy files and raw test results. CI fetches full
+ancestry and checks that current base is integrated into source HEAD. Provenance
+is written before builds and on exit, including source/partial-artifact hashes
+and incomplete/failure status; CI uploads failures too. Authority probes and
+event-file writes are fixture control work outside audio/clock callbacks.
 No credentials or build artifacts are committed.
 
 `system_contract.mm` is **compiled but never executed**. Its privileged system

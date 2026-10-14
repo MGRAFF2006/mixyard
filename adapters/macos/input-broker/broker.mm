@@ -28,6 +28,14 @@ OSStatus deleteStorage(AudioServerPlugInHostRef, CFStringRef) { return noErr; }
 OSStatus request(AudioServerPlugInHostRef, AudioObjectID, UInt64, void *) { return kAudioHardwareUnsupportedOperationError; }
 AudioServerPlugInHostInterface host{changed, copyStorage, writeStorage, deleteStorage, request};
 NSDictionary *status(NSString *value) { return @{@"status": value}; }
+void authorityEvent(NSDictionary *event) {
+    NSMutableDictionary *record = [event mutableCopy];
+    record[@"broker_pid"] = @(getpid());
+    NSData *json = [NSJSONSerialization dataWithJSONObject:record options:0 error:nil];
+    NSString *path = [[mixyard::fixtureRoot() stringByAppendingPathComponent:@"authority-events"]
+        stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingString:@".json"]];
+    assert(json && [json writeToFile:path atomically:YES] && "fixture authority evidence write failed");
+}
 }
 
 @interface MYSession : NSObject <MYPCMTransport> {
@@ -106,7 +114,12 @@ NSDictionary *status(NSString *value) { return @{@"status": value}; }
 @implementation MYBroker
 - (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
     NSString *requirement = listener == self.anonymous ? self.requirement : mixyard::fixturePolicy()[@"producer"];
-    if (!mixyard::pin(connection, requirement)) return NO;
+    NSDictionary *context = @{@"channel": listener == self.anonymous ? @"pcm" : @"control",
+        @"peer_pid": @(connection.processIdentifier), @"requirement": requirement ?: @"<unavailable>"};
+    if (!mixyard::pin(connection, requirement)) {
+        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"policy_unavailable";
+        authorityEvent(event); return NO;
+    }
     @synchronized (self) {
         // Finite fixture budget, not product capacity. Reclaimed on invalidation.
         if (self.connections.count >= 8) return NO;
@@ -130,7 +143,18 @@ NSDictionary *status(NSString *value) { return @{@"status": value}; }
         NSXPCConnection *closed = weakConnection;
         @synchronized (owner) { if (closed) [owner.connections removeObject:closed]; }
     };
-    [connection resume]; return YES;
+    connection.remoteObjectInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYAuthorityProbe)];
+    [connection resume];
+    // Foundation's enforcing-side error identifies requirement failure. The peer
+    // can see generic invalidation; neither that nor a timeout proves auth.
+    [(id<MYAuthorityProbe>)[connection remoteObjectProxyWithErrorHandler:^(NSError *error) {
+        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"probe_error";
+        event[@"error"] = mixyard::errorDetails(error); authorityEvent(event);
+    }] probe:^{
+        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"probe_reply";
+        authorityEvent(event);
+    }];
+    return YES;
 }
 - (void)endpoint:(void (^)(NSXPCListenerEndpoint *))reply { reply(self.anonymous.endpoint); }
 - (void)snapshot:(void (^)(NSDictionary *))reply {

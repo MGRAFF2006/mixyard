@@ -47,11 +47,14 @@ inline bool exactRequirement(NSString *text) {
 // dependencies. It is outside the bundles, manifest-hashed, and not peer supplied.
 // Same-user arbitrary policy/memory tampering is outside this fixture threat model.
 // Native NSXPC checks the live peer; these files are expected policy, not PID identity.
-inline NSDictionary *fixturePolicy() {
+inline NSString *fixtureRoot() {
     NSString *path = NSBundle.mainBundle.bundlePath;
     const bool service = [[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundlePackageType"] isEqual:@"XPC!"];
     for (unsigned i = 0; i < (service ? 4u : 1u); ++i) path = path.stringByDeletingLastPathComponent;
-    path = [path stringByAppendingPathComponent:@"fixture-authority.plist"];
+    return path;
+}
+inline NSDictionary *fixturePolicy() {
+    NSString *path = [fixtureRoot() stringByAppendingPathComponent:@"fixture-authority.plist"];
     NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
     if (!attributes || [attributes[NSFileSize] unsignedLongLongValue] > 4096) return nil;
     NSData *data = [NSData dataWithContentsOfFile:path];
@@ -67,7 +70,19 @@ inline bool pin(NSXPCConnection *connection, NSString *requirement) {
     }
     return false;
 }
+
+// Fixture diagnostics only; identity is still enforced by Foundation, never PID.
+inline NSDictionary *errorDetails(NSError *error) {
+    return @{@"domain": error.domain, @"code": @(error.code),
+             @"description": error.localizedDescription, @"user_info": error.userInfo.description};
 }
+}
+
+// A reply gives the enforcing broker an error callback for its native peer check.
+// No PCM, endpoint or control authority is granted by this diagnostic method.
+@protocol MYAuthorityProbe
+- (void)probe:(void (^)(void))reply;
+@end
 
 @protocol MYPCMTransport
 - (void)hello:(void (^)(NSDictionary *))reply;

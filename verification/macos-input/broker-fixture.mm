@@ -31,6 +31,25 @@
 }
 @end
 
+@interface MYProbe : NSObject <MYAuthorityProbe>
+@end
+@implementation MYProbe
+- (void)probe:(void (^)(void))reply { reply(); }
+@end
+static void exportProbe(NSXPCConnection *connection) {
+    connection.exportedInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYAuthorityProbe)];
+    connection.exportedObject = [MYProbe new];
+}
+static NSDictionary *rejection(id result, bool enforcingSide) {
+    NSLog(@"native rejection (enforcing=%d): %@", enforcingSide, result);
+    assert([result isKindOfClass:NSError.class]);
+    NSError *error = result;
+    assert([error.domain isEqual:NSCocoaErrorDomain]);
+    assert(error.code == NSXPCConnectionCodeSigningRequirementFailure ||
+           (!enforcingSide && error.code == NSXPCConnectionInvalid));
+    return mixyard::errorDetails(error);
+}
+
 static id proxy(NSXPCConnection *connection, MYResult *result) {
     return [connection remoteObjectProxyWithErrorHandler:^(NSError *error) { [result finish:error]; }];
 }
@@ -63,6 +82,7 @@ static NSXPCConnection *connect(NSXPCListenerEndpoint *endpoint, NSString *requi
     NSXPCConnection *c = [[NSXPCConnection alloc] initWithListenerEndpoint:endpoint];
     c.remoteObjectInterface = pcmInterface();
     if (!mixyard::pin(c, requirement)) { [c invalidate]; return nil; }
+    exportProbe(c);
     [c resume]; return c;
 }
 static NSDictionary *read(NSXPCConnection *control, uint32_t reader, uint64_t frame, uint32_t count) {
@@ -105,10 +125,8 @@ static void disconnected(NSXPCConnection *control) {
     id early = send(c, packet(h, 0.875f));
 #ifdef MIXYARD_STRANGER
     // This path intentionally differs in executable code, not only bundle name.
-    assert([early isKindOfClass:NSError.class]);
-    NSError *error = early;
-    reply(@{@"rejected": @YES, @"pid": @(getpid()), @"uid": @(getuid()),
-            @"error_domain": error.domain, @"error_code": @(error.code)});
+    NSDictionary *error = rejection(early, false);
+    reply(@{@"rejection_observed": @YES, @"pid": @(getpid()), @"uid": @(getuid()), @"error": error});
     [c invalidate];
 #else
     expect(early, @"not_admitted");
@@ -141,14 +159,16 @@ int main(int argc, char **argv) {
         assert(mixyard::exactRequirement(brokerRequirement));
         NSXPCConnection *control = [[NSXPCConnection alloc] initWithServiceName:@"org.mixyard.broker.fixture"];
         control.remoteObjectInterface = controlInterface(); assert(mixyard::pin(control, brokerRequirement));
+        exportProbe(control);
         [control resume];
         MYResult *endpointResult = [MYResult new]; [(id<MYFixtureControl>)proxy(control, endpointResult)
             endpoint:^(NSXPCListenerEndpoint *endpoint) { [endpointResult finish:endpoint]; }];
         id endpointValue = [endpointResult wait];
         if (![mode isEqual:@"positive"]) {
-            assert([endpointValue isKindOfClass:NSError.class]);
-            NSError *e = endpointValue;
-            printf("{\"status\":\"pass\",\"case\":\"requirement_rejected\",\"error_code\":%ld}\n", (long)e.code);
+            NSDictionary *error = rejection(endpointValue, false);
+            NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"status": @"rejection_observed",
+                @"case": mode, @"producer_pid": @(getpid()), @"error": error} options:0 error:nil];
+            assert(json); fwrite(json.bytes, 1, json.length, stdout); putchar('\n');
             [control invalidate]; return 0;
         }
         assert([endpointValue isKindOfClass:NSXPCListenerEndpoint.class]);
@@ -158,7 +178,7 @@ int main(int argc, char **argv) {
         assert(!connect(endpoint, @"garbage") && !connect(endpoint, @"identifier \"org.mixyard.fixture\""));
         // Reverse authority: a stale broker requirement invalidates the native connection.
         NSXPCConnection *stale = connect(endpoint, @"cdhash H\"0000000000000000000000000000000000000000\"");
-        assert(stale && [hello(stale) isKindOfClass:NSError.class]); [stale invalidate];
+        assert(stale); NSDictionary *staleError = rejection(hello(stale), true); [stale invalidate];
         assert([snapshot(control)[@"hellos"] unsignedLongLongValue] == 0);
         // Same UID, different signed executable gets the genuine anonymous endpoint.
         NSXPCConnection *stranger = [[NSXPCConnection alloc] initWithServiceName:@"org.mixyard.stranger.fixture"];
@@ -167,7 +187,7 @@ int main(int argc, char **argv) {
         MYResult *attack = [MYResult new]; [(id<MYStranger>)proxy(stranger, attack)
             attempt:endpoint requirement:brokerRequirement reply:^(NSDictionary *value) { [attack finish:value]; }];
         id rejected = [attack wait]; assert([rejected isKindOfClass:NSDictionary.class]);
-        assert([rejected[@"rejected"] boolValue] && [rejected[@"uid"] unsignedIntValue] == getuid());
+        assert([rejected[@"rejection_observed"] boolValue] && [rejected[@"uid"] unsignedIntValue] == getuid());
         assert([rejected[@"pid"] intValue] != [initial[@"pid"] intValue]);
         assert([snapshot(control)[@"packets"] unsignedLongLongValue] == 0);
         assert([snapshot(control)[@"hellos"] unsignedLongLongValue] == 0);
@@ -207,8 +227,8 @@ int main(int argc, char **argv) {
             assert([snapshot(control)[@"packets"] unsignedLongLongValue] == 0);
             assert([snapshot(control)[@"credit_frames"] unsignedIntValue] == 4096);
         }
-        expect(send(producer, [NSData dataWithLength:sizeof(h) - 1]), @"invalid");
-        expect(send(producer, [NSData dataWithLength:sizeof(h) + 4096 * 8 + 1]), @"invalid");
+        expect(send(producer, [NSMutableData dataWithLength:sizeof(h) - 1]), @"invalid");
+        expect(send(producer, [NSMutableData dataWithLength:sizeof(h) + 4096 * 8 + 1]), @"invalid");
         NSDictionary *queued = send(producer, good); expect(queued, @"queued");
         assert(![queued[@"effective_delivery_ack"] boolValue] && [queued[@"credit_frames"] unsignedIntValue] == 4088);
         expect(send(producer, good), @"stale"); // replay / out of order
@@ -254,6 +274,8 @@ int main(int argc, char **argv) {
         NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"schema_version": @1, @"status": @"pass",
             @"evidence_kind": @"native_authenticated_anonymous_XPC_with_in_process_Apple_ABI_reads",
             @"producer_pid": @(getpid()), @"broker": finalState, @"stranger": rejected,
+            @"stale_broker_error": staleError,
+            @"requirement_failure_code": @(NSXPCConnectionCodeSigningRequirementFailure),
             @"anonymous_transport_authentication": @"executed", @"system_bootstrap": @"BLOCKED",
             @"hosted_HAL_peer_identity": @"BLOCKED", @"external_consumer_pcm": @"BLOCKED", @"production_apply": @NO,
             @"checks": @[@"exact_peer_both_directions", @"same_UID_different_signed_executable", @"early_messages",

@@ -16,8 +16,16 @@ print(f'free_bytes={free} reserve_bytes=10737418240')
 if free < 10737418240: raise SystemExit('BLOCKED: exact 10 GiB reserve unavailable')
 PY
 }
+finish() {
+  local result=$?
+  trap - EXIT
+  reserve || result=1
+  python3 verification/macos-input/evidence.py "$evidence" "$result" || result=1
+  exit "$result"
+}
+trap finish EXIT
+python3 verification/macos-input/evidence.py "$evidence" incomplete
 reserve
-trap reserve EXIT
 sdk=$(xcrun --sdk macosx --show-sdk-path)
 {
   sw_vers
@@ -35,6 +43,11 @@ for needle in ('setCodeSigningRequirement','NSXPCConnectionPrivileged'):
     hits = [i for i, line in enumerate(lines) if needle in line]
     assert hits, f'SDK missing supported declaration: {needle}'
     for i in hits: print('\n'.join(lines[max(0,i-7):i+8]))
+errors = (header.parent/'FoundationErrors.h').read_text().splitlines()
+for needle in ('NSXPCConnectionCodeSigningRequirementFailure', 'NSXPCConnectionInvalid'):
+    hits = [i for i, line in enumerate(errors) if needle in line]
+    assert hits, f'SDK missing documented error constant: {needle}'
+    for i in hits: print('\n'.join(errors[max(0,i-3):i+4]))
 PY
 app="$evidence/BrokerFixture.app"
 broker="$app/Contents/XPCServices/Broker.xpc"
@@ -76,8 +89,9 @@ for bundle in "$broker" "$stranger" "$crash" "$app"; do
 done
 reserve
 python3 - "$evidence" <<'PY'
-import pathlib, plistlib, re, subprocess, sys
+import json, pathlib, plistlib, re, subprocess, sys, time
 root = pathlib.Path(sys.argv[1]); app = root/'BrokerFixture.app'
+(root/'authority-events').mkdir()
 def requirement(path):
     display = subprocess.check_output(['codesign','-d','--verbose=4',str(path)], stderr=subprocess.STDOUT, text=True)
     digest = re.search(r'^CDHash=([0-9a-f]{40})$', display, re.M).group(1)
@@ -92,44 +106,64 @@ policy['transport'] = policy['producer'] + ' or ' + policy['crash']
 # Executions are bounded owned app/XPC subprocess fixtures. No launchctl, service
 # installation/registration, HAL loading, TCC or real microphone access.
 def run(case, args):
+    before = set((root/'authority-events').glob('*.json'))
     with (root/f'{case}.stdout').open('w') as out, (root/f'{case}.stderr').open('w') as err:
-        result = subprocess.run([str(app/'Contents/MacOS/Producer'), *args], stdout=out, stderr=err, timeout=90)
+        try:
+            result = subprocess.run([str(app/'Contents/MacOS/Producer'), *args], stdout=out, stderr=err, timeout=90)
+        except subprocess.TimeoutExpired:
+            (root/f'{case}.exit').write_text('timeout\n')
+            raise
     (root/f'{case}.exit').write_text(str(result.returncode)+'\n')
     if result.returncode: raise SystemExit(f'FAIL: {case}; raw stdout/stderr/exit preserved in {root}')
-run('positive', [policy['broker'],policy['stranger'],policy['crash'],'positive'])
+    proof = json.loads((root/f'{case}.stdout').read_text())
+    # Only Foundation's enforcing-side domain/code qualifies a live mismatch.
+    # Generic peer invalidation additionally needs this correlated broker event.
+    def matching(events, channel, pid, requirement, outcome):
+        return [e for e in events if e['channel']==channel and e['peer_pid']==pid
+                and e['requirement']==requirement and e['outcome']==outcome]
+    deadline = time.monotonic()+5
+    while True:
+        events = [json.loads(p.read_text()) for p in sorted(set((root/'authority-events').glob('*.json'))-before)]
+        if case == 'positive':
+            expected = matching(events, 'pcm', proof['stranger']['pid'], policy['transport'], 'probe_error')
+            expected = [e for e in expected if e['broker_pid']==proof['broker']['pid']
+                        and e['error']['domain']=='NSCocoaErrorDomain'
+                        and e['error']['code']==proof['requirement_failure_code']]
+            accepted = matching(events, 'control', proof['producer_pid'], policy['producer'], 'probe_reply')
+            accepted = [e for e in accepted if e['broker_pid']==proof['broker']['pid']]
+            assert proof['status']=='pass' and proof['external_consumer_pcm']=='BLOCKED'
+        else:
+            assert proof['status']=='rejection_observed' and proof['case']==args[-1]
+            expected = matching(events, 'control', proof['producer_pid'], policy.get('producer','<unavailable>'),
+                                'probe_error' if case=='stale-producer' else 'policy_unavailable')
+            if case=='stale-producer':
+                expected = [e for e in expected if e['error']['domain']=='NSCocoaErrorDomain'
+                            and e['error']['code']==requirement_failure_code]
+            accepted = [True]
+        if expected and accepted: break
+        if time.monotonic() >= deadline:
+            raise SystemExit(f'FAIL: {case}: no correlated authority outcome; raw events preserved')
+        time.sleep(0.05)
+    (root/f'{case}.authority.json').write_text(json.dumps(dict(status='pass',events=events),indent=2)+'\n')
+    return proof
+proof = run('positive', [policy['broker'],policy['stranger'],policy['crash'],'positive'])
+requirement_failure_code = proof['requirement_failure_code']
 # Fresh process-owned service instances; change only fixture policy, never host config.
 policy['producer'] = 'cdhash H"0000000000000000000000000000000000000000"'
 policy['transport'] = policy['producer']
 (root/'stale-authority.plist').write_bytes(plistlib.dumps(policy))
 (root/'fixture-authority.plist').write_bytes(plistlib.dumps(policy))
-run('stale-producer', [policy['broker'],policy['stranger'],policy['crash'],'rejected'])
+run('stale-producer', [policy['broker'],policy['stranger'],policy['crash'],'inbound_requirement_mismatch'])
 policy['producer'] = 'garbage'
-policy['transport'] = 'garbage'
+# Keep the anonymous policy valid so unavailable supervisor policy is observed
+# in the live listener delegate, rather than confusing process startup with auth.
+policy['transport'] = plistlib.loads((root/'accepted-authority.plist').read_bytes())['transport']
 (root/'invalid-authority.plist').write_bytes(plistlib.dumps(policy))
 (root/'fixture-authority.plist').write_bytes(plistlib.dumps(policy))
-run('invalid-producer', [policy['broker'],policy['stranger'],policy['crash'],'rejected'])
-PY
-python3 - "$evidence" <<'PY'
-import hashlib, json, pathlib, platform, subprocess, sys
-root = pathlib.Path(sys.argv[1])
-proof = json.loads((root/'positive.stdout').read_text())
-assert proof['status']=='pass' and proof['external_consumer_pcm']=='BLOCKED'
-for case in ('stale-producer','invalid-producer'):
-    assert json.loads((root/f'{case}.stdout').read_text())['status']=='pass'
-head = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
-parents = subprocess.check_output(['git','show','-s','--format=%P','HEAD'], text=True).split()
-files = [p for tree in ('adapters/macos/input-broker','adapters/macos/virtual-input','verification/macos-input')
-         for p in pathlib.Path(tree).rglob('*') if p.is_file() and 'build' not in p.parts]
-files += [pathlib.Path('.github/workflows/macos-input.yml')]
-files += [p for p in root.rglob('*') if p.is_file()]
-manifest = dict(schema_version=1, executed_head=head, executed_parents=parents,
-    foundation='d9c10984c18589ffa8efc54060bc4f1c6a8e2564', platform=platform.platform(),
-    anonymous_transport_authentication='executed_native_NSXPC_peer_code_requirements',
-    peer_API='NSXPCConnection.setCodeSigningRequirement (macOS 13+)',
-    policy='per-build exact cdhash fixture file; arbitrary same-user policy/memory tampering excluded',
-    evidence_kind=proof['evidence_kind'], production_apply=False, release_driver='zeros_only_factory_export',
-    system_bootstrap='BLOCKED/source_only', hosted_HAL_peer_identity='BLOCKED', external_consumer_pcm='BLOCKED',
-    privacy_physical_quality='BLOCKED', sha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
-(root/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+run('invalid-producer', [policy['broker'],policy['stranger'],policy['crash'],'policy_unavailable'])
+del policy['producer']
+(root/'missing-authority.plist').write_bytes(plistlib.dumps(policy))
+(root/'fixture-authority.plist').write_bytes(plistlib.dumps(policy))
+run('missing-producer', [policy['broker'],policy['stranger'],policy['crash'],'policy_unavailable'])
 PY
 echo "PASS: native anonymous XPC fixture/auth/credit/lifetime; system/HAL/external PCM BLOCKED. Evidence: $evidence"
