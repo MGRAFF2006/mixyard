@@ -38,6 +38,49 @@ def require_fixture_consent(route):
         raise ValueError("fixture mic-to-physical-like route needs consent even at zero/mute")
 
 
+def qualify_revision_acks(traces, acks, commanded_revisions, consumer_pcm, mixes, sources,
+                          pre_capture_revisions=()):
+    """Correlate internal handoffs with independently checked external packets.
+
+    Only commands issued during this capture are sample-effective candidates.
+    Earlier handoffs are explicitly uncovered by this capture, even when their
+    steady PCM is checked separately. No empty set earns a qualification pass.
+    """
+    errors = []
+    matched = 0
+    for revision in commanded_revisions:
+        for mix in range(mixes):
+            key = (mix, revision)
+            rows = [r for r in traces if (r[1], r[9]) == key]
+            if key not in acks:
+                errors.append({"mix_revision": key, "reason": "missing internal handoff ACK"})
+            if not rows:
+                errors.append({"mix_revision": key, "reason": "commanded revision absent from trace"})
+                continue
+            frame = min(r[2] for r in rows)
+            first = [r for r in rows if r[2] == frame]
+            if key not in acks:
+                continue
+            if acks[key] != frame:
+                errors.append({"mix_revision": key, "reason": "ACK/first callback frame mismatch",
+                               "callback_frame": frame, "ack_frame": acks[key]})
+                continue
+            if len(first) != sources or {r[0] for r in first} != set(range(sources)):
+                errors.append({"mix_revision": key, "reason": "missing source trace at ACK frame"})
+                continue
+            packets = {(r[4], r[10], r[6]) for r in first}
+            if len(packets) != 1 or not packets.issubset(consumer_pcm.get(mix, set())):
+                errors.append({"mix_revision": key,
+                               "reason": "acknowledged frame absent from verified external consumer PCM"})
+                continue
+            matched += 1
+    return {"status": "fail" if errors else "pass" if commanded_revisions else "blocked",
+            "scope": "revisions commanded during this capture; callback ACKs alone are internal handoffs",
+            "commanded_revisions": list(commanded_revisions),
+            "pre_capture_revisions_uncovered": list(pre_capture_revisions),
+            "matched_revision_frames": matched, "errors": errors}
+
+
 def resource_snapshot(processes=()):
     def read(path):
         try:
@@ -87,6 +130,7 @@ class Probe:
         self.current_revision = 0
         self.gate_first = [2**64 - 1, 2**64 - 1]
         self.coefficient_history = {}
+        self.commanded_revisions = []
         self.process_names = {}
 
     def run(self, args, **kwargs):
@@ -137,6 +181,7 @@ class Probe:
             wait(lambda: expect in self.runtime_log.read_text()[before:], command + ": " + expect)
             if expect == "prepared":
                 self.current_revision = int(re.search(r"prepared (\d+)", self.runtime_log.read_text()[before:])[1])
+                self.commanded_revisions.append(self.current_revision)
                 time.sleep(.08)
                 self.command("status", "status")
         else:
@@ -208,12 +253,15 @@ wireplumber.profiles = {
         self.runtime_count += 1
         self.gate_first = [2**64 - 1, 2**64 - 1]
         self.coefficient_history = {}
+        self.commanded_revisions = []
+        self.current_revision = 0
         self.runtime, self.runtime_log = self.start([str(self.evidence / "runtime"), "fixture.mic", "fixture.media",
                                                     "--", *names], f"runtime-{self.runtime_count}", control=True)
         wait(lambda: "private runtime" in self.runtime_log.read_text(), "runtime startup")
         time.sleep(.5)
 
     def diagnose_frames(self, names, stage="startup", open_gate=False, edit=False):
+        pre_capture_revisions = self.commanded_revisions[:]
         selections = [("fixture.mic", "out", [(600, 1)], [(600, 1)]),
                       ("fixture.media", "out", [(1100, 1)], [(1700, 1)])]
         for i, name in enumerate(names):
@@ -265,20 +313,11 @@ wireplumber.profiles = {
         traces = [list(map(int, line.split()[1:])) for line in self.runtime_log.read_text().splitlines() if line.startswith("trace ")]
         trace_by_time = {(r[0], r[1], r[10]): r for r in traces}
         acks = {(int(m), int(rev)): int(frame) for m, rev, frame in re.findall(r"mix (\d+) ack=(\d+) frame=(\d+)", self.runtime_log.read_text())}
-        first_revision_frame = {}
-        for row in traces:
-            key = (row[1], row[9])
-            first_revision_frame[key] = min(first_revision_frame.get(key, row[2]), row[2])
-        ack_errors = [{"mix_revision": key, "callback_frame": frame, "ack_frame": acks.get(key)}
-                      for key, frame in first_revision_frame.items() if key in acks and acks[key] != frame]
-        if ack_errors:
-            self.checks.append({"case": f"{stage}-revision-frame-ack", "status": "fail", "errors": ack_errors})
-        else:
-            self.checks.append({"case": f"{stage}-revision-frame-ack", "status": "pass", "matched_revision_frames": len(acks)})
         overflows = [line for line in self.runtime_log.read_text().splitlines() if line.startswith("trace-overflow ") and not line.endswith(" 0")]
         if overflows:
             self.checks.append({"case": "trace-overflow", "status": "fail", "records": overflows})
         summary = []
+        consumer_pcm = {}
         for i, (_, _, left, right) in enumerate(selections):
             raw = (self.evidence / f"{stage}-frames-{i}.bin").read_bytes()
             offset = 0
@@ -304,6 +343,7 @@ wireplumber.profiles = {
                 if previous is not None and position != previous + 256:
                     jumps.append({"previous": previous, "position": position})
                 previous = position
+                metadata_before = len(metadata_errors)
                 if i >= 2:
                     for source in range(2):
                         trace = trace_by_time.get((source, i - 2, nsec))
@@ -335,6 +375,9 @@ wireplumber.profiles = {
                         received[c].append(actual)
                         reference[c].append(expected)
                 packet_errors.append({"position": position, "nsec": nsec, "clock_flags": flags, "max_error": peak_error})
+                if (i >= 2 and peak_error <= 1 / 32768 and all(math.isfinite(v) for v in samples)
+                        and len(metadata_errors) == metadata_before):
+                    consumer_pcm.setdefault(i - 2, set()).add((position, nsec, n))
             qualify.write_pcm(self.evidence / f"{stage}-frames-{i}.wav", received)
             qualify.write_pcm(self.evidence / f"{stage}-frames-{i}-reference.wav", reference)
             comparison = qualify.compare(self.evidence / f"{stage}-frames-{i}-reference.wav", self.evidence / f"{stage}-frames-{i}.wav")
@@ -348,6 +391,10 @@ wireplumber.profiles = {
             self.checks.append(item)
             summary.append(item)
             (self.evidence / f"{stage}-frames-{i}.errors.json").write_text(json.dumps(packet_errors, indent=2))
+        ack_check = qualify_revision_acks(traces, acks,
+                                         self.commanded_revisions[len(pre_capture_revisions):],
+                                         consumer_pcm, len(names), 2, pre_capture_revisions)
+        self.checks.append({"case": f"{stage}-revision-frame-ack", **ack_check})
         (self.evidence / f"continuous-{stage}-analysis.json").write_text(json.dumps(summary, indent=2))
 
     def execute(self, names):

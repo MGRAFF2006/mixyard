@@ -107,7 +107,16 @@ is zero frames. Received PCM is compared through the inherited `qualify.compare`
 at its one-PCM16-LSB limit, plus float error and clock continuity checks. Direct
 producer consumers distinguish source/capture scheduling faults from mixer faults.
 Output queue frame/timestamp traces correlate consumer frames to revision
-acknowledgments; missing/mismatched frames, clock jumps, trace/capture overflow and
+acknowledgments. A runtime callback ACK is only an **internal handoff**. The
+revision check requires every revision commanded during a frame capture on every
+mix, its ACK, complete source traces at its first callback frame, and that exact
+frame/timestamp packet in independently verified external consumer PCM. Missing
+ACKs, revisions, or consumer packets fail. Earlier prepared revisions are listed
+as uncovered by that capture; their steady PCM comparison does not prove their
+first sample-effective handoff. Startup/recovery revision checks with no commands
+during capture are blocked, not empty passes. The edit check's pass covers only
+commands during that capture, not earlier setup or separate WAV-only edits.
+Missing/mismatched frames, clock jumps, trace/capture overflow and
 write failure all fail. No backend render is injection evidence. Separate tone
 checks validate selected-endpoint transport, stereo mapping, consumer fanout/reopen,
 logical stall siblings, exclusive second-link rejection and missing-source silence
@@ -123,7 +132,8 @@ motivated explicit readiness and timestamp freshness; they are not reclassified
 as passes. Consult the [observed record](../../../verification/linux-private/observed-2026-10-14.json)
 for the exact executed revision and remaining failed/blocked gates.
 
-The latest low-load run still **fails quality**: the direct mic consumer and
+The historical low-load run executed source matching commit
+`72f621430025959de87d9603f4f51de06d56a394` and still **fails quality**: the direct mic consumer and
 headphone consumer each skipped one 256-frame quantum. Both producer callbacks
 and all native queues contain those exact positions with valid timestamps. The
 loss is downstream of native queue consumption; its precise cause remains
@@ -140,6 +150,20 @@ The separate `pw-record` recovery WAV also fails its first analyzed tone window:
 mic amplitude falls to 0.06114 versus 0.08 expected, with residual RMS 0.03388.
 That WAV has no absolute-frame metadata, so its exact corruption cause remains
 unresolved. Passing frame-metadata recovery captures do not override this failure.
+
+The round-1 corrections guard null Node/Port diagnostic properties and enforce
+at least `10 * 1024^3` available bytes before and after build/run, including exit
+paths. Focused offline checks run with
+`python3 -B verification/linux-private/selfcheck.py`; the SDK-only
+`selfcheck_null_props.c` exercises both callbacks and checks source retirement
+without connecting to a server. These checks grant no audio qualification.
+The observed manifest's original source/artifact hashes, counters, and
+**37 pass / 4 fail / 1 blocked** results remain historical, unchanged. Its three
+old revision-ACK passes used the incomplete check and are not valid
+sample-effective qualification. No post-correction graph/audio run is claimed;
+the historical captures are not retargeted to corrected source.
+Focused check logs, source hashes and the offline replay are retained separately
+in `verification/linux-private/build/correction-round1-checks-2026-10-14/`.
 
 ## Remaining gates
 

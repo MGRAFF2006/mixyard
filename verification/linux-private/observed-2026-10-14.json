@@ -1,5 +1,14 @@
 {
   "date": "2026-10-14",
+  "executed_source_commit": "72f621430025959de87d9603f4f51de06d56a394",
+  "historical_evidence_notice": "Original executed-source hashes, artifact hashes, counters and 37 pass / 4 fail / 1 blocked results below are preserved. They do not describe the later round-1 corrections.",
+  "round1_corrections": {
+    "qualification_rerun_performed": false,
+    "focused_check_artifact_location": "verification/linux-private/build/correction-round1-checks-2026-10-14 (ignored checks and offline reanalysis; no new graph/audio run)",
+    "validation_scope": "Offline revision/disk negative checks and isolated SDK-only callback probes; no post-fix graph/audio qualification claimed",
+    "revision_ack_notice": "Original startup/edits/recovery revision-ACK passes used an incomplete check and are not sample-effective qualification. The corrected check requires every during-capture command's ACK, complete first-frame source traces and independently checked external consumer packet; pre-capture commands are explicitly uncovered, and an empty during-capture command scope is blocked.",
+    "preserved_failures": "Continuous consumer gaps, injected private-sentinel substitution and pw-record recovery corruption remain FAIL; held-control relink remains BLOCKED. No old failure is reclassified."
+  },
   "base_commit": "fa99a9d8fbdb291ea72b7f594ec4e8c5e22c4e78",
   "command": "bash verification/linux-private/run.sh verification/linux-private/build/evidence-low-load-resources --mixes \"Conference mix\" \"Session archive α\" \"Headphones private\"",
   "container_image_id": "sha256:24a102676bea5515ef56fc0611af424dcf706c05c1fee2df34d3e0ecc64bd2fc",

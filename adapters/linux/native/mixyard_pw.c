@@ -157,7 +157,7 @@ static void egress(void *data) {
         else atomic_fetch_add(&q->trace_overflow, 1);
     }
     uint64_t frame = atomic_fetch_add(&m->frames, n);
-    /* Acknowledged before publishing the block, after applying its coefficient. */
+    /* Internal handoff ACK before publication, not external consumer evidence. */
     if (atomic_load(&m->ack) != revision) {
         atomic_store(&m->ack_frame, frame);
         atomic_store_explicit(&m->ack, revision, memory_order_release);
@@ -227,7 +227,7 @@ static void node_info(void *data, const struct pw_node_info *update) {
     b->valid = o && info->id == b->id && serial && strtoull(serial, NULL, 10) == b->serial
         && name && !strcmp(name, o->name);
     if (!b->valid) { fprintf(stderr, "binding invalid id=%u port=%d serial=%s props=", b->id, b->port, serial ? serial : "missing");
-        for (unsigned i = 0; i < info->props->n_items; i++) fprintf(stderr, "%s=%s ", info->props->items[i].key, info->props->items[i].value);
+        if (info->props) for (unsigned i = 0; i < info->props->n_items; i++) fprintf(stderr, "%s=%s ", info->props->items[i].key, info->props->items[i].value);
         fprintf(stderr, "\n"); close_all(b->app); }
 }
 static void port_info(void *data, const struct pw_port_info *update) {
@@ -242,7 +242,7 @@ static void port_info(void *data, const struct pw_port_info *update) {
         && node && number(node) == o->node && channel && !strcmp(channel, o->channel)
         && info->direction == PW_DIRECTION_OUTPUT;
     if (!b->valid) { fprintf(stderr, "binding invalid id=%u port=%d serial=%s props=", b->id, b->port, serial ? serial : "missing");
-        for (unsigned i = 0; i < info->props->n_items; i++) fprintf(stderr, "%s=%s ", info->props->items[i].key, info->props->items[i].value);
+        if (info->props) for (unsigned i = 0; i < info->props->n_items; i++) fprintf(stderr, "%s=%s ", info->props->items[i].key, info->props->items[i].value);
         fprintf(stderr, "\n"); close_all(b->app); }
 }
 static const struct pw_node_events node_events = { PW_VERSION_NODE_EVENTS, .info = node_info };
