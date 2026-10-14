@@ -12,8 +12,10 @@ installed, registered into system bootstrap, loaded into HAL, or launched throug
 `launchctl`. This launch mechanism is part of the native experiment and may fail;
 raw stdout/stderr/exit files remain uploaded. No source-only API assumption passes.
 
-The broker and producer pin each live connection with Foundation's supported
-`setCodeSigningRequirement:` before `resume`. It is macOS 13+; malformed, broad,
+The broker and actors pin incoming connections with Foundation's supported
+`setConnectionCodeSigningRequirement:` on each listener before `resume`; clients
+pin receivers with `setCodeSigningRequirement:` before `resume`. Both APIs are
+macOS 13+; malformed, broad,
 missing or unavailable requirements fail closed. Peer authentication never uses
 UID, PID, executable paths or bundle names. Per-build exact cdhash policy is
 generated **after signing**, outside the bundles, to avoid circular code hashes;
@@ -27,10 +29,11 @@ anonymous endpoint, and attempts an early PCM message with a forbidden marker.
 It must get a native rejection, with no hello/packet admission or delivery.
 The reverse stale-broker pin must yield `NSCocoaErrorDomain` with
 `NSXPCConnectionCodeSigningRequirementFailure`, using the selected SDK constant.
-The broker also sends an authority probe on each pinned connection so its own
-error callback can record that enforcing-side failure. Generic invalidation at
-the stranger or stale-producer side qualifies only with a correlated broker
-requirement-failure event. Malformed/missing supervisor policy instead requires
+The stranger and stale inbound producer must also receive that specific native
+requirement-failure error; generic invalidation cannot qualify any live mismatch.
+The evidence additionally binds the rejecting listener's configured exact pin
+to the actual broker process. A configured-pin event alone proves no rejection.
+Malformed/missing supervisor policy instead requires
 the live listener's distinct `policy_unavailable` event, with valid transport
 policy so startup failure cannot substitute. PID fields correlate diagnostics;
 they never authorize a peer. Raw error domain/code/description and events remain
@@ -40,7 +43,12 @@ their expected peers, including actor/supervisor fixture connections.
 
 Pinning checks received messages; it does not delay outgoing authority requests.
 Each broker connection therefore has a separate non-authority readiness exchange.
-The broker first receives a pinned native probe reply, then returns a fresh
+The client first calls reply-only `identify`, checks the pinned receiver's reply,
+and only then sends `authenticate`. The server defers its reverse probe until
+that request, so a rejected reverse invocation cannot preempt the receiver
+identity reply's error callback. Each native exported probe asserts that the
+identity reply has actually completed before accepting any reverse invocation.
+The broker then receives a pinned native probe reply and returns a fresh
 connection-local challenge to `authenticate`. The client receives that pinned
 broker response before echoing the challenge in `confirm`. Only confirmation
 opens admission or supervisor authority. An early/wrong/replayed confirmation
@@ -123,6 +131,8 @@ Primary API contracts:
 - [Foundation peer requirements](https://developer.apple.com/documentation/foundation/nsxpcconnection/setcodesigningrequirement(_:)):
   supported live peer checks before resume, malformed requirement errors and
   invalidation on a mismatch; availability macOS 13+.
+- [Foundation listener requirements](https://developer.apple.com/documentation/foundation/nsxpclistener/setconnectioncodesigningrequirement(_:)):
+  supported live requirements for incoming connections; availability macOS 13+.
 - [Creating XPC services](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingXPCServices.html):
   app-owned bundled services and native endpoint transfer; no system helper proof.
 - [Anonymous listener](https://developer.apple.com/documentation/foundation/nsxpclistener/anonymous()):

@@ -35,9 +35,13 @@
 
 @interface MYProbe : NSObject <MYAuthorityProbe>
 @property(strong) MYResult *held;
+@property BOOL receiverVerified;
 @end
 @implementation MYProbe
-- (void)probe:(void (^)(void))reply { if (self.held) [self.held finish:[reply copy]]; else reply(); }
+- (void)probe:(void (^)(void))reply {
+    @synchronized (self) { assert(self.receiverVerified && "reverse invocation preceded pinned identity reply"); }
+    if (self.held) [self.held finish:[reply copy]]; else reply();
+}
 @end
 static void exportProbe(NSXPCConnection *connection, MYProbe *probe = nil) {
     connection.exportedInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYAuthorityProbe)];
@@ -58,8 +62,17 @@ static id proxy(NSXPCConnection *connection, MYResult *result) {
     return [connection remoteObjectProxyWithErrorHandler:^(NSError *error) { [result finish:error]; }];
 }
 static MYResult *beginAuthentication(NSXPCConnection *connection) {
-    MYResult *r = [MYResult new]; r.stage = @"authenticate";
-    [(id<MYReadiness>)proxy(connection, r) authenticate:^(NSDictionary *value) { [r finish:value]; }];
+    MYResult *r = [MYResult new]; r.stage = @"identify";
+    // First receive a reply from the pinned receiver. Only then may it invoke
+    // our reverse probe; a rejected invocation cannot hide the initial 4102.
+    [(id<MYReadiness>)proxy(connection, r) identify:^(NSDictionary *identity) {
+        if ([identity[@"status"] isEqual:@"closed"]) { [r finish:identity]; return; }
+        assert([identity[@"status"] isEqual:@"identity"]);
+        MYProbe *probe = connection.exportedObject;
+        @synchronized (probe) { probe.receiverVerified = YES; }
+        r.stage = @"authenticate after pinned identity reply";
+        [(id<MYReadiness>)proxy(connection, r) authenticate:^(NSDictionary *value) { [r finish:value]; }];
+    }];
     return r;
 }
 static id authenticate(NSXPCConnection *connection) { return [beginAuthentication(connection) wait]; }
@@ -163,11 +176,20 @@ static void actorEvent(NSDictionary *context, NSString *outcome, uint64_t uses, 
 @property(strong) NSString *producerRequirement;
 @property(strong) NSDictionary *context;
 @property(strong) NSMutableSet<NSXPCConnection *> *connections;
+@property(copy) void (^beginProbe)(void);
 - (void)close;
 @end
 @implementation MYActor
+- (void)identify:(void (^)(NSDictionary *))reply {
+    @synchronized (self) { reply(@{@"status": _readiness.closed ? @"closed" : @"identity"}); }
+}
 - (void)authenticate:(void (^)(NSDictionary *))reply {
-    @synchronized (self) { _readiness.authenticate(reply); }
+    void (^probe)(void) = nil;
+    @synchronized (self) {
+        _readiness.authenticate(reply);
+        if (!_readiness.closed) { probe = self.beginProbe; self.beginProbe = nil; }
+    }
+    if (probe) probe();
 }
 - (void)confirm:(NSString *)challenge reply:(void (^)(NSDictionary *))reply {
     @synchronized (self) {
@@ -179,11 +201,13 @@ static void actorEvent(NSDictionary *context, NSString *outcome, uint64_t uses, 
 - (void)close {
     @synchronized (self) {
         _readiness.close(); actorEvent(self.context, @"closed", _endpointUses);
+        self.beginProbe = nil;
     }
 }
 - (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
     (void)listener;
-    if (!mixyard::pin(connection, self.producerRequirement)) return NO;
+    // Inherited from the exact listener requirement installed before resume.
+    if (!mixyard::exactRequirement(self.producerRequirement)) return NO;
     @synchronized (self) {
         if (self.connections.count >= 8) return NO;
         [self.connections addObject:connection];
@@ -207,7 +231,6 @@ static void actorEvent(NSDictionary *context, NSString *outcome, uint64_t uses, 
         MYActor *owner = weakSelf; NSXPCConnection *closed = weakConnection;
         @synchronized (owner) { if (closed) [owner.connections removeObject:closed]; }
     };
-    [connection resume];
     __weak MYActor *weakSession = session;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC),
         dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
@@ -218,15 +241,21 @@ static void actorEvent(NSDictionary *context, NSString *outcome, uint64_t uses, 
                 [pending close]; [weakConnection invalidate];
             }
         });
-    [(id<MYAuthorityProbe>)[connection remoteObjectProxyWithErrorHandler:^(NSError *error) {
-        [session close]; [weakConnection invalidate];
-        actorEvent(session.context, @"probe_error", 0, error);
-    }] probe:^{
-        @synchronized (session) {
-            actorEvent(session.context, session->_readiness.probeCompleted() ? @"probe_reply" : @"late_probe_ignored",
-                       session->_endpointUses);
-        }
-    }];
+    session.beginProbe = ^{
+        MYActor *pending = weakSession;
+        NSXPCConnection *live = weakConnection;
+        if (!pending || !live) return;
+        [(id<MYAuthorityProbe>)[live remoteObjectProxyWithErrorHandler:^(NSError *error) {
+            [pending close]; [weakConnection invalidate];
+            @synchronized (pending) { actorEvent(pending.context, @"probe_error", pending->_endpointUses, error); }
+        }] probe:^{
+            @synchronized (pending) {
+                actorEvent(pending.context, pending->_readiness.probeCompleted() ? @"probe_reply" : @"late_probe_ignored",
+                           pending->_endpointUses);
+            }
+        }];
+    };
+    [connection resume];
     return YES;
 }
 - (void)attempt:(NSXPCListenerEndpoint *)endpoint requirement:(NSString *)requirement
@@ -247,7 +276,7 @@ static void actorEvent(NSDictionary *context, NSString *outcome, uint64_t uses, 
         id early = send(c, packet(h, 0.875f));
 #ifdef MIXYARD_STRANGER
         // This path intentionally differs in executable code, not only bundle name.
-        NSDictionary *error = rejection(early, false);
+        NSDictionary *error = rejection(early, true);
         reply(@{@"rejection_observed": @YES, @"pid": @(getpid()), @"uid": @(getuid()), @"error": error});
         [c invalidate];
 #else
@@ -273,6 +302,7 @@ int main(int argc, char **argv) {
             actor.producerRequirement = mixyard::fixturePolicy()[@"producer"];
             if (!mixyard::exactRequirement(actor.producerRequirement)) return 2;
             NSXPCListener *listener = NSXPCListener.serviceListener;
+            if (!mixyard::pinListener(listener, actor.producerRequirement)) return 2;
             listener.delegate = actor; [listener resume]; dispatch_main();
         }
         assert(argc == 5);
@@ -288,7 +318,7 @@ int main(int argc, char **argv) {
         id controlReady = ready(control);
         if ([mode isEqual:@"positive"]) expect(controlReady, @"ready");
         if (![mode isEqual:@"positive"]) {
-            NSDictionary *error = rejection(controlReady, false);
+            NSDictionary *error = rejection(controlReady, [mode isEqual:@"inbound_requirement_mismatch"]);
             NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"status": @"rejection_observed",
                 @"case": mode, @"producer_pid": @(getpid()), @"error": error} options:0 error:nil];
             assert(json); fwrite(json.bytes, 1, json.length, stdout); putchar('\n');
@@ -531,6 +561,7 @@ int main(int argc, char **argv) {
             @"wrong_broker_error": wrongReceiverError,
             @"actor_readiness_checks": actorChecks,
             @"authentication_before_authority": @YES, @"early_authority_unchanged": initial,
+            @"receiver_identity_reply_before_probe": @YES,
             @"requirement_failure_code": @(NSXPCConnectionCodeSigningRequirementFailure),
             @"anonymous_transport_authentication": @"executed", @"system_bootstrap": @"BLOCKED",
             @"hosted_HAL_peer_identity": @"BLOCKED", @"external_consumer_pcm": @"BLOCKED", @"production_apply": @NO,

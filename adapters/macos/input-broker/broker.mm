@@ -43,15 +43,26 @@ void authorityEvent(NSDictionary *event) {
     mixyard::Readiness _readiness;
 }
 @property(strong) NSXPCListenerEndpoint *endpoint;
+@property(copy) void (^beginProbe)(void);
 - (BOOL)probeCompleted;
 - (void)expire:(NSXPCConnection *)connection;
 - (void)closeLocked;
 - (void)close;
 @end
 @implementation MYSession
-- (void)authenticate:(void (^)(NSDictionary *))reply {
+- (void)identify:(void (^)(NSDictionary *))reply {
+    // Reply only: no reverse invocation can race this receiver-identity check.
     std::lock_guard<std::mutex> lock(state.mutex);
-    _readiness.authenticate(reply);
+    reply(status(_readiness.closed ? @"closed" : @"identity"));
+}
+- (void)authenticate:(void (^)(NSDictionary *))reply {
+    void (^probe)(void) = nil;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        _readiness.authenticate(reply);
+        if (!_readiness.closed) { probe = self.beginProbe; self.beginProbe = nil; }
+    }
+    if (probe) probe();
 }
 - (BOOL)probeCompleted {
     std::lock_guard<std::mutex> lock(state.mutex);
@@ -126,6 +137,7 @@ void authorityEvent(NSDictionary *event) {
 }
 - (void)closeLocked {
     _readiness.close();
+    self.beginProbe = nil;
     if (_generation && state.active == _generation) {
         (void)MixyardInputTest_Disconnect(2, _generation);
         state.active = 0;
@@ -188,7 +200,9 @@ void authorityEvent(NSDictionary *event) {
     NSString *requirement = listener == self.anonymous ? self.requirement : mixyard::fixturePolicy()[@"producer"];
     NSDictionary *context = @{@"channel": listener == self.anonymous ? @"pcm" : @"control",
         @"peer_pid": @(connection.processIdentifier), @"requirement": requirement ?: @"<unavailable>"};
-    if (!mixyard::pin(connection, requirement)) {
+    // A valid requirement was installed on this listener before resume. Do not
+    // set it again on its inherited connection (the API is single-assignment).
+    if (!mixyard::exactRequirement(requirement)) {
         NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"policy_unavailable";
         authorityEvent(event); return NO;
     }
@@ -217,22 +231,27 @@ void authorityEvent(NSDictionary *event) {
         @synchronized (owner) { if (closed) [owner.connections removeObject:closed]; }
     };
     connection.remoteObjectInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYAuthorityProbe)];
-    [connection resume];
     __weak MYSession *weakSession = session;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC),
         dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{ [weakSession expire:weakConnection]; });
-    // Foundation's enforcing-side error identifies requirement failure. The peer
-    // can see generic invalidation; neither that nor a timeout proves auth.
-    [(id<MYAuthorityProbe>)[connection remoteObjectProxyWithErrorHandler:^(NSError *error) {
-        [session close]; [weakConnection invalidate];
-        NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"probe_error";
-        event[@"error"] = mixyard::errorDetails(error); authorityEvent(event);
-    }] probe:^{
-        const BOOL accepted = [session probeCompleted];
-        NSMutableDictionary *event = [context mutableCopy];
-        event[@"outcome"] = accepted ? @"probe_reply" : @"late_probe_ignored";
-        authorityEvent(event);
-    }];
+    // The client checks an identify reply before asking for this reverse probe.
+    // Listener pinning also rejects mismatched inbound peers before dispatch.
+    session.beginProbe = ^{
+        MYSession *pending = weakSession;
+        NSXPCConnection *live = weakConnection;
+        if (!pending || !live) return;
+        [(id<MYAuthorityProbe>)[live remoteObjectProxyWithErrorHandler:^(NSError *error) {
+            [pending close]; [weakConnection invalidate];
+            NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"probe_error";
+            event[@"error"] = mixyard::errorDetails(error); authorityEvent(event);
+        }] probe:^{
+            const BOOL accepted = [pending probeCompleted];
+            NSMutableDictionary *event = [context mutableCopy];
+            event[@"outcome"] = accepted ? @"probe_reply" : @"late_probe_ignored";
+            authorityEvent(event);
+        }];
+    };
+    [connection resume];
     return YES;
 }
 @end
@@ -254,8 +273,15 @@ int main() {
         state.epoch = epoch;
         MYBroker *broker = [MYBroker new]; broker.requirement = requirement;
         broker.connections = [NSMutableSet new]; broker.anonymous = NSXPCListener.anonymousListener;
+        if (!mixyard::pinListener(broker.anonymous, requirement)) return 2;
+        authorityEvent(@{@"channel": @"pcm", @"outcome": @"listener_pinned", @"requirement": requirement});
         broker.anonymous.delegate = broker; [broker.anonymous resume];
         NSXPCListener *service = NSXPCListener.serviceListener;
+        NSString *producer = mixyard::fixturePolicy()[@"producer"];
+        if (mixyard::exactRequirement(producer)) {
+            if (!mixyard::pinListener(service, producer)) return 2;
+            authorityEvent(@{@"channel": @"control", @"outcome": @"listener_pinned", @"requirement": producer});
+        } // Unavailable policy is rejected by the delegate, never accepted unpinned.
         service.delegate = broker; [service resume];
         dispatch_main();
     }

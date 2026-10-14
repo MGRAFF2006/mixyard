@@ -39,7 +39,7 @@ python3 - "$sdk" > "$evidence/selected-sdk-declarations.txt" <<'PY'
 import pathlib, sys
 header = pathlib.Path(sys.argv[1])/'System/Library/Frameworks/Foundation.framework/Headers/NSXPCConnection.h'
 lines = header.read_text().splitlines()
-for needle in ('setCodeSigningRequirement','NSXPCConnectionPrivileged'):
+for needle in ('setCodeSigningRequirement','setConnectionCodeSigningRequirement','NSXPCConnectionPrivileged'):
     hits = [i for i, line in enumerate(lines) if needle in line]
     assert hits, f'SDK missing supported declaration: {needle}'
     for i in hits: print('\n'.join(lines[max(0,i-7):i+8]))
@@ -116,19 +116,19 @@ def run(case, args):
     (root/f'{case}.exit').write_text(str(result.returncode)+'\n')
     if result.returncode: raise SystemExit(f'FAIL: {case}; raw stdout/stderr/exit preserved in {root}')
     proof = json.loads((root/f'{case}.stdout').read_text())
-    # Only Foundation's enforcing-side domain/code qualifies a live mismatch.
-    # Generic peer invalidation additionally needs this correlated broker event.
+    # Every live mismatch needs the specific native requirement-failure code.
+    # Generic invalidation qualifies only unavailable policy, with delegate proof.
     def matching(events, channel, pid, requirement, outcome):
-        return [e for e in events if e['channel']==channel and e['peer_pid']==pid
+        return [e for e in events if e['channel']==channel and e.get('peer_pid')==pid
                 and e['requirement']==requirement and e['outcome']==outcome]
     deadline = time.monotonic()+5
     while True:
         events = [json.loads(p.read_text()) for p in sorted(set((root/'authority-events').glob('*.json'))-before)]
         if case == 'positive':
-            expected = matching(events, 'pcm', proof['stranger']['pid'], policy['transport'], 'probe_error')
-            expected = [e for e in expected if e['broker_pid']==proof['broker']['pid']
-                        and e['error']['domain']=='NSCocoaErrorDomain'
-                        and e['error']['code']==proof['requirement_failure_code']]
+            assert proof['stranger']['error']['domain']=='NSCocoaErrorDomain'
+            assert proof['stranger']['error']['code']==proof['requirement_failure_code']
+            expected = [e for e in events if e['channel']=='pcm' and e['outcome']=='listener_pinned'
+                        and e['broker_pid']==proof['broker']['pid'] and e['requirement']==policy['transport']]
             accepted = matching(events, 'control', proof['producer_pid'], policy['producer'], 'probe_reply')
             accepted = [e for e in accepted if e['broker_pid']==proof['broker']['pid']]
             # Held native probe replies must actually arrive after terminal close
@@ -159,6 +159,7 @@ def run(case, args):
             assert all(e['peer_pid']==proof['producer_pid'] and e['requirement']==policy['producer'] for e in actors)
             assert all(e['endpoint_uses']==0 for e in actors if e['connection'] not in {u['connection'] for u in uses})
             assert proof['authentication_before_authority'] is True
+            assert proof['receiver_identity_reply_before_probe'] is True
             initial = proof['early_authority_unchanged']
             assert all(initial[k]==0 for k in ('active','generation','packets','hellos','cursor0','cursor1','start','end','revision'))
             assert initial['credit_frames']==4096
@@ -168,11 +169,14 @@ def run(case, args):
             assert proof['status']=='pass' and proof['external_consumer_pcm']=='BLOCKED'
         else:
             assert proof['status']=='rejection_observed' and proof['case']==args[-1]
-            expected = matching(events, 'control', proof['producer_pid'], policy.get('producer','<unavailable>'),
-                                'probe_error' if case=='stale-producer' else 'policy_unavailable')
             if case=='stale-producer':
-                expected = [e for e in expected if e['error']['domain']=='NSCocoaErrorDomain'
-                            and e['error']['code']==requirement_failure_code]
+                assert proof['error']['domain']=='NSCocoaErrorDomain'
+                assert proof['error']['code']==requirement_failure_code
+                expected = [e for e in events if e['channel']=='control' and e['outcome']=='listener_pinned'
+                            and e['requirement']==policy['producer']]
+            else:
+                expected = matching(events, 'control', proof['producer_pid'], policy.get('producer','<unavailable>'),
+                                    'policy_unavailable')
             accepted = [True]
         if expected and accepted: break
         if time.monotonic() >= deadline:

@@ -70,6 +70,14 @@ inline bool pin(NSXPCConnection *connection, NSString *requirement) {
     }
     return false;
 }
+inline bool pinListener(NSXPCListener *listener, NSString *requirement) {
+    if (!listener || !exactRequirement(requirement)) return false;
+    if (@available(macOS 13.0, *)) {
+        @try { [listener setConnectionCodeSigningRequirement:requirement]; return true; }
+        @catch (NSException *error) { NSLog(@"listener requirement rejected: %@", error.name); }
+    }
+    return false;
+}
 
 // Fixture diagnostics only; identity is still enforced by Foundation, never PID.
 inline NSDictionary *errorDetails(NSError *error) {
@@ -125,6 +133,7 @@ struct Readiness {
 // reply before echoing its connection-local challenge; failed confirmation closes
 // the session permanently. Pinning alone does not gate outgoing requests.
 @protocol MYReadiness
+- (void)identify:(void (^)(NSDictionary *))reply;
 - (void)authenticate:(void (^)(NSDictionary *))reply;
 - (void)confirm:(NSString *)challenge reply:(void (^)(NSDictionary *))reply;
 @end
