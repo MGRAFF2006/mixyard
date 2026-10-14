@@ -72,6 +72,25 @@ try {
     Run-Checked $infverif @('/w', '/v', (Join-Path $package 'MixyardIngress.inf'))
     Run-Checked $inf2cat @("/driver:$package", '/os:10_GE_X64', '/verbose')
     Run-Checked 'python' @("$root/../../../verification/windows-input/artifact_check.py", $package)
+    # Separate Media package; preserve the already-reviewed System ingress artifact.
+    $capture = Join-Path $root 'capture'
+    Run-Checked $msbuild @((Join-Path $capture 'MixyardCapture.vcxproj'), '/m:2',
+        '/p:Configuration=Release', '/p:Platform=x64', "/p:VCToolsVersion=$msvc",
+        '/p:SignMode=Off', '/p:GenerateTestCertificate=false',
+        '/fl', "/flp:logfile=$build/capture-msbuild.log;verbosity=normal")
+    Require-Reserve
+    $capturePackage = Join-Path $build 'capture-unsigned'
+    New-Item -ItemType Directory -Force $capturePackage | Out-Null
+    Copy-Item (Join-Path $capture 'build/x64/Release/MixyardCapture.sys') $capturePackage -Force
+    Copy-Item (Join-Path $capture 'build/x64/Release/MixyardCapture.inf') $capturePackage -Force
+    Copy-Item (Join-Path $root '../../../LICENSE') $capturePackage -Force
+    Run-Checked $infverif @('/w', '/v', (Join-Path $capturePackage 'MixyardCapture.inf'))
+    Run-Checked $inf2cat @("/driver:$capturePackage", '/os:10_GE_X64', '/verbose')
+    Run-Checked 'python' @("$root/../../../verification/windows-input/artifact_check.py", $capturePackage, 'MixyardCapture')
+    Run-Checked 'cl.exe' @('/nologo', '/std:c++17', '/W4', '/WX', '/EHsc',
+        "$root/../../../verification/windows-input/delivery_check.cpp", "/Fe:$build/delivery-check.exe", "/Fo:$build/delivery-check.obj")
+    Run-Checked (Join-Path $build 'delivery-check.exe') @()
+
 } finally {
     Require-Reserve
 }
