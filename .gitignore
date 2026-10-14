@@ -1,0 +1,21 @@
+# Local credentials and recordings
+.env
+.env.*
+!.env.example
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.m4a
+
+# Build output
+target/
+build/
+dist/
+node_modules/
+
+# Machine-local application and editor state
+.t3/
+.DS_Store
+*.swp
+*.swo
