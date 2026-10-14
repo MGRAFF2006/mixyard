@@ -218,6 +218,6 @@ onMounted(checkConnection)
 
     <footer class="app-footer"><span>{{ demo ? 'Preview only · no accepted or applied changes' : 'No runtime session · revision unavailable' }}</span><div v-if="inDesktopShell"><button class="quiet-button" @click="windowAction('hide_mixer')">Close window</button><button class="quiet-button" @click="windowAction('quit_ui')">Quit UI</button><button class="quiet-button" disabled title="Live runtime control is not implemented">Stop runtime · unavailable</button></div><span v-else>Browser preview · native tray unverified</span></footer>
     <div class="notice" role="status" aria-live="polite">{{ notice }}</div>
-    <p v-if="inDesktopShell && !trayCreated" class="tray-note">Tray creation unavailable or not yet checked. Close window hides the mixer; relaunch the UI to show it. Quit UI exits only the interface.</p>
+    <p v-if="inDesktopShell && !trayCreated" class="tray-note">Tray creation unavailable or not yet checked. Close window exits the UI on Linux/Windows; on macOS it hides the mixer, restored from the Dock. Quit UI exits only the interface.</p>
   </div>
 </template>

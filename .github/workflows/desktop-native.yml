@@ -1,0 +1,134 @@
+name: Desktop native shell (no audio qualification)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'apps/desktop/**'
+      - 'verification/desktop-native/**'
+      - '.github/workflows/desktop-native.yml'
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'verification/desktop-native/**'
+      - '.github/workflows/desktop-native.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell:
+    name: Release shell (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            binary: mixyard-desktop
+          - os: windows-2022
+            binary: mixyard-desktop.exe
+          - os: macos-14
+            binary: mixyard-desktop
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/apps/desktop/src-tauri/target
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Disk prerequisite and initial host inventory
+        run: python verification/desktop-native/evidence.py --guard --output evidence/host-before.json
+      - uses: pnpm/action-setup@v6
+        with:
+          version: '11.10.0'
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.1'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+          components: rustfmt
+      - name: Ephemeral Linux SDK and owned display prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwebkit2gtk-4.1-dev librsvg2-dev \
+            libayatana-appindicator3-dev webkit2gtk-driver \
+            xvfb xauth xdotool openbox dbus-x11 fonts-dejavu-core
+      - name: Locked independent desktop dependencies
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          python ../../verification/desktop-native/evidence.py --guard
+          pnpm install --frozen-lockfile 2>&1 | tee ../../evidence/pnpm-install.log
+          pnpm check 2>&1 | tee ../../evidence/frontend-check.log
+          pnpm tauri info 2>&1 | tee ../../evidence/tauri-info.txt
+          cargo fmt --check --manifest-path src-tauri/Cargo.toml
+      - name: SDK inventory and disk guard before native compilation
+        run: python verification/desktop-native/evidence.py --guard --output evidence/host-sdk.json
+      - name: Build actual release Tauri shell (locked, two jobs, no installers)
+        id: build
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          echo 'pnpm tauri build --no-bundle -- --locked --jobs 2' > ../../evidence/build-command.txt
+          pnpm tauri build --no-bundle -- --locked --jobs 2 2>&1 | tee ../../evidence/native-build.log
+          python ../../verification/desktop-native/evidence.py --guard \
+            --output ../../evidence/release-build.json \
+            --binary "src-tauri/target/release/${{ matrix.binary }}"
+      - name: Install external Linux WebDriver (ephemeral, no app plugins)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          python verification/desktop-native/evidence.py --guard
+          cargo install tauri-driver --locked --jobs 2 2>&1 | tee evidence/driver-install.log
+          cargo install --list > evidence/driver-version.txt
+      - name: Actual release WebKit lifecycle and interaction timing in owned Xvfb
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          echo 'bash verification/desktop-native/run-linux.sh apps/desktop/src-tauri/target/release/mixyard-desktop evidence' > evidence/lifecycle-command.txt
+          bash verification/desktop-native/run-linux.sh \
+            apps/desktop/src-tauri/target/release/mixyard-desktop evidence 2>&1 | tee evidence/linux-lifecycle.log
+      - name: Record final disk state and evidence boundary
+        if: always()
+        run: |
+          set -euo pipefail
+          python verification/desktop-native/evidence.py --guard --output evidence/host-after.json
+          {
+            echo 'Native release shell build logs and binary SHA-256 are uploaded per runner/HEAD.'
+            echo 'Linux execution counts only if linux-webview.json status is passed; no tray host in owned Xvfb.'
+            echo 'Timing covers trusted keydown to second rAF, on this software-rendered host under the recorded loads only.'
+            echo 'Windows/macOS UI lifecycle, keyboard, accessibility and native p95: BLOCKED (not exercised).'
+            echo 'Physical tray/menu, screen readers, hardware presentation and independent audio-runtime survival: BLOCKED.'
+            echo 'No live audio, IPC meter, device latency, signing or installer qualification.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Labelled release binary
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-${{ matrix.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: apps/desktop/src-tauri/target/release/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 7
+      - name: Exact host/SDK, executed steps and native evidence (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-evidence-${{ matrix.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

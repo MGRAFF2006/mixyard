@@ -18,7 +18,7 @@ pnpm build               # TypeScript + production frontend
 pnpm preview             # Serve the production frontend
 pnpm tauri info          # Inspect native prerequisites; does not build the app
 pnpm tauri dev           # Requires native prerequisites and a desktop session
-pnpm tauri build         # Native binary; installer bundling deliberately disabled
+pnpm tauri build --no-bundle -- --locked --jobs 2 # Release binary; no installer
 ```
 
 On a qualifying desktop, detach longer native builds in tmux and report their
@@ -69,13 +69,17 @@ There is no import/export or live apply operation.
 
 The Rust shell constructs a native tray/menu with Open Mixer, disconnected
 status, Close mixer window, Quit UI, and a disabled Stop runtime item. It has
-no pretend mute/recording actions. Window closure hides the UI; Quit UI exits
-only the interface. It neither spawns nor owns a runtime/sidecar and cannot stop
-one. Tray creation failure is diagnosed without preventing app startup.
-Tray creation success is not proof that the desktop host displays it.
-On macOS, a Dock reopen event restores the window. Without a visible tray on
-Linux/Windows, a hidden prototype window may require relaunching the UI; native
-lifecycle/fallback behavior must be qualified before shipping.
+no pretend mute/recording actions. On Linux/Windows, titlebar close, Close window
+and the tray Close mixer window action exit only the UI. A fresh launch opens
+a new window. Tray construction cannot establish visible host recovery, so
+these platforms conservatively avoid hiding an unreachable UI. There is no
+single-instance plugin: launching while already running may create another UI.
+On macOS, close hides and a Dock reopen event restores the window independently
+of tray availability; that physical Dock path still needs qualification.
+Quit UI exits only the interface on every platform. The shell neither spawns
+nor owns a runtime/sidecar and cannot stop one. Tray creation failure is
+diagnosed without preventing app startup. `trayCreated` means an object was
+constructed, not that a host displayed its icon or menu.
 
 Linux uses the native context-menu Open Mixer fallback; Tauri tray mouse events
 are unsupported there. Rich anchored panels are not implemented or promised.
@@ -84,15 +88,17 @@ See [Tauri tray support](https://v2.tauri.app/learn/system-tray/).
 Only three local commands are exposed through an explicit main-window
 capability: `shell_status`, `hide_mixer`, `quit_ui`. No shell, filesystem,
 device-control, remote-origin or generic runtime permissions are granted.
+The existing `hide_mixer` command name is retained, with the platform-specific
+close behavior above; native qualification adds no command or plugin.
 Release CSP excludes network control endpoints; the development CSP permits
 only the local frontend/HMR origin. See
 [Tauri capability rules](https://v2.tauri.app/security/capabilities/).
 
 ## Evidence and remaining gates
 
-Verified 2026-10-14 on `homelab-dev` (Debian 13, headless): pnpm install, TypeScript,
+Earlier host-only verification on 2026-10-14 on `homelab-dev` (Debian 13, headless): pnpm install, TypeScript,
 seven model tests, production frontend build, Rust formatting, Tauri config
-inspection and standalone Cargo metadata. These checks do **not** compile or
+inspection and standalone Cargo metadata. Those checks did **not** compile or
 execute the native shell. Production JS is about 34 KiB compressed.
 
 The T3 collaborative browser was used for real rendered desktop and compact
@@ -106,17 +112,45 @@ Browser evaluation is UI evidence, not native webview performance certification.
 
 Native prerequisites are absent here: `tauri info` reports missing
 `webkit2gtk-4.1` and `rsvg2`; AppIndicator development detection is also absent.
-No system packages were installed and no heavy native build was attempted.
+No native SDK packages were installed on the operator host.
 Linux needs its GTK/WebKit/AppIndicator libraries and a qualifying desktop/tray
 host. Windows needs the MSVC toolchain and WebView2. macOS needs Apple development
 tools. Follow [official prerequisites](https://v2.tauri.app/start/prerequisites/)
-on actual test hosts.
+on actual test hosts. The new
+[native shell workflow](../../.github/workflows/desktop-native.yml) supplies
+ephemeral Linux SDK dependencies and builds actual locked release shells on
+Ubuntu 24.04, Windows 2022 and macOS 14. Each OS uploads labelled binaries,
+SHA-256/source hashes, exact OS/SDK/tool versions and executed command logs.
+Build success is compilation evidence only; Windows/macOS UI, accessibility
+and native-webview timing remain **BLOCKED** until separately exercised.
 
-Still required per supported platform/host: native compilation, window close /
+The focused [native harness and physical protocol](../../verification/desktop-native/README.md)
+use the release Tauri/WebKit shell in an owned Linux Xvfb/Openbox/session bus,
+without a tray host. They cover trusted keyboard input, compact layout,
+close/exit/relaunch and actual-webview keydown-to-second-frame p95 under stated
+loads. No frontend browser timing is reused as native evidence. Read each
+run's `linux-webview.json`; failure or absence leaves its execution gates blocked.
+
+On 2026-10-14, an owned Ubuntu **24.04.5** x86_64 SDK container on `homelab-dev`
+successfully built the locked **release** Tauri 2.12.3/Wry 0.57.0 shell with
+Rust 1.99.0, Node 24.13.1 and pnpm 11.10.0. WebKitGTK/driver were 2.52.6,
+GTK 3.24.41, librsvg 2.58.0 and AppIndicator package 0.5.93-1build3.
+The network-disabled Xvfb/Openbox run exercised the actual `tauri://localhost`
+webview, real shell IPC, Tab/Enter demo, trusted arrow keys/focus outlines,
+640 px compact layout, native Alt+F4, UI Close window, Quit UI and fresh-launch
+recovery. `trayCreated` was true without a tray host; all three exit paths
+terminated their UI PID. With 60 samples per case, local keydown-to-second-frame
+p95 was **17 ms** with no added load and **15 ms** with one owned busy CPU worker
+on this six-vCPU, shared-load, software-rendered host only. These measurements
+exclude pre-dispatch OS queuing and physical display presentation.
+See [exact scoped container evidence and raw timings](../../verification/desktop-native/linux-container-evidence.json).
+Windows/macOS builds are prepared in the matrix but have not run at this handoff.
+
+Still required on unexercised platforms/hosts: native compilation, window close /
 reopen / Quit UI lifecycle, visible tray/menu behavior and no-tray fallback,
 keyboard/screen-reader and compact-window checks, and measured native-webview
-local interaction p95 <=100 ms under defined normal/contended load. This is a
-proposed gate, not a result. No audio runtime or IPC meter transport exists here,
+local interaction p95 <=100 ms under defined normal/contended load. The scoped
+container result does not certify those shipping gates. No audio runtime or IPC meter transport exists here,
 so UI-induced audio gaps, runtime survival during UI exit, bounded/coalesced
 meter delivery, live accepted-versus-applied revisions, stale edits, reconnects,
 virtual-input transport, device latency and sound quality remain unproved.

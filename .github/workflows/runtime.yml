@@ -1,0 +1,39 @@
+name: Headless runtime lifecycle (no native audio)
+on:
+  workflow_dispatch:
+  push:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime_lifecycle.rs', '.github/workflows/runtime.yml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime_lifecycle.rs', '.github/workflows/runtime.yml']
+permissions:
+  contents: read
+jobs:
+  lifecycle:
+    name: Real local IPC (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require 10 GiB free
+        shell: python
+        run: |
+          import shutil
+          free = shutil.disk_usage('.').free
+          print(f'Available: {free / 2**30:.1f} GiB')
+          if free < 10 * 2**30:
+              raise SystemExit('Less than 10 GiB free')
+      - name: Build foreground runtime and CLI
+        run: cargo build --locked --bins
+      - name: Existing core and actual Windows kernel DACL checks
+        run: cargo test --locked --lib --bins
+      - name: Real headless subprocess lifecycle and endpoint security
+        run: cargo test --locked --test runtime_lifecycle
+      - name: Record qualification boundary
+        shell: bash
+        run: echo 'Real local IPC lifecycle only. Native audio/GUI independence and quality gates remain unverified.' >> "$GITHUB_STEP_SUMMARY"
