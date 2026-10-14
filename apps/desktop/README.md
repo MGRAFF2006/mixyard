@@ -53,6 +53,25 @@ its edits. Fixtures are neither discovery results nor schema-2 runtime config.
 The demo does not import/export or apply routes. The separate read-only snapshot
 inspection below uses real schema-2 inputs and the Rust core.
 
+## Named local profiles
+
+Open **Named local profiles**, import schema-2 inventory content, and explicitly
+**Refresh profiles**. Select a stable profile ID to show its saved desired config
+and **Preview selected profile** against the store's current draft. Existing
+[`mixyard profiles`](../../docs/profiles.md) CLI commands create/edit these drafts;
+this panel uses the native process's platform default current-user store only.
+No arbitrary frontend path, CLI subprocess, store write, migration or repair is
+exposed. Missing, empty, corrupt, unsafe and busy/recovery states stay distinct.
+
+Preview rereads/validates the store and rejects a changed store revision. Results
+bind store revision, profile ID and imported inventory revision, and display the
+core's source/send/mix/master/output/media changes, affected sensitive paths on
+both sides and unavailable identities. Refresh, inventory input changes, selection
+and errors clear prior context; late replies are discarded. Apply stays disabled
+independently of runtime connection; `confirmedWorkingSetup` remains null. This
+is desired-state comparison, with imported evidence unverified and no live-audio
+claim. See [focused bounds, tests and native evidence](../../verification/desktop-profiles/README.md).
+
 ## Why silent / what is sharing
 
 Open **Why silent · What is sharing**, select config and inventory JSON files or

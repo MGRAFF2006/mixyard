@@ -1,0 +1,46 @@
+name: Desktop local profile boundary (no native audio)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'apps/desktop/src-tauri/src/profiles*.rs'
+      - 'verification/desktop-profiles/**'
+      - 'src/profiles.rs'
+      - 'src/profiles/**'
+      - '.github/workflows/desktop-profiles.yml'
+  pull_request:
+    paths:
+      - 'apps/desktop/src-tauri/src/profiles*.rs'
+      - 'verification/desktop-profiles/**'
+      - 'src/profiles.rs'
+      - 'src/profiles/**'
+      - '.github/workflows/desktop-profiles.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+          components: rustfmt
+      - name: Focused boundary and authoritative storage regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 verification/desktop-native/evidence.py --guard
+          cargo fmt --check --manifest-path verification/desktop-profiles/Cargo.toml
+          cargo test --locked --jobs 2 --manifest-path verification/desktop-profiles/Cargo.toml
+          cargo test --locked --jobs 2 --lib profiles::tests
+          cargo test --locked --jobs 2 --test profiles_cli
+          python3 -m py_compile verification/desktop-profiles/webview.py
+          bash -n verification/desktop-profiles/run-linux.sh
+          python3 verification/desktop-native/evidence.py --guard

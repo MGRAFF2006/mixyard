@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import SendControl from './SendControl.vue'
 import InspectionPanel from './InspectionPanel.vue'
+import ProfilesPanel from './ProfilesPanel.vue'
 import { blockedSend, controlPlayers, createPreview, devices, gainDb, needsMonitorConsent, newMix, newOutput, peakBound, previewPlayback, routedPlayers, sources, updateSend } from './model.ts'
 import type { Mode, Output, Send } from './model.ts'
 import { inDesktopShell, runtimeAction, shellAction, shellStatus } from './bridge'
@@ -174,6 +175,7 @@ onUnmounted(() => { mounted = false; generation++; clearTimeout(timer) })
     </section>
 
     <InspectionPanel />
+    <ProfilesPanel />
 
     <main>
       <aside class="mix-sidebar" aria-label="Mixes">
