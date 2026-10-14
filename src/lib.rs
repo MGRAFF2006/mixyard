@@ -24,8 +24,10 @@
 //! actions requires caller-supplied device attribution AND exclusive dispatch
 //! ownership; native attribution/ownership qualification is still pending.
 //! Group PlayPause becomes explicit Pause if any selected player plays, otherwise
-//! Play only for remembered sessions still routed and paused. Unknown state/capability
-//! blocks group actions. Pause-memory candidates require confirmed native outcomes;
+//! Play only for remembered sessions still routed and paused in the same device,
+//! config revision and media policy context. Config revisions must advance on
+//! every desired edit; raw IDs without versioned context cannot authorize resume.
+//! Unknown state/capability blocks group actions. Pause-memory candidates require confirmed native outcomes;
 //! every player outcome here is not-dispatched. Future native dispatch must report
 //! partial/unknown outcomes per player; never blindly retry Next/Previous.
 //! Scope is global-media-session: one player shared by A+B pauses both. Quieting
@@ -187,7 +189,7 @@ impl OutputRoute {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "mode", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum MediaPolicy {
     OsDefault,
@@ -327,6 +329,7 @@ pub enum ResolutionStatus {
     Selected,
     Missing,
     Ambiguous,
+    UnsupportedFormat,
 }
 fn status(count: usize) -> ResolutionStatus {
     match count {
@@ -579,6 +582,7 @@ fn resolution_diagnostic(
     match status {
         ResolutionStatus::Missing => diagnostic(diagnostics, subject, "missing-target", "Disconnected: exact identity absent. Reconnect it or edit its stable selector explicitly; no fallback."),
         ResolutionStatus::Ambiguous => diagnostic(diagnostics, subject, "ambiguous-target", "Disconnected: multiple exact matches. Supply a unique stable identity; no fallback."),
+        ResolutionStatus::UnsupportedFormat => diagnostic(diagnostics, subject, "unsupported-format", "Disconnected: observed output format unsupported; select mono/stereo with a positive sample rate. Healthy outputs remain planned."),
         ResolutionStatus::Selected => match format {
             None => diagnostic(diagnostics, subject, "format-unverified", "Format unknown. Discover supported mono/stereo before native execution; dry-run proves no audio quality."),
             Some(format) => format.validate().map_err(|error| format!("{subject}: {error}"))?,
@@ -797,13 +801,24 @@ pub fn plan(config: &Config, inventory: &Inventory) -> Result<Plan, String> {
         } else {
             None
         };
+        // An observed device limitation degrades only this output; configured
+        // formats and backend capacities are still validated as hard errors.
+        let status = if format.is_some_and(|format| format.validate().is_err()) {
+            ResolutionStatus::UnsupportedFormat
+        } else {
+            status
+        };
         resolution_diagnostic(
             &mut diagnostics,
             &format!("output:{}", output.id),
             status,
             format,
         )?;
-        let rate_conversion = format.map(|format| format.sample_rate_hz != mix.sample_rate_hz);
+        let rate_conversion = if status == ResolutionStatus::Selected {
+            format.map(|format| format.sample_rate_hz != mix.sample_rate_hz)
+        } else {
+            None
+        };
         if rate_conversion == Some(true) {
             diagnostic(&mut diagnostics, &format!("output:{}", output.id), "rate-conversion-required", "Negotiate native output conversion and independent clock adaptation before execution.");
         }
@@ -888,6 +903,27 @@ pub struct MediaRequest {
     pub dispatch_ownership: DispatchOwnership,
     #[serde(default)]
     pub remembered_playing_session_ids: Vec<String>,
+    /// Native callers copy rememberOnConfirmedPauseContext here and only the
+    /// rememberOnConfirmedPause IDs whose Pause outcomes they confirmed into
+    /// rememberedPlayingSessionIds. A dry-run result alone confirms nothing.
+    /// Legacy raw IDs have no continuity evidence and cannot resume.
+    #[serde(default)]
+    pub remembered_playing_context: Option<PauseHistoryContext>,
+}
+
+/// Versioned, caller-held history context; this pure planner stores no history.
+/// Every desired config edit must advance revision, including remove/restore.
+/// Revision must never be reused for a different config or rolled back. Native
+/// callers must discard history across config replacement/reset. Inventory
+/// revision is deliberately excluded: paused capture streams may disappear.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PauseHistoryContext {
+    pub schema_version: u32,
+    pub device_uid: String,
+    pub config_revision: u64,
+    pub policy: MediaPolicy,
+    pub routed_application_ids: Vec<String>,
 }
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -917,7 +953,10 @@ pub struct MediaPlan {
     pub retry_policy: &'static str,
     pub players: Vec<PlayerDecision>,
     pub remembered_playing_session_ids: Vec<String>,
+    pub remembered_playing_context: Option<PauseHistoryContext>,
+    /// Candidates only: no native outcome is confirmed by this planner.
     pub remember_on_confirmed_pause: Vec<String>,
+    pub remember_on_confirmed_pause_context: Option<PauseHistoryContext>,
     pub unavailable_remembered_session_ids: Vec<String>,
     pub routing_diagnostics: Vec<Diagnostic>,
 }
@@ -972,8 +1011,9 @@ pub fn plan_media(
         requested_action: request.action, status: "unknown-origin", message: "No attributable origin device; no broadcast or fallback.",
         scope: "global-media-session", device_only_quiet_hint: "Player pause affects every device sharing the player; device-only quiet requires an output mute/gate.",
         retry_policy: if matches!(request.action, MediaAction::Next | MediaAction::Previous) { "never-automatically-retry" } else { "reobserve-outcomes-before-retry" },
-        players: Vec::new(), remembered_playing_session_ids: memory, remember_on_confirmed_pause: Vec::new(),
-        unavailable_remembered_session_ids: Vec::new(), routing_diagnostics: routing.diagnostics.clone() };
+        players: Vec::new(), remembered_playing_session_ids: Vec::new(), remembered_playing_context: None,
+        remember_on_confirmed_pause: Vec::new(), remember_on_confirmed_pause_context: None,
+        unavailable_remembered_session_ids: memory.clone(), routing_diagnostics: routing.diagnostics.clone() };
     let Some(device) = request
         .device_uid
         .as_deref()
@@ -1010,7 +1050,8 @@ pub fn plan_media(
     };
     if output.status != ResolutionStatus::Selected {
         result.status = "device-disconnected";
-        result.message = "Origin output is missing/ambiguous; no player fallback.";
+        result.message =
+            "Origin output is missing/ambiguous or has an unsupported format; no player fallback.";
         return Ok(result);
     }
     let apps = routed_apps(config, &routing, device);
@@ -1046,12 +1087,23 @@ pub fn plan_media(
             "No observed media sessions belong to enabled configured device routes; no fallback.";
         return Ok(result);
     }
-    result.unavailable_remembered_session_ids = result
-        .remembered_playing_session_ids
-        .iter()
-        .filter(|id| !selected.iter().any(|session| &session.session_id == *id))
-        .cloned()
-        .collect();
+    let context = PauseHistoryContext {
+        schema_version: 1,
+        device_uid: device.into(),
+        config_revision: config.revision,
+        policy: policy.expect("enabled policy checked above").clone(),
+        routed_application_ids: apps.into_iter().collect(),
+    };
+    if request.remembered_playing_context.as_ref() == Some(&context) {
+        let (available, unavailable) = memory
+            .into_iter()
+            .partition(|id| selected.iter().any(|session| &session.session_id == id));
+        result.remembered_playing_session_ids = available;
+        result.unavailable_remembered_session_ids = unavailable;
+        if !result.remembered_playing_session_ids.is_empty() {
+            result.remembered_playing_context = Some(context.clone());
+        }
+    }
     let devices: BTreeSet<_> = routing
         .outputs
         .iter()
@@ -1118,7 +1170,7 @@ pub fn plan_media(
             });
             if candidates.is_empty() {
                 result.status = "no-resume-history";
-                result.message = "No remembered previously-playing sessions remain selected and routed; use explicit Play, no fallback.";
+                result.message = "No remembered previously-playing sessions have matching device/config/policy context and current membership; use explicit Play, no fallback.";
                 return Ok(result);
             }
             if selected.iter().any(|session| {
@@ -1170,6 +1222,9 @@ pub fn plan_media(
                     .push(player.session_id.clone());
             }
         }
+    }
+    if !result.remember_on_confirmed_pause.is_empty() {
+        result.remember_on_confirmed_pause_context = Some(context);
     }
     result.status = "ready";
     result.message = "Session-global actions resolved from desired routes and observations; no action dispatched, native outcomes remain unknown.";

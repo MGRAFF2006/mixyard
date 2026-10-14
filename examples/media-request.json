@@ -4,5 +4,6 @@
   "action": "pause",
   "originAttribution": "device-attributed",
   "dispatchOwnership": "mixyard",
-  "rememberedPlayingSessionIds": []
+  "rememberedPlayingSessionIds": [],
+  "rememberedPlayingContext": null
 }

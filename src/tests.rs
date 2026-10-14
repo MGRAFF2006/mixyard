@@ -14,6 +14,7 @@ fn request(device: &str, action: MediaAction) -> MediaRequest {
         origin_attribution: OriginAttribution::DeviceAttributed,
         dispatch_ownership: DispatchOwnership::Mixyard,
         remembered_playing_session_ids: Vec::new(),
+        remembered_playing_context: None,
     }
 }
 fn send<'a>(plan: &'a Plan, source: &str, mix: &str) -> &'a PlannedSend {
@@ -434,9 +435,19 @@ fn format_mappings_and_unverified_rates() {
         .iter()
         .any(|d| d.code == "rate-conversion-required"));
     inventory.outputs[3].format.as_mut().unwrap().channels = 6;
-    assert!(plan(&config, &inventory)
-        .unwrap_err()
-        .contains("mono/stereo"));
+    let result = plan(&config, &inventory).unwrap();
+    assert_eq!(
+        output(&result, "speaker-a").status,
+        ResolutionStatus::UnsupportedFormat
+    );
+    assert_eq!(output(&result, "speaker-a").effective_gain, 0.0);
+    assert_eq!(output(&result, "speaker-a").channel_mapping, "disconnected");
+    assert_eq!(output(&result, "speaker-a").rate_conversion_required, None);
+    assert_eq!(output(&result, "speaker-b").effective_gain, 1.0);
+    assert!(result
+        .diagnostics
+        .iter()
+        .any(|d| d.subject == "output:speaker-a" && d.code == "unsupported-format"));
 }
 
 #[test]
@@ -660,6 +671,8 @@ fn group_playpause_pauses_playing_only_then_resumes_remembered_without_streams()
         .retain(|source| !matches!(source.selector, Selector::App { .. }));
     inventory.media_sessions[0].playback_state = PlaybackState::Paused;
     req.remembered_playing_session_ids = paused.remember_on_confirmed_pause;
+    req.remembered_playing_context = paused.remember_on_confirmed_pause_context;
+    inventory.revision += 1; // Observation changes do not invalidate desired routes.
     let resumed = plan_media(&config, &inventory, &req).unwrap();
     assert_eq!(actions(&resumed), [("example:spotify", MediaAction::Play)]);
     assert!(resumed
@@ -676,13 +689,15 @@ fn group_playpause_pauses_playing_only_then_resumes_remembered_without_streams()
 #[test]
 fn resume_revalidates_routes_states_and_never_global_fallback() {
     let (mut config, mut inventory) = example();
+    let mut req = request("combined-output", MediaAction::PlayPause);
+    let pause = plan_media(&config, &inventory, &req).unwrap();
     inventory.media_sessions[0].playback_state = PlaybackState::Paused;
     inventory.media_sessions[1].playback_state = PlaybackState::Paused;
-    let mut req = request("combined-output", MediaAction::PlayPause);
     assert_eq!(
         plan_media(&config, &inventory, &req).unwrap().status,
         "no-resume-history"
     );
+    req.remembered_playing_context = pause.remember_on_confirmed_pause_context;
     req.remembered_playing_session_ids = vec![
         "simulated:session:spotify".into(),
         "simulated:session:private-player".into(),
@@ -705,6 +720,221 @@ fn resume_revalidates_routes_states_and_never_global_fallback() {
     let result = plan_media(&config, &inventory, &req).unwrap();
     assert_eq!(result.status, "no-resume-history");
     assert!(actions(&result).is_empty());
+}
+
+#[test]
+fn pause_history_cannot_cross_route_revisions_even_if_old_history_is_replayed() {
+    for remove_all in [false, true] {
+        let (mut config, mut inventory) = example();
+        let mut req = request("combined-output", MediaAction::PlayPause);
+        let paused = plan_media(&config, &inventory, &req).unwrap();
+        assert!(paused.remembered_playing_context.is_none());
+        req.remembered_playing_session_ids = paused.remember_on_confirmed_pause;
+        req.remembered_playing_context = paused.remember_on_confirmed_pause_context;
+        for session in &mut inventory.media_sessions {
+            session.playback_state = PlaybackState::Paused;
+        }
+        let original_sends = config.sends.clone();
+        config.revision = 2;
+        config
+            .sends
+            .retain(|send| send.mix != "shared" || (!remove_all && send.source != "spotify"));
+        let removed = plan_media(&config, &inventory, &req).unwrap();
+        assert_eq!(
+            removed.status,
+            if remove_all {
+                "no-routed-players"
+            } else {
+                "no-resume-history"
+            }
+        );
+        assert!(actions(&removed).is_empty());
+        assert!(removed.remembered_playing_session_ids.is_empty());
+        assert!(removed.remembered_playing_context.is_none());
+        assert_eq!(
+            removed.unavailable_remembered_session_ids,
+            req.remembered_playing_session_ids
+        );
+        config.sends = original_sends;
+        config.revision = 3;
+        // Deliberately replay original revision-1 IDs/context, without using the
+        // removal result: current membership alone must not imply continuity.
+        let restored = plan_media(&config, &inventory, &req).unwrap();
+        assert_eq!(restored.status, "no-resume-history");
+        assert!(actions(&restored).is_empty());
+        assert_eq!(
+            restored.unavailable_remembered_session_ids,
+            req.remembered_playing_session_ids
+        );
+    }
+}
+
+#[test]
+fn legacy_wrong_version_device_and_policy_history_never_authorize_resume() {
+    let (config, mut inventory) = example();
+    let mut req = request("combined-output", MediaAction::PlayPause);
+    let paused = plan_media(&config, &inventory, &req).unwrap();
+    req.remembered_playing_session_ids = paused.remember_on_confirmed_pause;
+    let context = paused.remember_on_confirmed_pause_context.unwrap();
+    for session in &mut inventory.media_sessions {
+        session.playback_state = PlaybackState::Paused;
+    }
+    assert_eq!(
+        plan_media(&config, &inventory, &req).unwrap().status,
+        "no-resume-history"
+    );
+    for change in ["version", "device", "policy", "membership"] {
+        let mut context = context.clone();
+        match change {
+            "version" => context.schema_version = 0,
+            "device" => context.device_uid = "example:device-a".into(),
+            "policy" => {
+                context.policy = MediaPolicy::Primary {
+                    application_id: "example:spotify".into(),
+                    session_id: None,
+                }
+            }
+            "membership" => context.routed_application_ids.clear(),
+            _ => unreachable!(),
+        }
+        req.remembered_playing_context = Some(context);
+        let result = plan_media(&config, &inventory, &req).unwrap();
+        assert_eq!(result.status, "no-resume-history", "{change}");
+        assert!(actions(&result).is_empty());
+        assert_eq!(
+            result.unavailable_remembered_session_ids,
+            req.remembered_playing_session_ids
+        );
+    }
+    req.remembered_playing_context = Some(context.clone());
+    let mut changed_policy = config.clone();
+    policy(
+        &mut changed_policy,
+        "combined-output",
+        MediaPolicy::Primary {
+            application_id: "example:spotify".into(),
+            session_id: None,
+        },
+    );
+    assert_eq!(
+        plan_media(&changed_policy, &inventory, &req)
+            .unwrap()
+            .status,
+        "no-resume-history"
+    );
+    req.device_uid = Some("example:device-a".into());
+    assert_eq!(
+        plan_media(&config, &inventory, &req).unwrap().status,
+        "no-resume-history"
+    );
+}
+
+#[test]
+fn unavailable_history_is_reported_before_device_primary_and_ownership_returns() {
+    let (config, inventory) = example();
+    let mut req = request("device-a", MediaAction::PlayPause);
+    let paused = plan_media(&config, &inventory, &req).unwrap();
+    req.remembered_playing_session_ids = paused.remember_on_confirmed_pause;
+    req.remembered_playing_context = paused.remember_on_confirmed_pause_context;
+    for change in [
+        "no-output",
+        "no-session",
+        "os-policy",
+        "no-origin",
+        "no-ownership",
+    ] {
+        let mut config = config.clone();
+        let mut inventory = inventory.clone();
+        let mut req = req.clone();
+        let expected = match change {
+            "no-output" => {
+                config.outputs.retain(|output| output.id != "speaker-a");
+                "unknown-device"
+            }
+            "no-session" => {
+                inventory.media_sessions.clear();
+                "missing-primary"
+            }
+            "os-policy" => {
+                policy(&mut config, "device-a", MediaPolicy::OsDefault);
+                "os-default"
+            }
+            "no-origin" => {
+                req.origin_attribution = OriginAttribution::Unavailable;
+                "unknown-origin"
+            }
+            "no-ownership" => {
+                req.dispatch_ownership = DispatchOwnership::Os;
+                "dispatch-not-owned"
+            }
+            _ => unreachable!(),
+        };
+        let result = plan_media(&config, &inventory, &req).unwrap();
+        assert_eq!(result.status, expected);
+        assert!(result.remembered_playing_session_ids.is_empty());
+        assert!(result.remembered_playing_context.is_none());
+        assert_eq!(
+            result.unavailable_remembered_session_ids,
+            req.remembered_playing_session_ids
+        );
+        assert!(actions(&result).is_empty());
+    }
+}
+
+#[test]
+fn unsupported_observed_output_preserves_siblings_and_unrelated_media() {
+    let (config, inventory) = example();
+    for format in [
+        AudioFormat {
+            channels: 6,
+            sample_rate_hz: 48_000,
+        },
+        AudioFormat {
+            channels: 2,
+            sample_rate_hz: 0,
+        },
+    ] {
+        let mut inventory = inventory.clone();
+        inventory.outputs[3].format = Some(format);
+        let result = plan(&config, &inventory).unwrap();
+        assert_eq!(
+            output(&result, "speaker-a").status,
+            ResolutionStatus::UnsupportedFormat
+        );
+        assert_eq!(output(&result, "speaker-a").effective_gain, 0.0);
+        assert_eq!(
+            output(&result, "speaker-b").status,
+            ResolutionStatus::Selected
+        );
+        assert_eq!(output(&result, "speaker-b").effective_gain, 1.0);
+        let affected = plan_media(
+            &config,
+            &inventory,
+            &request("device-a", MediaAction::Pause),
+        )
+        .unwrap();
+        assert_eq!(affected.status, "device-disconnected");
+        assert!(actions(&affected).is_empty());
+        let healthy = plan_media(
+            &config,
+            &inventory,
+            &request("device-b", MediaAction::Pause),
+        )
+        .unwrap();
+        assert_eq!(healthy.status, "ready");
+        assert_eq!(actions(&healthy), [("example:vlc", MediaAction::Pause)]);
+        assert!(healthy
+            .players
+            .iter()
+            .all(|player| player.dispatch_outcome == "not-dispatched"));
+        let mut unsafe_config = config.clone();
+        unsafe_config.mixes[0].channels = 6;
+        assert!(plan(&unsafe_config, &inventory).is_err());
+        inventory.limits.max_output_routes = Some(1);
+        assert!(plan(&config, &inventory)
+            .unwrap_err()
+            .contains("backend-capacity"));
+    }
 }
 
 #[test]
