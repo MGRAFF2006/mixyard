@@ -275,6 +275,16 @@ must be inspected and tested; don't globally change auto-switch policy silently.
    Run WirePlumber in recovery tests: bare PipeWire cannot prove session-manager
    fallback/reconnect policy. Test no fallback, silence and app input changes as
    separate outcomes. Endpoint-loss consumer behavior is an app compatibility gate.
+   For captured app playback, qualify original rendering separately from capture
+   and injection: select a supported non-audible render endpoint in the app, or use
+   documented redirection/suppression that preserves captured PCM, before replaying
+   through Monitor. Do not assume session mute preserves loopback capture. Native
+   tests must start with the app playing directly to the intended Monitor device,
+   establish exactly one audible path after routing, and prove Monitor send and
+   output gain/mute affect that audio while capture for other mixes continues.
+   Repeat on app relaunch, default-device change and recovery; report an original
+   path that bypasses control as unsupported for managed monitoring, not working.
+   Capture-only support may be reported separately, without Monitor gain/mute claims.
 3. Prove Windows/macOS real-data injection into two separately selectable input
    endpoints; discovery or a sample tone alone does not prove transport.
 4. Add lifecycle ownership, reconnection and source identity recovery. Measure
@@ -302,9 +312,14 @@ instead of guessing. Prefer 48 kHz but negotiate supported physical formats and
 delegate conversion to native facilities where possible. Independent clocks still
 require measured adaptation; one fixed FIFO cannot solve drift.
 
-Initial gain policy: finite nonnegative sends and per-bus master gain in [0,1].
-Compute the conservative peak bound master × sum(unmuted send gains). Reject
-configs above 1 until explicit headroom is chosen. Never silently normalize other
+Initial gain policy: every send, mix master and output gain must be finite and
+in [0,1], including muted routes. For unit-full-scale source peaks, define effective
+level as 0 when muted, otherwise the configured gain. Compute each conservative
+mix peak bound = effective master × sum(effective send levels), then each output
+peak bound = its mix peak bound × effective output level. Reserve headroom for all
+configured sources, including temporarily absent ones. Reject any mix or output
+bound above 1; choose explicit send/master attenuation rather than using output
+attenuation or mute to hide an unsafe upstream mix. Never silently normalize other
 sends when a source appears/disappears. This conservative prototype avoids adding
 an untested limiter; a later sample mixer can introduce explicit limiting. Tone
 tests use non-clipping levels and test stereo/mono mapping separately.
@@ -321,10 +336,15 @@ with Linux app grouping and configuration locking; study it before duplicating
 policy mechanisms. Any copied MPL files retain their license obligations.
 
 WASAPI process loopback captures process trees; it does not create a microphone
-or redirect original playback. SysVAD is a driver starting point, not a ready
-sample-carrying audio cable. Evaluate permissively licensed virtual transport
-foundations and prove capture/render bridge, multi-endpoint support, maintenance,
-and current Secure Boot/HVCI/WHCP compatibility before selecting one. Certification
+or redirect original playback. Capturing and replaying an app already rendering
+to the Monitor device can create duplicate delayed audio; muting a Mixyard route
+cannot silence that original path. Windows managed monitoring must pass the
+original-render gate above using supported app endpoint selection or documented
+routing facilities; capture alone is insufficient. SysVAD is a driver starting
+point, not a ready sample-carrying audio cable. Evaluate permissively licensed
+virtual transport foundations and prove capture/render bridge, multi-endpoint
+support, maintenance, and current Secure Boot/HVCI/WHCP compatibility before
+selecting one. Certification
 and developer enrollment can cost money even for a free open-source product.
 
 Core Audio taps capture process audio; virtual microphone publication requires a
