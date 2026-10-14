@@ -292,6 +292,7 @@ pub struct Listener {
     name: String,
     pending: Option<Handle>,
     connect: Operation,
+    disconnected: bool,
 }
 impl Listener {
     pub fn bind(endpoint: &str) -> io::Result<Self> {
@@ -299,11 +300,13 @@ impl Listener {
             name: endpoint.into(),
             pending: Some(create_pipe(endpoint, true)?),
             connect: Operation::new(0)?,
+            disconnected: false,
         };
         listener.start_connect()?;
         Ok(listener)
     }
     fn start_connect(&mut self) -> io::Result<()> {
+        self.disconnected = false;
         self.connect.reset();
         let pipe = self.pending.as_ref().unwrap();
         if unsafe { ConnectNamedPipe(pipe.0, &mut *self.connect.overlapped) } != 0 {
@@ -316,6 +319,12 @@ impl Listener {
                 Ok(())
             }
             Some(ERROR_PIPE_CONNECTED) => Ok(()),
+            // A client may open and close the new instance before this call.
+            // Retain it until accept creates a replacement, without retrying here.
+            Some(ERROR_NO_DATA) => {
+                self.disconnected = true;
+                Ok(())
+            }
             _ => Err(e),
         }
     }
@@ -328,14 +337,21 @@ impl Listener {
                     if matches!(
                         e.raw_os_error().map(|n| n as u32),
                         Some(ERROR_NO_DATA | ERROR_BROKEN_PIPE)
-                    ) => {}
+                    ) =>
+                {
+                    self.disconnected = true
+                }
                 Err(e) => return Err(e),
             }
         }
         // Maintain an instance continuously; never release the name between clients.
         let next = create_pipe(&self.name, false)?;
         let pipe = self.pending.replace(next).unwrap();
+        let disconnected = self.disconnected;
         self.start_connect()?;
+        if disconnected {
+            return Ok(None);
+        }
         let mut pid = 0;
         if unsafe { GetNamedPipeClientProcessId(pipe.0, &mut pid) } == 0 {
             return Ok(None);
@@ -384,6 +400,82 @@ pub fn connect(endpoint: &str) -> io::Result<Stream> {
     }
     check_process(pid)?;
     Stream::new(pipe, false)
+}
+
+#[cfg(test)]
+#[test]
+fn actual_early_disconnect_before_connect_preserves_admission_and_ownership() {
+    let name = endpoint(&format!("early-close-{}", std::process::id())).unwrap();
+    // Deliberately leave the actual kernel instance unarmed: no timing race,
+    // test hook, or simulated ConnectNamedPipe result.
+    let mut listener = Listener {
+        name: name.clone(),
+        pending: Some(create_pipe(&name, true).unwrap()),
+        connect: Operation::new(0).unwrap(),
+        disconnected: false,
+    };
+    drop(connect(&name).unwrap());
+    assert_eq!(
+        unsafe {
+            ConnectNamedPipe(
+                listener.pending.as_ref().unwrap().0,
+                &mut *listener.connect.overlapped,
+            )
+        },
+        0
+    );
+    assert_eq!(win_error().raw_os_error(), Some(ERROR_NO_DATA as i32));
+    // Exercise production admission on that same disconnected kernel instance.
+    listener.start_connect().unwrap();
+    assert!(listener.disconnected);
+    assert!(!listener.connect.pending);
+    assert_eq!(
+        create_pipe(&name, true).err().unwrap().raw_os_error(),
+        Some(ERROR_ACCESS_DENIED as i32)
+    );
+    assert!(listener.accept().unwrap().is_none());
+    assert!(listener.connect.pending);
+    assert!(!listener.disconnected);
+    assert_eq!(
+        create_pipe(&name, true).err().unwrap().raw_os_error(),
+        Some(ERROR_ACCESS_DENIED as i32)
+    );
+
+    let mut client = connect(&name).unwrap();
+    let started = std::time::Instant::now();
+    let mut server = loop {
+        if let Some(stream) = listener.accept().unwrap() {
+            break stream;
+        }
+        assert!(started.elapsed() < super::CLIENT_TIMEOUT);
+        std::thread::sleep(super::TICK);
+    };
+    loop {
+        match client.write(b"x") {
+            Ok(n) => {
+                assert_eq!(n, 1);
+                break;
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("recovered pipe write: {e}"),
+        }
+        assert!(started.elapsed() < super::CLIENT_TIMEOUT);
+        std::thread::sleep(super::TICK);
+    }
+    let mut byte = [0];
+    loop {
+        match server.read(&mut byte) {
+            Ok(n) => {
+                assert_eq!(n, 1);
+                assert_eq!(&byte, b"x");
+                break;
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("recovered pipe read: {e}"),
+        }
+        assert!(started.elapsed() < super::CLIENT_TIMEOUT);
+        std::thread::sleep(super::TICK);
+    }
 }
 
 #[cfg(test)]
