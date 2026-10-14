@@ -33,7 +33,7 @@ fn shell_status(state: State<'_, ShellState>) -> ShellStatus {
 
 #[tauri::command]
 fn hide_mixer(window: tauri::WebviewWindow) -> Result<(), String> {
-    window.hide().map_err(|error| error.to_string())
+    close_mixer(window.app_handle()).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -48,6 +48,18 @@ fn open_mixer(app: &tauri::AppHandle) -> tauri::Result<()> {
         window.show()?;
         window.set_focus()?;
     }
+    Ok(())
+}
+
+fn close_mixer(app: &tauri::AppHandle) -> tauri::Result<()> {
+    // Construction does not prove the host displays the tray. Only macOS has
+    // an independent reopen path (Dock); never strand a hidden UI elsewhere.
+    #[cfg(target_os = "macos")]
+    if let Some(window) = app.get_webview_window("main") {
+        window.hide()?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    app.exit(0);
     Ok(())
 }
 
@@ -100,9 +112,7 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
         .on_menu_event(|app, event| {
             let result = match event.id.as_ref() {
                 "open" => open_mixer(app),
-                "close" => app
-                    .get_webview_window("main")
-                    .map_or(Ok(()), |window| window.hide()),
+                "close" => close_mixer(app),
                 "quit-ui" => {
                     app.exit(0);
                     Ok(())
@@ -134,8 +144,8 @@ fn main() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                if let Err(error) = window.hide() {
-                    eprintln!("Mixyard could not hide window: {error}");
+                if let Err(error) = close_mixer(window.app_handle()) {
+                    eprintln!("Mixyard could not close mixer: {error}");
                 }
             }
         })

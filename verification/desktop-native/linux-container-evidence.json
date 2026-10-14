@@ -1,0 +1,324 @@
+{
+  "schema_version": 1,
+  "status": "passed-scoped-linux-container-only",
+  "utc": "2026-10-14T19:44:55.135818+00:00",
+  "source_base": "089d271",
+  "source_state": "base plus initial qualification implementation; source hashes identify the built content",
+  "operator_host": "homelab-dev (Debian 13 headless); no host SDK installs or display/audio access",
+  "container_os": "Ubuntu 24.04.5 LTS x86_64",
+  "sdk_image_id": "sha256:664855933a9601186497d2b4c4a2da5fc97abc5c47e0301916a0c3d9ca64a113",
+  "display": "owned Xvfb 1280x960, Openbox, software rendering, no tray host",
+  "network_during_execution": "none",
+  "cpu_count": 6,
+  "tools": {
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "1.99.0 (5f94df478 2026-08-27)",
+    "node": "24.13.1",
+    "pnpm": "11.10.0",
+    "tauri": "2.12.3",
+    "wry": "0.57.0",
+    "tauri-driver": "2.1.0"
+  },
+  "sdk_packages": {
+    "dbus-x11": "1.14.10-4ubuntu4.1",
+    "libayatana-appindicator3-dev": "0.5.93-1build3",
+    "libgtk-3-dev:amd64": "3.24.41-4ubuntu1.3",
+    "librsvg2-dev:amd64": "2.58.0+dfsg-1ubuntu0.1",
+    "libwebkit2gtk-4.1-dev": "2.52.6-0ubuntu0.24.04.1",
+    "openbox": "3.6.1-12build5",
+    "webkit2gtk-driver": "2.52.6-0ubuntu0.24.04.1",
+    "xdotool": "1:3.20160805.1-5build1",
+    "xvfb": "2:21.1.12-1ubuntu1.8"
+  },
+  "ran": [
+    "docker build -t mixyard-desktop-native-sdk:local verification/desktop-native",
+    "pnpm install --frozen-lockfile",
+    "pnpm check (TypeScript and 7 model tests)",
+    "pnpm build",
+    "cargo fmt --check --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "pnpm tauri info (container)",
+    "pnpm tauri build --no-bundle -- --locked --jobs 2",
+    "cargo install tauri-driver --locked --jobs 2",
+    "bash verification/desktop-native/run-linux.sh RELEASE_BINARY EVIDENCE_DIRECTORY (network-disabled container)"
+  ],
+  "binary": {
+    "path": "release/mixyard-desktop",
+    "bytes": 11553904,
+    "sha256": "1f26962c104aee05fa2184050c295eb836b9d9c760f0ee272815f92395b215d7"
+  },
+  "source_sha256": {
+    "apps/desktop/package.json": "daed3dd9794b71c1ad715681df8b21abcd839fb480a742aa5f96dc3c74ca8153",
+    "apps/desktop/pnpm-lock.yaml": "90f43562bd61935cbc1a6267c9bf01110d4ab3bbc229bab4729f9bad7a5488d8",
+    "apps/desktop/src/App.vue": "248a9c67b9187d0d384cd8404d5ec815c96c9042b776c8f9e5d132cfc3eccc95",
+    "apps/desktop/src/SendControl.vue": "156b05db87549b2f3008b424ef6de1cd7198fedfdb4b39396abcee9c7b5c0fdc",
+    "apps/desktop/src/bridge.ts": "12f8c71d045e77ffcdfd65a15474c0d5c33c8930507c7a1e6dec77c6ac15a3e3",
+    "apps/desktop/src/main.ts": "0d42fb6bb74a51d647f20a0cd2bcdcc7b89b146f4cdfbf6f1f7b640e7e036119",
+    "apps/desktop/src/model.test.ts": "e0d953465aab50e8e3139a8e634a88b90c2f9c461914e6d1b70454b7045aa871",
+    "apps/desktop/src/model.ts": "57c244dca755dda2f11fbe33f849bba8612972f1b14a64d96de755129ed70036",
+    "apps/desktop/src/style.css": "1c1e47c736d50a2c5dbdb7e7925e5ea3811ea56a94a3514960af1055f3b53da4",
+    "apps/desktop/src-tauri/Cargo.lock": "c5861a48429f4fa72faf686f44497dcb9f4f5e772470419d67aa99f5eb76d8c9",
+    "apps/desktop/src-tauri/Cargo.toml": "1e4b3605bf87e965d731051c0ad0706b2dcaa96761f41dfe7c3e4d9dae31a0a8",
+    "apps/desktop/src-tauri/build.rs": "0770ec4df600f1353d8ef95acb3272269a66c4e41eb6e9cbf2b84af920e36a1b",
+    "apps/desktop/src-tauri/capabilities/mixer-shell.json": "23b3ddfb5a58c82fc65df740f8c968cabf5f1e66ce34419aa41b2cbbd39967a4",
+    "apps/desktop/src-tauri/src/main.rs": "6ea80e245a3438d3f62939876a906340d98fda38725b0bf2bb9f78c033b63198",
+    "apps/desktop/src-tauri/tauri.conf.json": "47f246b9d60c403ffa823dc5bc66518b16762d6017603079f2d22cd71bd4e398"
+  },
+  "checks": [
+    "release tauri://localhost with real disconnected shell IPC",
+    "disconnected gains remain disabled",
+    "Tab/Enter demo opening",
+    "trusted OS arrow keys change range and rendered Vue output; >=2px focus outline",
+    "640px native compact window without horizontal overflow",
+    "Alt+F4, UI Close window, UI Quit UI each end own UI PID",
+    "fresh visible release windows after close; trayCreated true with no tray host"
+  ],
+  "steps": [
+    {
+      "action": "session-created",
+      "case": "native-close",
+      "url": "tauri://localhost"
+    },
+    {
+      "action": "launch/relaunch",
+      "case": "native-close",
+      "pid": 61,
+      "url": "tauri://localhost",
+      "controls_locked": true,
+      "shell_status": {
+        "trayCreated": true,
+        "schemaVersion": 1,
+        "connected": false,
+        "platform": "linux"
+      }
+    },
+    {
+      "action": "native-close",
+      "status": "passed",
+      "pid_exited": 61
+    },
+    {
+      "action": "session-created",
+      "case": "close-window",
+      "url": "tauri://localhost"
+    },
+    {
+      "action": "launch/relaunch",
+      "case": "close-window",
+      "pid": 253,
+      "url": "tauri://localhost",
+      "controls_locked": true,
+      "shell_status": {
+        "trayCreated": true,
+        "schemaVersion": 1,
+        "connected": false,
+        "platform": "linux"
+      }
+    },
+    {
+      "action": "close-window",
+      "exit_response": "WebDriver HTTP 500: {\"value\":{\"error\":\"unknown error\",\"message\":\"Session terminated without a reply\",\"stacktrace\":\"\"}}"
+    },
+    {
+      "action": "close-window",
+      "status": "passed",
+      "pid_exited": 253
+    },
+    {
+      "action": "session-created",
+      "case": "quit-ui",
+      "url": "tauri://localhost"
+    },
+    {
+      "action": "launch/relaunch",
+      "case": "quit-ui",
+      "pid": 309,
+      "url": "tauri://localhost",
+      "controls_locked": true,
+      "shell_status": {
+        "trayCreated": true,
+        "schemaVersion": 1,
+        "connected": false,
+        "platform": "linux"
+      }
+    },
+    {
+      "action": "quit-ui",
+      "exit_response": "WebDriver HTTP 500: {\"value\":{\"error\":\"unknown error\",\"message\":\"Session terminated without a reply\",\"stacktrace\":\"\"}}"
+    },
+    {
+      "action": "quit-ui",
+      "status": "passed",
+      "pid_exited": 309
+    }
+  ],
+  "timing": {
+    "normal-no-added-load": {
+      "status": "passed",
+      "p95_ms": 17,
+      "samples_ms": [
+        13.999999999999886,
+        8,
+        19,
+        13.000000000000114,
+        9,
+        8,
+        8,
+        8,
+        14.999999999999886,
+        9,
+        8,
+        8,
+        8.999999999999773,
+        11,
+        17,
+        8.999999999999773,
+        8.999999999999773,
+        8,
+        8,
+        16,
+        10.999999999999773,
+        9,
+        7,
+        8,
+        9,
+        14.000000000000227,
+        9,
+        8,
+        8,
+        8,
+        7.000000000000227,
+        15,
+        10,
+        8,
+        6.999999999999773,
+        17,
+        12,
+        9,
+        6.999999999999773,
+        8,
+        17,
+        10.000000000000227,
+        9,
+        8,
+        11,
+        10,
+        15,
+        8,
+        8,
+        10,
+        16,
+        9.000000000000455,
+        7,
+        8,
+        8,
+        17,
+        10,
+        8,
+        7,
+        16
+      ],
+      "load_average": [
+        5.42236328125,
+        9.90234375,
+        5.734375
+      ],
+      "measurement": "trusted OS keydown in actual release WebKit webview to second rAF; excludes pre-dispatch OS queue; not physical presentation or audio latency"
+    },
+    "one-owned-busy-CPU-worker": {
+      "status": "passed",
+      "p95_ms": 15,
+      "samples_ms": [
+        11,
+        13,
+        11,
+        15,
+        7.000000000000455,
+        10,
+        10,
+        15,
+        8,
+        13.999999999999545,
+        27,
+        8.999999999999545,
+        12,
+        12,
+        10,
+        13,
+        10.999999999999545,
+        12,
+        11.000000000000455,
+        10,
+        8,
+        9,
+        9.000000000000455,
+        8,
+        9,
+        8.999999999999545,
+        8,
+        8,
+        9.000000000000455,
+        13,
+        12,
+        9,
+        9,
+        10.000000000000455,
+        11,
+        10,
+        9.000000000000455,
+        9,
+        9,
+        9,
+        8.999999999999545,
+        8.999999999999545,
+        13.000000000000455,
+        8,
+        12,
+        18.000000000000455,
+        12,
+        9,
+        11,
+        8,
+        9,
+        12,
+        8.999999999999545,
+        12,
+        13,
+        11,
+        10,
+        12,
+        13.000000000000455,
+        8
+      ],
+      "load_average": [
+        5.42236328125,
+        9.90234375,
+        5.734375
+      ],
+      "measurement": "trusted OS keydown in actual release WebKit webview to second rAF; excludes pre-dispatch OS queue; not physical presentation or audio latency"
+    }
+  },
+  "remaining_blocked": [
+    "physical visible tray/menu and no-tray desktop hosts",
+    "Windows/macOS UI lifecycle, keyboard, accessibility and timing",
+    "screen-reader accessibility on every platform",
+    "independent audio runtime survival (runtime absent)",
+    "audio gaps, device latency, live IPC and sound quality",
+    "Windows/macOS release builds: hosted matrix prepared, not yet run",
+    "macOS physical Dock reopen"
+  ],
+  "artifact_files": [
+    "linux-webview.json (full raw events and package inventory)",
+    "native-build.log",
+    "sdk.log",
+    "frontend-check.log",
+    "tauri-driver.log",
+    "demo-webview.png",
+    "compact-webview.png"
+  ],
+  "prior_harness_failures": [
+    "external driver startup connection race; readiness retry corrected",
+    "DOM read before document loaded; readiness query corrected"
+  ],
+  "artifact_boundary": "Full logs/screenshots and failed attempts retained in component-owned cache for handoff; hosted workflow publishes per-HEAD artifacts. No binary/cache files committed.",
+  "disk_free_gib_after": 56.2
+}
