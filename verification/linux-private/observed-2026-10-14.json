@@ -1,0 +1,510 @@
+{
+  "date": "2026-10-14",
+  "base_commit": "fa99a9d8fbdb291ea72b7f594ec4e8c5e22c4e78",
+  "command": "bash verification/linux-private/run.sh verification/linux-private/build/evidence-low-load-resources --mixes \"Conference mix\" \"Session archive α\" \"Headphones private\"",
+  "container_image_id": "sha256:24a102676bea5515ef56fc0611af424dcf706c05c1fee2df34d3e0ecc64bd2fc",
+  "packages": [
+    "gcc\t4:14.2.0-1",
+    "libc6-dev:amd64\t2.41-12+deb13u4",
+    "libpipewire-0.3-dev:amd64\t1.6.9-2~bpo13+1",
+    "libspa-0.2-dev:amd64\t1.6.9-2~bpo13+1",
+    "pipewire:amd64\t1.6.9-2~bpo13+1",
+    "pipewire-bin\t1.6.9-2~bpo13+1",
+    "wireplumber\t0.5.12-1~bpo13+1"
+  ],
+  "source_sha256": {
+    "adapters/linux/native/mixyard_pw.c": "555978954d63750ddc11a15ad8a24d6f5591f54e2c21be79cdb0518ee6cf9196",
+    "verification/linux_private_graph.py": "0d56a56e686c0503ab143639066a210616695203478535b7b70532514611f5a2",
+    "verification/linux-private/producer.c": "a7af7909bc3e2ecc3a99d747a216be86db80ccc850ced20956c5a23662ca5903",
+    "verification/linux-private/capture.c": "c219ee8364e609c7ea6f1efb1fcf070aa57fdda4abb96a57ee26a060e00e6669",
+    "verification/linux-private/Dockerfile": "2287b1989ffd251d301193e5a74e0dcea0ecfc49ec2ef3d5943bfb20c9d107a8",
+    "verification/linux-private/pipewire.conf": "6861e1cc8b1274a04af12f0b194a4253d5acfdfebfdbf091931f3daac9c73667",
+    "verification/linux-private/build.sh": "c220d9f09f061230e96a3552c3d72c066cd5c165473e256e79f235875978ef72",
+    "verification/linux-private/run.sh": "cfc72277bbc8508237b3ed37dea7c1b0afc65be6b0a698347fdbb2b74c522bc6"
+  },
+  "status": "fail",
+  "qualification_exit": 1,
+  "production_apply": false,
+  "host_identity_safety": false,
+  "native_quality": "unqualified",
+  "physical_quality": false,
+  "evidence_kind": "native-private-container-graph-and-external-consumer-pcm",
+  "sample_rate": 48000,
+  "quantum_frames": 256,
+  "dsp_format": "F32 stereo FL/FR",
+  "capture_formats": [
+    "external consumer float packets with absolute clock metadata",
+    "external pw-record PCM16 stereo WAV"
+  ],
+  "fixtures": {
+    "sources": [
+      "fixture.mic",
+      "fixture.media"
+    ],
+    "mixes": [
+      "Conference mix",
+      "Session archive α",
+      "Headphones private"
+    ],
+    "unselected": [
+      "fixture.private",
+      "fixture.callreturn"
+    ],
+    "private_dummy_outputs": [
+      "Private-speaker-A",
+      "Private-speaker-B"
+    ],
+    "physical_mic_or_output_used": false
+  },
+  "check_counts": {
+    "pass": 37,
+    "fail": 4,
+    "blocked": 1
+  },
+  "checks": [
+    {
+      "case": "closed-0",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "closed-1",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "closed-2",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "startup-revision-frame-ack",
+      "status": "pass",
+      "matched_revision_frames": 18
+    },
+    {
+      "case": "continuous-startup-consumer-0",
+      "status": "fail",
+      "endpoint": "fixture.mic",
+      "frames": 147456,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.5814542304057895e-09,
+      "clock_position_jumps_count": 1,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-startup-consumer-1",
+      "status": "pass",
+      "endpoint": "fixture.media",
+      "frames": 147712,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.7251266932214477e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-startup-consumer-2",
+      "status": "pass",
+      "endpoint": "Conference mix",
+      "frames": 147968,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.5814542304057895e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-startup-consumer-3",
+      "status": "pass",
+      "endpoint": "Session archive α",
+      "frames": 147968,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 4.143642221010602e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-startup-consumer-4",
+      "status": "fail",
+      "endpoint": "Headphones private",
+      "frames": 147712,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.7251266932214477e-09,
+      "clock_position_jumps_count": 1,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "edits-revision-frame-ack",
+      "status": "pass",
+      "matched_revision_frames": 30
+    },
+    {
+      "case": "continuous-edits-consumer-0",
+      "status": "pass",
+      "endpoint": "fixture.mic",
+      "frames": 160256,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.5814542304057895e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-edits-consumer-1",
+      "status": "pass",
+      "endpoint": "fixture.media",
+      "frames": 160512,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.7251266932214477e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-edits-consumer-2",
+      "status": "pass",
+      "endpoint": "Conference mix",
+      "frames": 160512,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.5814542304057895e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-edits-consumer-3",
+      "status": "pass",
+      "endpoint": "Session archive α",
+      "frames": 160512,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 4.143642221010602e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-edits-consumer-4",
+      "status": "pass",
+      "endpoint": "Headphones private",
+      "frames": 160768,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.7251266932214477e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "baseline-0",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "baseline-1",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "baseline-2",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "private-fixture-consent-at-zero-mute",
+      "status": "pass"
+    },
+    {
+      "case": "dummy-0",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "dummy-1",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "fanout-a",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "fanout-b",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "edits-0",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "edits-1",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "edits-1",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "stall-sibling",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "bounded-logical-egress-stall",
+      "status": "pass"
+    },
+    {
+      "case": "second-link",
+      "status": "pass"
+    },
+    {
+      "case": "missing-0",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "missing-1",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "missing-2",
+      "status": "pass",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "owned-runtime-cleanup",
+      "status": "pass"
+    },
+    {
+      "case": "recovery-revision-frame-ack",
+      "status": "pass",
+      "matched_revision_frames": 18
+    },
+    {
+      "case": "continuous-recovery-consumer-0",
+      "status": "pass",
+      "endpoint": "fixture.mic",
+      "frames": 147712,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.5814542304057895e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-recovery-consumer-1",
+      "status": "pass",
+      "endpoint": "fixture.media",
+      "frames": 147968,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.7251266932214477e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-recovery-consumer-2",
+      "status": "pass",
+      "endpoint": "Conference mix",
+      "frames": 147968,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.5814542304057895e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-recovery-consumer-3",
+      "status": "pass",
+      "endpoint": "Session archive α",
+      "frames": 147968,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 4.143642221010602e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "continuous-recovery-consumer-4",
+      "status": "pass",
+      "endpoint": "Headphones private",
+      "frames": 148224,
+      "samples_outside_one_pcm16_lsb": 0,
+      "max_float_error": 3.7251266932214477e-09,
+      "clock_position_jumps_count": 0,
+      "queue_clock_mismatches_count": 0,
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "recovery",
+      "status": "fail",
+      "pcm_oracle_status": "fail",
+      "oracle_failure_count": 4,
+      "oracle_failures": [
+        "window 0, channel 0: 600 Hz peak 0.061138, expected 0.080000",
+        "window 0, channel 0: unknown content/corruption RMS 0.033884",
+        "window 0, channel 1: 600 Hz peak 0.061138, expected 0.080000",
+        "window 0, channel 1: unknown content/corruption RMS 0.033884"
+      ]
+    },
+    {
+      "case": "hostile-relink-before-notification",
+      "status": "blocked",
+      "private_tone_peaks": [
+        0.0,
+        0.0
+      ],
+      "reason": "not reproduced; unconditional public-client guarantee remains unproved",
+      "pcm_oracle_status": "pass"
+    },
+    {
+      "case": "injected-delayed-observation-relink",
+      "status": "fail",
+      "private_tone_peaks": [
+        0.07999916070364943,
+        0.07999916070364943
+      ],
+      "pcm_oracle_status": "fail",
+      "oracle_failure_count": 20,
+      "oracle_failures": [
+        "window 0, channel 0: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 0, channel 0: silence RMS 0.056568",
+        "window 0, channel 1: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 0, channel 1: silence RMS 0.056568",
+        "window 1, channel 0: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 1, channel 0: silence RMS 0.056568",
+        "window 1, channel 1: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 1, channel 1: silence RMS 0.056568",
+        "window 2, channel 0: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 2, channel 0: silence RMS 0.056568",
+        "window 2, channel 1: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 2, channel 1: silence RMS 0.056568",
+        "window 3, channel 0: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 3, channel 0: silence RMS 0.056568",
+        "window 3, channel 1: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 3, channel 1: silence RMS 0.056568",
+        "window 4, channel 0: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 4, channel 0: silence RMS 0.056568",
+        "window 4, channel 1: 2300 Hz peak 0.079999, expected 0.000000",
+        "window 4, channel 1: silence RMS 0.056568"
+      ]
+    }
+  ],
+  "consumer_boundary": {
+    "native_capture_rt_callback": "preallocated 64-slot SPSC; DSP buffer read + bounded PCM copy + atomic publication; no file I/O, allocation, logging or locks in callback",
+    "native_capture_file_io": "main-loop timer every20ms drains packets to file with fwrite; bounded queue drops/write errors fail",
+    "producer_rt_callback": "precomputed PCM; bounded timing trace and clock_gettime(CLOCK_MONOTONIC), no file I/O in callback",
+    "pw_record_consumer": "external packaged application; RT internals not audited, main stop may exit1 on SIGTERM; received WAV is retained/analyzed, not source render",
+    "start_readiness": "inactive native consumers created,200ms discovery delay, explicit FL/FR links confirmed by pw-link and graph snapshot, stdin start requests activation; no sample-effective start acknowledgment or always-process property; every received first/tail frame compared",
+    "alignment_frames": 0,
+    "missing_samples_reconstructed": false,
+    "continuous_workflow_pass": false
+  },
+  "resources": {
+    "host": "homelab-dev Debian13 six-vCPU VM",
+    "container_cpu_limit": "2 CPUs",
+    "container_memory_limit": "1GiB",
+    "free_disk_after_GiB": 56,
+    "duration_seconds": 46.370631743,
+    "host_load_before": "1.64 1.06 2.20 2/1041 6",
+    "host_load_after": "1.08 1.00 2.13 1/1017 169",
+    "one_minute_load_during_capture_range": [
+      1.21,
+      1.75
+    ],
+    "guest_steal_delta_ticks": 1,
+    "guest_clock_ticks_per_second": 100,
+    "cgroup_throttle_events_delta": 0,
+    "rtprio_limit": [
+      0,
+      0
+    ],
+    "memlock_limit_bytes": [
+      8388608,
+      8388608
+    ],
+    "observed_thread_policies": {
+      "SCHED_OTHER": [
+        0,
+        1073741824
+      ],
+      "1073741824": "SCHED_OTHER | SCHED_RESET_ON_FORK"
+    },
+    "realtime_available": false,
+    "environment_qualified": false
+  },
+  "loss_correlation": {
+    "startup_direct_mic_missing_position": 50437539001,
+    "startup_headphone_missing_position": 50437555129,
+    "missing_quantum_frames_each": 256,
+    "producer_at_both_missing_positions": "mic and media callbacks present,256frames; no >one-quantum callback delay at these events",
+    "native_at_both_missing_positions": "all mixes/sources have source position=ready position, flags0 and queue depth1; no missing ingress/old FIFO frame at these events",
+    "classification": "loss downstream of native queue consumption at consumer scheduling/capture boundary; exact cause unresolved, no quality pass",
+    "received_pcm_errors": "0 samples outside one PCM16 LSB across all15 native continuous captures",
+    "quality_gate": "FAIL: two captures have clock discontinuities despite correct received samples",
+    "recovery_pw_record_failure": {
+      "status": "FAIL",
+      "600Hz_peak_min": 0.06113758281374282,
+      "expected_peak": 0.08,
+      "max_residual_rms": 0.03388436713992309,
+      "scope": "first analyzed100ms window at offset0.3s in external recovery.wav",
+      "diagnosis": "external recovery capture corruption; this pw-record WAV has no absolute-frame metadata, exact cause unresolved; separate full-frame recovery pass does not override this failure"
+    }
+  },
+  "privacy_gates": {
+    "lag_injected_relink": "FAIL: unrestricted private fixture replacement delivered2300Hz sentinel peak0.07999916070364943 before observer invalidation",
+    "natural_host_race_reproduced": false,
+    "held_control_relink": "BLOCKED: no private sentinel reproduced; holding control can prevent negotiation, cannot count as safety pass",
+    "server_module": "proposed separate next proof, not implemented or certified here"
+  },
+  "prior_failure_artifacts": [
+    "evidence-automatic-timing",
+    "evidence-triggered-default",
+    "evidence-continuous",
+    "evidence-publish-ready"
+  ],
+  "prior_failure_handling": "retained in ignored owned build/ evidence directories; high-load (~31) failures remain failures; one earlier freshness run passed15 short captures but does not override latest failed baseline",
+  "unproved_gates": [
+    "server-side expected-serial/link ownership before summing",
+    "complete first workflow continuity including downstream consumers",
+    "sample-effective consumer start readiness",
+    "hostile natural held-control relink",
+    "every removal/ID-reuse/duplicate selector/bind/link/gate race",
+    "full golden PCM through every shutdown/stall/relink/source-loss transition",
+    "PipeWire/WirePlumber restart, default changes and abrupt crashes",
+    "real egress scheduling isolation and independent clocks",
+    "production Rust v2 plan execution, policy, controls and dynamic layouts",
+    "physical hardware/BT/latency/endurance quality"
+  ],
+  "artifact_location": "verification/linux-private/build/evidence-low-load-resources (ignored local artifacts; full report includes SHA256 of every file)",
+  "artifact_sha256": {
+    "report.json": "54cea8786220129284afc9822b07e751752a4ca53664f089297ae3571acc3203",
+    "timing-diagnosis.json": "57f0fbc61b671269cc19ddbca45c06dde13218b255923327fce21d866a09cea4",
+    "resources-before.json": "e3ed4b57cd29b8eb08c48b3cfb6922fa352de63b3cc5ac7ada2bf38e0f9f4bd4",
+    "resources-after.json": "5d59c1f1433fd70696b95e947f643a6411b832eb3f16879d57cc10950bf00123",
+    "continuous-startup-analysis.json": "5306a4ea7b9550f75a528356ec4cba2908ea59a9cd682fda9338e4f6d0affffe",
+    "continuous-edits-analysis.json": "11b3b1cdb124c7791a7a9d61b2fbad3a6c051947114c34c790045ae7ae7b05d0",
+    "continuous-recovery-analysis.json": "e8e1e91552682817c6acd93f7a6ac56f6287171fe39a708ce4a28d2c71f63001",
+    "startup-frames-0.bin": "e94501211230585e600b915e870773178505547ca5eadb765bbaee698d3278d9",
+    "startup-frames-4.bin": "9252e61d1708dc514bdd124932daece08eb10cc6fd14b48d96a14ac1064af1fa",
+    "delayed-observation.wav": "6e86b106ab0d8fb377a37243ec3ff62e2ce1e52af7c0e19d7580b4eb479478cd",
+    "hostile-relink.wav": "afc78545aab7a1cd30be659602ee46d40fcc5d565634fde2ad633b6e8ab3f0ec",
+    "runtime-1.log": "1f60a3487ee19c57b63653e2096fef3251f70a044248680c6751c9411fc7c7c7",
+    "runtime-2.log": "1a2f994d7366f2359f63ce64af122536ee8594efd18f8193aad2c86c47399697",
+    "runtime-3.log": "9290551e902c729613113dc301855212c32d528cf8bd84a40dff9e00ae48efaa",
+    "producer.fixture.mic.log": "13cafb0ddc8c32496fd98f9fcc7b5b25fb3ac028e454b73b7284cd7d7f8880de",
+    "producer.fixture.media.log": "0584e0141b3c4626dd33aed729abe9456ec4fcafc93198edafc92b18586c8733",
+    "frame-startup-0.log": "d685c4161efba32727e9f251e81be211fbba33c1abfc68c4c3e23474953eeb49",
+    "frame-startup-4.log": "01a54a7ce2c3a00a3af17f0ed2e64de31138a5a9da6ff79d7fae04a2c3339514",
+    "versions.txt": "0ef64b2f3a7bbe6e695ddcaa1c5f506c4d4824b0538a8523eb80775e7567e0d5",
+    "recovery.wav": "bb82e97431afb03bd939874e1842d5cc25010ede1a9e727563ea59deca53dac2"
+  }
+}
