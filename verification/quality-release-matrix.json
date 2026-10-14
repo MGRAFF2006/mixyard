@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "proposed-release-gates-not-executed",
+  "status": "blocked",
+  "scope": "Qualify arbitrary user-named mixes and every physical/virtual output edge separately for each supported OS/version/device/driver/format/consumer/profile combination. Starter Call/Record/Monitor names are presets only. No fixed mix count, no silent endpoint truncation and no platform-wide inference from one device or hosted build.",
+  "supported_combination_template": {
+    "os_version_build": null,
+    "machine_and_device_model_firmware_stable_uids": [],
+    "backend_audio_server_driver_session_manager_versions": null,
+    "app_consumer_and_player_versions": [],
+    "rate_sample_type_channels_and_clock_domains": null,
+    "usb_controller_port_hub_and_power_state": null,
+    "bluetooth_adapter_stack_device_firmware_codec_profile": null,
+    "status": "blocked",
+    "artifacts_and_run_timestamps": []
+  },
+  "defined_workloads": {
+    "wired-unity": "Known mono and channel-distinct stereo PCM through a unity/bypass owned path at matching negotiated rate/layout, consumer-recorded PCM, predeclared integer-frame delay; no resampling, AGC, AEC, suppression, EQ or gain normalization. Compare against an independent reference within one LSB of the coarser integer format. Converted/resampled paths require separate measured quality evidence, not a unity transparency claim.",
+    "simultaneous": "Concurrent call consumer on Call and recorder on Record while wired Monitor runs. Drive mic, stereo media, private and callreturn source fixtures continuously. Start with baseline then shared-media; change one send and mute/unmute Record mic while all buses remain active. Add a second consumer and close/reopen each input. Record exact rates, periods, app processing and CPU/IO load with all three simultaneous bus captures.",
+    "stress": "Proposed first target: two hours of simultaneous workload during a declared reproducible CPU/IO load, USB detach/reattach, USB hub/power transitions, Bluetooth music/duplex profile transitions, device switches, and suspend/resume in a dedicated test environment. Preserve exact sequence, durations and failures; do not mutate live desktop defaults in this batch.",
+    "endurance": "Proposed target: eight continuous hours of simultaneous call+record+monitor across at least two independent physical device clocks, with continuous captures/counters plus periodic time-stamped reference markers. Include separately scheduled USB, Bluetooth-profile and suspend transitions. Not executed. Declare latency/drift/queue budgets for each combination before running."
+  },
+  "gates": [
+    {
+      "id": "multi-output-independent-quality-and-capacity", "status": "blocked",
+      "acceptance": "At least four arbitrary-named stable-ID mixes, one mix on two or more physical devices and virtual consumers, independent output gain/mute. Any physical mic path needs explicit consent regardless of label. Rename and duplicate display labels preserve stable identities and exclusions. Include output gain in target headroom and initially reject duplicate physical targets. Publish all requested edges or fail capacity preflight explicitly; never truncate. Partial publication and create/rename/delete with held endpoints need owned-only rollback and no existing endpoint disruption. A failed/stalled branch must not interrupt sibling devices or change the shared mix. Each output gets its own continuous gap/xrun/overflow/drift/latency/eight-hour verdict and fixed conversion tolerances.",
+      "evidence": "Full requested/created stable-ID endpoint lists, capacity preflight errors, per-device captures/clocks/queue telemetry and output-mutation/failure snapshots. One device passing never qualifies another output of the same mix."
+    },
+    {
+      "id": "time-resolved-waveform-and-transitions", "status": "blocked", "workload": "simultaneous",
+      "acceptance": "Use a known nonrepeating channel-distinct waveform and independently seeded sources for sample-by-sample expected-mix checks. Detect dropped/repeated samples, brief corruption, brief private/callreturn crossmix leakage and channel swaps across apply, gain/mute, start/stop and recovery transitions. Declare intended ramps/fades and negotiated conversion/error tolerances before the run; never fit them after a failure.",
+      "evidence": "Source/reference/consumer PCM and hashes, explicit alignment and expected mixing, fixed same-format quantization or separately specified conversion model, continuous transition artifacts. Averaged tone membership alone is insufficient; asynchronous/analog conversion gates remain blocked until their reference model is validated."
+    },
+    {
+      "id": "wired-pcm-transparency", "status": "blocked", "workload": "wired-unity",
+      "acceptance": "Aligned externally captured consumer PCM differs from independent reference by <= one normalized LSB of the coarser PCM format per sample; no clipping, channel swaps, hidden gain or unexpected processing. Offsets and format are explicit; no best-fit gain, auto alignment or silent resampling.",
+      "tool": "python3 -B verification/qualify.py compare REFERENCE.wav CONSUMER.wav --reference-offset N --capture-offset M --frames K",
+      "evidence": "Actual wired consumer capture, source reference, declared alignment, exact format, hashes and comparison JSON. The tone membership analyzer alone cannot pass transparency."
+    },
+    {
+      "id": "simultaneous-quality-and-no-gaps", "status": "blocked", "workload": "simultaneous",
+      "acceptance": "All bus membership/gain/mute/mix-minus/channel checks pass; zero clipping and zero unexplained dropouts/xruns/discontinuities across the declared interval, including mutations. No unexpected AGC/AEC/noise/volume processing. Every observed discontinuity has an explicit failure or declared degraded interval, never hidden in a steady capture selection.",
+      "evidence": "Continuous app PCM for all buses; source/producer and consumer frame counters; audio server/native xrun/discontinuity counters before/after; callback queue/drop telemetry and timestamps. Missing metrics are UNKNOWN, not zero."
+    },
+    {
+      "id": "wav-probe-overflow", "status": "blocked", "workload": "stress",
+      "acceptance": "Induce writer backpressure in a dedicated probe test. Queue overflow, discarded samples, WASAPI/Core Audio discontinuity or write failure must produce a failure or explicit degraded result with dropped-frame/overflow counts. A WAV file's existence or matching tones cannot turn that run into pass.",
+      "evidence": "Probe exit status, diagnostics, overflow/drop counts, intentional backpressure method, written and captured frame counts. Absent telemetry blocks the quality verdict."
+    },
+    {
+      "id": "eight-hour-clock-endurance", "status": "blocked", "workload": "endurance",
+      "target_hours": 8, "executed_hours": null,
+      "acceptance": "Complete proposed eight-hour gate with no unexplained gaps/xruns/leaks or unbounded queue growth. Quantify independent clock drift ppm, queue min/max/trend, adaptations, dropped frames and latency over time against predeclared budgets; one fixed FIFO or an assumed ppm calculation is insufficient.",
+      "evidence": "Exact clock domains and measured ppm, eight-hour logs/counters/continuous artifacts, timestamps and periodic reference markers. Synthetic tones alone do not measure elapsed capture timing."
+    },
+    {
+      "id": "usb-bt-profile-suspend-recovery", "status": "blocked", "workload": "stress",
+      "acceptance": "Measure unplug/replug, USB power/hub changes, Bluetooth music-to-duplex profile and rate/channel changes, suspend/resume, default change, source and endpoint loss. Preserve configured identity; absent source contributes silence with no replacement, renormalization or feedback. Report recovery time, degraded quality, app-selected endpoint and consumer fallback separately.",
+      "evidence": "Per-transition before/during/after captures/graph/metrics and exact USB topology, BT codec/profile/device firmware, OS/stack and app versions. Every supported profile is qualified separately; unsupported/untested combinations remain explicit."
+    },
+    {
+      "id": "measured-end-to-end-latency", "status": "blocked", "workload": "simultaneous",
+      "proposed_wired_monitor_target_ms": {"p95": 20, "p99": 30, "status": "target-not-measured"},
+      "budget_ms_before_run": null,
+      "acceptance": "Measure source-to-app-input and mic-to-wired-Monitor latency with hardware loopback or equivalent time-stamped reference method; report p50/p95/p99/max, jitter, buffer settings and measurement uncertainty at start/end and under stress. Set per-path usability budgets before qualification. No zero-latency promise or buffer-size-only estimate.",
+      "evidence": "Raw markers/loopback captures, analysis method, actual device rates/clock domains and numerical results. A constant tone cannot determine latency unambiguously."
+    },
+    {
+      "id": "bluetooth-media-controls", "status": "blocked", "workload": "simultaneous",
+      "acceptance": "Where supported by OS/device/profile, play/pause, track and volume buttons continue controlling the intended OS player/session without stealing session ownership, focus or global defaults. Test with two media players plus a call: each event is dispatched once to the OS-selected session; volume keeps device-volume semantics and does not change mix sends. Test mute and call answer/end separately because media controls do not imply telephony controls. Record every supported control and explicit unsupported/blocked result per combination. Discovery/meters must not open the Bluetooth mic or cause a profile switch; record profile/category changes only when selected active routes need samples.",
+      "control_results_template": {"play_pause": "unknown", "track_next_previous": "unknown", "volume_up_down": "unknown", "mute": "unknown", "call_answer_end": "unknown", "os_player_session_owner_preserved": "unknown", "no_duplicate_dispatch": "unknown"},
+      "evidence": "Exact headset/model/firmware, Bluetooth adapter/stack/profile/codec, OS and player/call-app versions; separate native proofs of attributable origin-device identity AND original OS dispatch suppression/ownership, event IDs, versioned snapshots, per-device primary/all-routed/OS-default policy, explicit per-session commands and partial outcomes. Run media-control-scenarios.json: paused-stream disappearance, revalidated remembered group subset, global Pause vs local mute, duplicate vs distinct intentional presses and no blind Next/Previous retries. Unknown origin/state/capability is unsupported/unknown; synthetic target resolution proves neither native requirement."
+    },
+    {
+      "id": "ease-and-honest-degradation", "status": "blocked",
+      "acceptance": "A new user can choose clear Call/Record/Monitor presets, exact source/output selectors and consumer input without a mandatory graph editor. Missing/ambiguous source, permission, unsupported format/profile, overflow or transport loss shows a clear degraded reason plus concrete fix; quality loss is never silently normalized or masked. Preserve OS playback/session ownership and original choices unless explicitly changed.",
+      "evidence": "Observed setup/recovery task with documented steps and supported-device labels; interface-scenarios.json covers GUI close/reopen, independent GUI-free CLI, concurrent clients and route-specific mute indicators. Product UI/presets are outside this batch; no ease-of-use pass from a CLI/model check."
+    }
+  ],
+  "metrics_template": {
+    "duration_seconds": null,
+    "audio_server_xruns": null,
+    "source_discontinuities": null,
+    "consumer_discontinuities": null,
+    "probe_queue_overflows": null,
+    "dropped_frames": null,
+    "unexpected_silent_frames": null,
+    "queue_occupancy_min_max_trend": null,
+    "clock_drift_ppm": null,
+    "latency_ms_p50_p95_p99_max": null,
+    "unknown_metrics": "Every null is unknown; never interpret missing metrics as zero."
+  }
+}

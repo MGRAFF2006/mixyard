@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "later-interface-qualification-not-implemented",
+  "status": "blocked",
+  "scope": "Polished Linux/Windows/macOS GUI and supported tray/menu-bar hosts are clients of one routing runtime. First batch adds no GUI/webview dependencies.",
+  "cases": [
+    {
+      "id": "arbitrary-mix-output-and-control-selection", "status": "blocked",
+      "steps": "Create at least four arbitrary named mixes, rename one, route the same mix to two physical devices plus a virtual consumer, independently adjust each output, then select per-device primary/all-routed/OS-default control modes.",
+      "expect": "GUI/tray/CLI agree on stable IDs, revision, user names and every output edge with no preset/count cap or silent endpoint truncation. Show per-device clock/gap/degraded status and global player-pause versus device-local output-mute scope. Renames preserve IDs. Unsupported event attribution/state/capability and preflight capacity errors remain visible."
+    },
+    {
+      "id": "gui-close-reopen-runtime-survives", "status": "blocked",
+      "steps": "Under simultaneous call+record+monitor continuous nonrepeating PCM capture, close all GUI windows and reopen the app. Repeat for tray/menu-bar quit-UI versus explicit stop-runtime actions.",
+      "expect": "GUI closure does not stop samples or rebuild stable routes. Reopening reflects the same runtime desired/observed state. Explicit runtime stop is visibly distinct and measured as an intentional interruption. Verify no gaps, leaks, clicks or reset gains, not merely process survival."
+    },
+    {
+      "id": "headless-no-webview-cli", "status": "blocked",
+      "steps": "On each supported OS build/install/run the CLI without GUI package, display session or webview runtime installed. Exercise plan/status/devices/diagnostics and later explicit route/gain/mute operations via documented JSON outputs. Record exact environment and dependencies.",
+      "expect": "CLI remains usable independently; no display/webview loading, GUI process dependency or second audio graph. Missing native permission/dependency gives explicit nonzero/degraded result. Hosted core compilation alone does not prove the no-webview installation gate."
+    },
+    {
+      "id": "concurrent-tray-cli-consistency", "status": "blocked",
+      "steps": "Simultaneously change different sends through CLI and tray/menu-bar, then race updates to the same send; reconnect both clients while capturing audio and state/events.",
+      "expect": "One runtime applies a defined ordering; both clients converge to the same authoritative revision/gains/mutes/device UIDs with no stale overwrite or competing graph. Samples and untouched sends remain correct. Record supported desktop/tray host and OS/app versions."
+    },
+    {
+      "id": "configured-connected-audio-verified-separate", "status": "blocked",
+      "steps": "Compare status for configured but absent source, discovered/connected source with no audio proof, permission denial, lost virtual transport, and externally PCM-verified routing.",
+      "expect": "GUI/tray/CLI distinguish desired configuration, observed connection and measured verified audio. Discovery/graph/build success never implies verified audio. Degraded status includes concrete reason and fix."
+    },
+    {
+      "id": "unknown-telemetry-honest", "status": "blocked",
+      "steps": "Remove or disable xrun/drop/latency/queue metrics while route remains configured/connected; separately inject a known queue overflow/discontinuity.",
+      "expect": "Unavailable metrics are unknown in every client/JSON, never numeric zero or healthy quality. Overflow/drop gives visible degraded/failure status despite an existing WAV or steady-tone pass."
+    },
+    {
+      "id": "mute-indicators-are-route-specific", "status": "blocked",
+      "steps": "Mute mic-to-Call while mic-to-Record remains unmuted and capture Record. Separately toggle hardware mic mute, Record mute, and Bluetooth headset mute; observe CLI, GUI, tray and supported call app state.",
+      "expect": "Unmuted Record forbids a blanket microphone-muted indicator. Hardware mute, Call-send mute and recording mute are separately named and synchronized only when actually observed. Unsupported hardware state is unknown. Media volume/buttons never silently change route gains or hijack OS player/session ownership."
+    },
+    {
+      "id": "ordinary-setup-and-recovery", "status": "blocked",
+      "steps": "A new user chooses mic/headphones, safe Call/Record/Monitor presets and explicit named virtual inputs in supported apps; restart/replug and recover a permission/profile failure.",
+      "expect": "Clear selectors, saved choices, accessible/native app/tray behavior, clear degraded reason and fix; ordinary setup needs no graph editor, terminal or global default changes. Exact supported OS/desktop/device/app versions and observed steps are recorded."
+    }
+  ]
+}
