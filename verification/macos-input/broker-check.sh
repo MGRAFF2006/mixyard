@@ -205,17 +205,30 @@ def run(case, args):
             accepted = [e for e in accepted if e['broker_pid']==proof['broker']['pid']
                         and e['verified'] and e['ready'] and e['requests']==[1,1,1,0,0]]
             for event in accepted: zero_state(event['state'])
-        else:
+        elif case=='stale-producer':
             assert proof['status']=='rejection_observed' and proof['case']==args[-1]
-            if case=='stale-producer':
-                remote_observation(proof['error'])
-                expected = matching(events, 'control', proof['producer_pid'], policy['producer'], 'session_closed')
-                expected = [e for e in expected if not e['verified'] and not e['ready'] and e['requests']==[0,0,0,0,0]]
-                for event in expected: zero_state(event['state'])
-                assert not matching(events, 'control', proof['producer_pid'], policy['producer'], 'probe_reply')
-            else:
-                expected = matching(events, 'control', proof['producer_pid'], policy.get('producer','<unavailable>'),
-                                    'policy_unavailable')
+            remote_observation(proof['error'])
+            expected = matching(events, 'control', proof['producer_pid'], policy['producer'], 'session_closed')
+            expected = [e for e in expected if not e['verified'] and not e['ready'] and e['requests']==[0,0,0,0,0]]
+            for event in expected: zero_state(event['state'])
+            assert not matching(events, 'control', proof['producer_pid'], policy['producer'], 'probe_reply')
+            accepted = [True]
+        else:
+            assert case in ('invalid-producer','missing-producer') and args[-1]=='policy_unavailable'
+            assert proof['status']=='policy_unavailable_observed' and proof['case']=='policy_unavailable'
+            remote_observation(proof['error'])  # Connection outcome, never live-identity proof.
+            assert proof['terminal_invalidated'] is True and proof['receiver_verified'] is False
+            expected = matching(events, 'control', proof['producer_pid'], policy.get('producer','<unavailable>'),
+                                'policy_unavailable')
+            for event in expected:
+                assert event['terminal_rejection'] is True and event['session_created'] is False
+                zero_state(event['state'])
+                # The live broker initialized its valid anonymous transport, but
+                # exported no control session, probe, readiness or authority.
+                related = [e for e in events if e['broker_pid']==event['broker_pid']]
+                assert all(e['outcome'] in ('listener_pinned','policy_unavailable') for e in related)
+            expected = [e for e in expected if any(p['broker_pid']==e['broker_pid'] and p['channel']=='pcm'
+                        and p['outcome']=='listener_pinned' and p['requirement']==policy['transport'] for p in events)]
             accepted = [True]
         if expected and accepted: break
         if time.monotonic() >= deadline:

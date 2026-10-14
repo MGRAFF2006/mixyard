@@ -227,7 +227,16 @@ void authorityEvent(NSDictionary *event) {
     // resume, replies, reverse probes or authority instead.
     if (!mixyard::exactRequirement(requirement) ||
         (listener != self.anonymous && !mixyard::pin(connection, requirement))) {
+        std::lock_guard<std::mutex> lock(state.mutex);
         NSMutableDictionary *event = [context mutableCopy]; event[@"outcome"] = @"policy_unavailable";
+        // Return NO before creating/exporting any session; capture actual state
+        // so a generic client connection error cannot substitute for this branch.
+        event[@"terminal_rejection"] = @YES; event[@"session_created"] = @NO;
+        event[@"state"] = @{@"active": @(state.active), @"generation": @(state.nextGeneration),
+            @"packets": @(state.packets), @"hellos": @(state.hellos),
+            @"credit_frames": @(state.credits()), @"cursor0": @(state.cursors[0]),
+            @"cursor1": @(state.cursors[1]), @"start": @(state.start), @"end": @(state.end),
+            @"revision": @(state.revision)};
         authorityEvent(event); return NO;
     }
     if (listener != self.anonymous) {

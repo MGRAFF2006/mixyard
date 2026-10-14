@@ -67,14 +67,23 @@ static void exportProbe(NSXPCConnection *connection, MYProbe *probe = nil) {
     connection.exportedInterface = [NSXPCInterface interfaceWithProtocol:@protocol(MYAuthorityProbe)];
     connection.exportedObject = probe;
 }
-static NSDictionary *rejection(id result, bool enforcingSide) {
-    observation(enforcingSide ? @"local requirement rejection" : @"unavailable policy rejection", result);
-    NSLog(@"native rejection (enforcing=%d): %@", enforcingSide, result);
+static NSDictionary *rejection(id result) {
+    observation(@"local requirement rejection", result);
+    NSLog(@"native local requirement rejection: %@", result);
     assert([result isKindOfClass:NSError.class]);
     NSError *error = result;
     assert([error.domain isEqual:NSCocoaErrorDomain]);
-    assert(error.code == NSXPCConnectionCodeSigningRequirementFailure ||
-           (!enforcingSide && error.code == NSXPCConnectionInvalid));
+    assert(error.code == NSXPCConnectionCodeSigningRequirementFailure);
+    return mixyard::errorDetails(error);
+}
+// Unavailable policy rejects before exporting a session, rather than enforcing
+// a live-code mismatch. Only correlated broker events can qualify this outcome.
+static NSDictionary *unavailablePolicyObservation(id result) {
+    observation(@"unavailable policy connection observation", result);
+    assert([result isKindOfClass:NSError.class]);
+    NSError *error = result;
+    assert([error.domain isEqual:NSCocoaErrorDomain]);
+    assert(error.code == NSXPCConnectionInterrupted || error.code == NSXPCConnectionInvalid);
     return mixyard::errorDetails(error);
 }
 // A remote rejecting listener has no public enforcing-side error callback. This
@@ -393,12 +402,18 @@ int main(int argc, char **argv) {
             invalidateAndWait(control, controlClosed); return 0;
         }
         if (![mode isEqual:@"positive"]) {
+            assert([mode isEqual:@"inbound_requirement_mismatch"] || [mode isEqual:@"policy_unavailable"]);
             NSDictionary *error = [mode isEqual:@"inbound_requirement_mismatch"]
-                ? remoteRejection(controlReady) : rejection(controlReady, false);
-            NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"status": @"rejection_observed",
-                @"case": mode, @"producer_pid": @(getpid()), @"error": error} options:0 error:nil];
+                ? remoteRejection(controlReady) : unavailablePolicyObservation(controlReady);
+            MYProbe *probe = control.exportedObject;
+            @synchronized (probe) { assert(!probe.receiverVerified); }
+            invalidateAndWait(control, controlClosed);
+            NSData *json = [NSJSONSerialization dataWithJSONObject:@{
+                @"status": [mode isEqual:@"policy_unavailable"] ? @"policy_unavailable_observed" : @"rejection_observed",
+                @"case": mode, @"producer_pid": @(getpid()), @"error": error,
+                @"terminal_invalidated": @YES, @"receiver_verified": @NO} options:0 error:nil];
             assert(json); fwrite(json.bytes, 1, json.length, stdout); putchar('\n');
-            invalidateAndWait(control, controlClosed); return 0;
+            return 0;
         }
         MYResult *endpointResult = [MYResult new]; endpointResult.stage = @"initial endpoint"; [(id<MYFixtureControl>)proxy(control, endpointResult)
             endpoint:^(NSXPCListenerEndpoint *endpoint) { [endpointResult finish:endpoint]; }];
@@ -465,7 +480,7 @@ int main(int argc, char **argv) {
         staleControl.remoteObjectInterface = controlInterface();
         assert(mixyard::pin(staleControl, @"cdhash H\"0000000000000000000000000000000000000000\""));
         exportProbe(staleControl); [staleControl resume];
-        NSDictionary *staleControlError = rejection(authenticate(staleControl), true);
+        NSDictionary *staleControlError = rejection(authenticate(staleControl));
         [staleControl invalidate];
         assert([snapshot(control) isEqual:initial]);
         // Locally invalid/broad requirements fail closed before any XPC resume.
@@ -473,13 +488,13 @@ int main(int argc, char **argv) {
         // Reverse authority: a stale broker requirement invalidates the native connection.
         NSLog(@"CASE stale producer receiver");
         NSXPCConnection *stale = connect(endpoint, @"cdhash H\"0000000000000000000000000000000000000000\"");
-        assert(stale); NSDictionary *staleError = rejection(authenticate(stale), true); [stale invalidate];
+        assert(stale); NSDictionary *staleError = rejection(authenticate(stale)); [stale invalidate];
         assert([snapshot(control)[@"hellos"] unsignedLongLongValue] == 0);
         assert([snapshot(control) isEqual:initial]);
         // A valid requirement for a different signed executable is also a wrong receiver.
         NSLog(@"CASE wrong producer receiver");
         NSXPCConnection *wrongReceiver = connect(endpoint, strangerRequirement);
-        NSDictionary *wrongReceiverError = rejection(authenticate(wrongReceiver), true);
+        NSDictionary *wrongReceiverError = rejection(authenticate(wrongReceiver));
         [wrongReceiver invalidate];
         assert([snapshot(control) isEqual:initial]);
         NSMutableArray *actorChecks = [NSMutableArray new];
@@ -526,7 +541,7 @@ int main(int argc, char **argv) {
             // the client has not authenticated the actor's actual executable.
             for (NSString *pin in @[@"cdhash H\"0000000000000000000000000000000000000000\"", brokerRequirement]) {
                 NSXPCConnection *wrong = actorConnection(service, pin);
-                NSDictionary *error = rejection(attempt(wrong, endpoint, brokerRequirement), true);
+                NSDictionary *error = rejection(attempt(wrong, endpoint, brokerRequirement));
                 [actorChecks addObject:@{@"case": @"wrong_receiver", @"service": service, @"error": error}];
                 [wrong invalidate];
             }
