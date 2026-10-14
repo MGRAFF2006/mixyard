@@ -102,6 +102,48 @@ test('primary pause on A affects only its associated player globally, preserves 
   assert.equal(preview.players[0]!.playback, 'playing')
 })
 
+test('primary requires its device route, retains paused association, and never falls back', () => {
+  const preview = createPreview()
+  const deviceId = 'fixture:headphones'
+  const policy = preview.controls[deviceId]!
+  policy.scope = 'primary'
+  const monitor = preview.mixes[2]!
+  const output = monitor.outputs.find(output => output.deviceId === deviceId)!
+  monitor.outputs = monitor.outputs.filter(item => item.id !== output.id)
+  assert.deepEqual(routedPlayers(preview, deviceId), [])
+  assert.deepEqual(controlPlayers(preview, deviceId), [])
+  assert.deepEqual(previewPlayback('demo', preview, deviceId, 'paused'), [])
+  assert.deepEqual(routedPlayers(preview, 'fixture:speakers').map(player => player.playback), ['playing', 'playing'])
+  assert.equal(policy.primaryPlayerId, 'fixture:spotify-session')
+
+  monitor.outputs.push(output)
+  assert.deepEqual(previewPlayback('demo', preview, deviceId, 'paused'), ['Spotify'])
+  monitor.outputs = monitor.outputs.filter(item => item.id !== output.id)
+  assert.deepEqual(previewPlayback('demo', preview, deviceId, 'playing'), [])
+  assert.equal(preview.players[0]!.playback, 'paused')
+  monitor.outputs.push(output)
+  assert.deepEqual(controlPlayers(preview, deviceId).map(player => player.name), ['Spotify'])
+  assert.deepEqual(previewPlayback('demo', preview, deviceId, 'playing'), ['Spotify'])
+
+  monitor.sends['fixture:spotify']!.gain = 0
+  assert.deepEqual(routedPlayers(preview, deviceId).map(player => player.name), ['VLC'])
+  assert.deepEqual(previewPlayback('demo', preview, deviceId, 'paused'), [])
+  assert.equal(preview.players[1]!.playback, 'playing')
+})
+
+test('unassigned devices and unknown primaries cannot control other players', () => {
+  const preview = createPreview()
+  const headset = preview.controls['fixture:bluetooth']!
+  headset.scope = 'primary'
+  assert.deepEqual(controlPlayers(preview, 'fixture:bluetooth'), [])
+  assert.deepEqual(previewPlayback('demo', preview, 'fixture:bluetooth', 'paused'), [])
+  preview.controls['fixture:headphones'] = { scope: 'primary', primaryPlayerId: 'unknown-session' }
+  assert.equal(routedPlayers(preview, 'fixture:headphones').length, 2)
+  assert.deepEqual(controlPlayers(preview, 'fixture:headphones'), [])
+  assert.deepEqual(previewPlayback('demo', preview, 'fixture:headphones', 'paused'), [])
+  assert.deepEqual(preview.players.map(player => player.playback), ['playing', 'playing'])
+})
+
 test('group actions set coherent explicit state; normal/disconnected modes dispatch nothing', () => {
   const preview = createPreview()
   const deviceId = 'fixture:headphones'

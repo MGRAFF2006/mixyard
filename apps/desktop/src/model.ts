@@ -118,7 +118,7 @@ export function controlPlayers(preview: Preview, deviceId: string) {
   const policy = preview.controls[deviceId]
   if (!policy || policy.scope === 'normal') return []
   return policy.scope === 'primary'
-    ? preview.players.filter(player => player.id === policy.primaryPlayerId)
+    ? routedPlayers(preview, deviceId).filter(player => player.id === policy.primaryPlayerId)
     : routedPlayers(preview, deviceId)
 }
 
