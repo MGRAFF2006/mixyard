@@ -317,7 +317,7 @@
   ],
   "prior_harness_failures": [
     "external driver startup connection race; readiness retry corrected",
-    "DOM read before document loaded; readiness query corrected"
+    "initial DOM query returned HTTP 500; precise cause unconfirmed; readiness query hardened"
   ],
   "artifact_boundary": "Full logs/screenshots and failed attempts retained in component-owned cache for handoff; hosted workflow publishes per-HEAD artifacts. No binary/cache files committed.",
   "disk_free_gib_after": 56.2
