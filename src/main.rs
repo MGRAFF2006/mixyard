@@ -14,7 +14,7 @@ use std::{
 // sources. It never attests to native audio. Errors are one JSON object on stderr;
 // normal validate/plan results are one JSON object on stdout. Help is plain text.
 // 2: usage/unsupported command, 3: invalid JSON/policy, 4: input/output failure.
-const USAGE: &str = "Usage: mixyard validate CONFIG.json\n       mixyard plan CONFIG.json INVENTORY.json\n       mixyard plan-media CONFIG.json INVENTORY.json REQUEST.json\nRead-only routing/media planning. No OS audio changes or media dispatch.\nExit codes: 0 completed (including degraded/unavailable plans), 2 usage/unsupported command, 3 invalid input/policy, 4 I/O failure.";
+const USAGE: &str = "Usage: mixyard validate CONFIG.json\n       mixyard plan CONFIG.json INVENTORY.json\n       mixyard plan-media CONFIG.json INVENTORY.json REQUEST.json\n       mixyard status|events|shutdown [--instance NAME]\nOffline planning needs no daemon. Lifecycle clients connect only to an explicitly started mixyard-runtime serve. No OS audio changes or media dispatch.\nExit codes: 0 completed (including degraded/unavailable plans), 2 usage/unsupported command, 3 invalid input/policy, 4 I/O failure.";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +79,17 @@ fn run(args: &[OsString], output: &mut impl Write) -> Result<(), CliError> {
         }
         return writeln!(output, "{USAGE}").map_err(CliError::io);
     }
+    if command == "status" || command == "events" || command == "shutdown" {
+        let instance = match args {
+            [_] => "default",
+            [_, flag, name] if flag == "--instance" => name
+                .to_str()
+                .ok_or_else(|| CliError::new("usage", USAGE, 2))?,
+            _ => return Err(CliError::new("usage", USAGE, 2)),
+        };
+        return mixyard::runtime::client(instance, command.to_str().unwrap(), output)
+            .map_err(CliError::io);
+    }
     let expected = if command == "validate" {
         2
     } else if command == "plan" {
@@ -86,7 +97,7 @@ fn run(args: &[OsString], output: &mut impl Write) -> Result<(), CliError> {
     } else if command == "plan-media" {
         4
     } else {
-        return Err(CliError::new("unsupported-command", "Command unavailable; only validate, plan and plan-media are implemented. No mutation, media dispatch or runtime connection was attempted.", 2));
+        return Err(CliError::new("unsupported-command", "Command unavailable; apply, mute and native action dispatch remain unavailable. No mutation or media dispatch was attempted.", 2));
     };
     if args.len() != expected {
         return Err(CliError::new("usage", USAGE, 2));
@@ -125,6 +136,16 @@ fn main() -> ExitCode {
     match run(&args, &mut io::stdout().lock()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
+            if args
+                .first()
+                .is_some_and(|c| c == "status" || c == "events" || c == "shutdown")
+            {
+                let failure = serde_json::json!({"ipcVersion":1,"requestId":null,"error":{"code":error.code,"message":error.message},"exitCode":error.exit_code});
+                if write_json(&mut io::stderr().lock(), &failure).is_err() {
+                    return ExitCode::from(4);
+                }
+                return ExitCode::from(error.exit_code);
+            }
             // If stderr itself fails there is no further channel to report it;
             // still preserve the classified failure exit code.
             if write_json(&mut io::stderr().lock(), &error).is_err() {
@@ -141,7 +162,7 @@ mod tests {
 
     #[test]
     fn unsupported_runtime_commands_fail_without_output() {
-        for command in ["apply", "status", "mute", "events"] {
+        for command in ["apply", "mute", "native-action"] {
             let mut output = Vec::new();
             let error = run(&[command.into()], &mut output).unwrap_err();
             assert_eq!(error.code, "unsupported-command");
