@@ -55,6 +55,7 @@ try {
     $env:PATH = "$wdkBuildBin;$env:PATH"
     Run-Checked $msbuild @((Join-Path $driver 'MixyardIngress.vcxproj'), '/m:2',
         '/p:Configuration=Release', '/p:Platform=x64', "/p:VCToolsVersion=$msvc",
+        '/p:SignMode=Off', '/p:GenerateTestCertificate=false',
         '/fl', "/flp:logfile=$build/msbuild.log;verbosity=normal")
     Require-Reserve
     Run-Checked 'cl.exe' @('/nologo', '/std:c++17', '/W4', '/WX', '/EHsc',
@@ -63,7 +64,8 @@ try {
     $package = Join-Path $build 'unsigned'
     New-Item -ItemType Directory -Force $package | Out-Null
     Copy-Item (Join-Path $driver 'build/x64/Release/MixyardIngress.sys') $package -Force
-    Copy-Item (Join-Path $driver 'MixyardIngress.inf') $package -Force
+    # Package the stamped INF that MSBuild validated alongside this binary.
+    Copy-Item (Join-Path $driver 'build/x64/Release/MixyardIngress.inf') $package -Force
     Copy-Item (Join-Path $root '../../../LICENSE') $package -Force
     $infverif = Join-Path $wdk 'tools/10.0.26100.0/x64/infverif.exe'
     $inf2cat = Join-Path $wdk 'bin/10.0.26100.0/x86/Inf2Cat.exe'

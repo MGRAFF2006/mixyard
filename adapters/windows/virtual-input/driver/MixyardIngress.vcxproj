@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: MIT -->
-<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project DefaultTargets="Build" InitialTargets="RequireSupportedConfiguration" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Release|x64">
       <Configuration>Release</Configuration>
@@ -31,7 +31,9 @@
     <OutDir>$(MSBuildThisFileDirectory)build\x64\Release\</OutDir>
     <IntDir>$(MSBuildThisFileDirectory)build\obj\</IntDir>
     <TargetName>MixyardIngress</TargetName>
-    <Driver_SignMode>Off</Driver_SignMode>
+    <!-- Pinned WindowsDriver.Common.targets gates signing on SignMode. -->
+    <SignMode>Off</SignMode>
+    <GenerateTestCertificate>false</GenerateTestCertificate>
     <EnableInf2Cat>false</EnableInf2Cat>
   </PropertyGroup>
   <ItemDefinitionGroup>
@@ -57,7 +59,12 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="$(MixyardPackagesDir)Microsoft.Windows.SDK.CPP.10.0.26100.6584\build\native\Microsoft.Windows.SDK.cpp.targets" />
-  <Target Name="RequireSupportedConfiguration" BeforeTargets="PrepareForBuild">
+  <Target Name="RequireSupportedConfiguration">
     <Error Condition="'$(Platform)' != 'x64' or '$(Configuration)' != 'Release'" Text="Only unsigned Release|x64 is defined for this scaffold." />
+    <Error Condition="'$(SignMode)' != 'Off' or '$(GenerateTestCertificate)' != 'false'" Text="BLOCKED: signing and certificate creation must be disabled." />
+    <Message Importance="high" Text="Unsigned build guard: SignMode=$(SignMode), GenerateTestCertificate=$(GenerateTestCertificate)." />
+  </Target>
+  <Target Name="RefuseSigning" BeforeTargets="TestSign;ProductionSign">
+    <Error Text="BLOCKED: signing targets are not authorized for this scaffold." />
   </Target>
 </Project>
