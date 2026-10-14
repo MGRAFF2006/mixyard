@@ -1,5 +1,9 @@
 # macOS input publication artifact
 
+The follow-on [authenticated broker artifact](BROKER.md) adds a separate native
+app-owned/anonymous XPC experiment. Its assertions qualify only after exact CI
+execution; system bootstrap, hosted HAL identity and external PCM remain blocked.
+
 This original MIT artifact adds an input-only `MixyardInput.driver`, a real Apple
 ABI in-process harness, and a separate explicit-UID HAL consumer source. Production
 apply remains disabled. The release bundle publishes one fixed 48 kHz stereo
@@ -90,7 +94,8 @@ allows artifact compile/sign/in-process tests only, including on hosted CI.
    and fresh connection/generation. UID/PID/bundle name alone cannot qualify.
    Declare only that broker in `AudioServerPlugIn_MachServices`; validate its
    sandbox contract and credit/packet bounds outside callbacks. The current
-   release plist declares no Mach service because none is implemented.
+   release plist now declares the inert future broker service, but release code
+   has no IPC path. The system lookup source is compiled and never executed.
 3. After the new source passes its own independent reviews, install only its
    exact signed bundle into the disposable guest's `/Library/Audio/Plug-Ins/HAL`.
    Apple's sample specifies reboot. Ad-hoc HAL acceptance and reload equivalence
