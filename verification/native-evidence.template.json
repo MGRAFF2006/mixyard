@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "native-scenario-record",
+  "status": "blocked",
+  "reason": "Template only. No native devices, permissions, transport, or captures qualified.",
+  "context": {
+    "timestamp_with_timezone": null,
+    "git_revision_and_dirty_diff": null,
+    "os_name_version_build": null,
+    "machine_hardware": null,
+    "backend_build_command_and_result": null,
+    "audio_server_session_manager_or_driver_versions": null,
+    "source_devices": [],
+    "source_device_required_fields": ["stable_uid", "name", "driver", "actual_format", "clock_domain"],
+    "virtual_call_device_uid": null,
+    "virtual_record_device_uid": null,
+    "monitor_device_uid": null,
+    "arbitrary_mixes_and_outputs_with_stable_ids_names_exclusions_and_per_output_gain_mute": [],
+    "requested_created_held_and_rejected_endpoints_with_capacity_limits": null,
+    "physical_mic_output_consent_and_duplicate_target_preflight": null,
+    "per_output_clock_gap_queue_latency_metrics": null,
+    "native_event_origin_identity_proof": null,
+    "native_original_dispatch_suppression_ownership_proof": null,
+    "app_name_version_process_identity": null,
+    "app_selected_input_uid_before_during_after": [],
+    "consumer_recording_command_or_exact_steps": null,
+    "app_agc_aec_noise_suppression_and_auto_gain_settings": null,
+    "format": {"rate_hz": null, "sample_type": null, "channel_layout": null, "negotiated_conversion": null},
+    "fixture_hashes_and_playback_levels": null,
+    "probe_exit_status_diagnostics_and_overflow_drop_counts": null,
+    "server_source_consumer_xrun_discontinuity_metrics": null,
+    "bluetooth_device_firmware_stack_codec_profile_and_controls": null,
+    "usb_topology_and_power_state": null,
+    "quality_release_matrix_combination_and_results": null,
+    "artifacts_directory_outside_git": null
+  },
+  "result_required_fields": [
+    "status: pass, fail, blocked, or skipped (never turn a missing prerequisite into pass)",
+    "missing_prerequisites_or_skip_reason",
+    "exact_steps_and_timestamps",
+    "expected_outcome",
+    "observed_outcome",
+    "before_during_after_device_selection_and_owned_unrelated_graph_snapshots",
+    "capture_paths_sha256_and_analyzer_commands_results",
+    "separate_audio_graph_and_consumer_fallback_verdicts"
+  ],
+  "scenarios": [
+    {
+      "id": "arbitrary-mixes-fanout-capacity-and-rename", "status": "blocked",
+      "prerequisites": ["native schema-2 routing implementation", "four or more arbitrary user-named mixes", "two or more independently clocked sinks for one mix", "documented endpoint capacity and preflight"],
+      "steps": "Use dynamic-audio.json as an independent expected measurement fixture, not as a core config. Publish all four named mixes and all six output edges including three edges of focus. Capture every device/virtual consumer independently and retain requested-versus-created endpoint UIDs. Change only output A gain/mute; create/rename/delete mixes including duplicate display labels while endpoints are held; request more resources than available and inject partial-publication failure.",
+      "expected": "No fixed preset/count/name cap or silent endpoint truncation. Any physical mic route requires explicit consent regardless of mix label. Output A changes do not alter the mix, B or other outputs. Rename preserves stable IDs, exclusions and consumer selection. Output gain participates in target headroom; initially reject duplicate physical target edges. Capacity fails preflight explicitly; partial publication is a visible failure with owned-only rollback, held endpoints and siblings undisrupted. A four-mix model pass does not establish unlimited native capacity."
+    },
+    {
+      "id": "per-device-clock-gap-and-failure-isolation", "status": "blocked",
+      "prerequisites": ["same mix on two physical devices with independent clocks", "per-output continuous consumer PCM and xrun/queue/drop telemetry"],
+      "steps": "Record separate eight-hour/latency/drift results per device under the declared workload. Disconnect or stall sink A, trigger its queue overflow or format/profile change, while recording B and virtual consumers continuously. Resume A and inspect identity, gains and recovery.",
+      "expected": "One output's stall, clock drift, permission/format error or disconnect never stalls, renormalizes or corrupts other outputs. Every sink has separate gaps/xruns/clock/latency verdict; missing metrics unknown, not a shared zero or a fanout-wide pass."
+    },
+    {
+      "id": "device-scoped-native-media-events", "status": "blocked",
+      "prerequisites": ["native proof of event-origin device attribution", "separate native proof of original OS dispatch suppression/ownership for scoped mode", "media-control-scenarios.json", "explicit per-device primary/all-routed or OS-default policy"],
+      "steps": "Run the resolver/control cases with actual Spotify/VLC sessions on separate and shared devices, including Pause stream disappearance, group Pause/Play memory, fanout, route changes and OS duplicate dispatch. Preserve attributable event IDs, routing revision, explicit commands and observed session states.",
+      "expected": "Device origin, revision-bound target resolution, global player versus local output scope and exactly-once command dispatch are independently observed. Unknown origin/state/capability remains visible unsupported/unknown. Synthetic origin and model target dedup never prove native attribution or duplicate-event safety."
+    },
+    {
+      "id": "two-virtual-inputs-app-consumers", "status": "blocked",
+      "prerequisites": ["native virtual transport", "two separate selectable inputs", "two actual consumer applications"],
+      "steps": "Explicitly select Call and Record in separate consumer apps. Play all four fixtures concurrently and record each consumer's received PCM plus wired Monitor capture. Repeat with two consumers opening the same input and with a consumer close/reopen.",
+      "expected": "Baseline Call mono contains mic only; Record stereo contains mic/media/selected callreturn; Monitor stereo contains media only. Private is absent everywhere. Different endpoint names/discovery alone do not prove data transport.",
+      "audio_scenario": "baseline"
+    },
+    {
+      "id": "independent-mic-gain-and-mute", "status": "blocked",
+      "prerequisites": ["same calibrated mic source carrying 600 Hz at peak 0.08", "simultaneous captures of all three destinations"],
+      "steps": "Capture baseline mic gain 1/.5/0 on Call/Record/Monitor. Change only Call to .25 and repeat all captures. Restore baseline, mute only Record mic while retaining its configured .5 gain, repeat, then unmute and verify restoration.",
+      "expected": "Mic peaks .08/.04/0 initially; .02/.04/0 after Call change; .08/0/0 after Record mute. Media and callreturn amplitudes remain unchanged. No automatic normalization.",
+      "audio_scenarios": ["baseline", "call-gain", "record-mic-muted", "baseline"]
+    },
+    {
+      "id": "mono-stereo-mapping", "status": "blocked",
+      "prerequisites": ["calibrated mono mic and stereo media fixtures", "actual negotiated formats recorded"],
+      "steps": "Record baseline and shared-media. Also request an unsupported multichannel layout without touching global device formats.",
+      "expected": "Mono mic duplicates equally into stereo Record. Stereo 1100/1700 Hz remains left/right in Record/Monitor and averages into mono Call (each peak .02 at media gain .5). Reject unhandled multichannel instead of guessing.",
+      "audio_scenarios": ["baseline", "shared-media"]
+    },
+    {
+      "id": "missing-source-no-replacement", "status": "blocked",
+      "prerequisites": ["explicit source UID", "alternate mic carrying private tone", "device removal or controlled producer loss"],
+      "steps": "During baseline remove the exact selected mic while another mic remains available. Capture all buses before/during/after and inspect app input choices. Reattach by stable identity.",
+      "expected": "Call stays available and silent while mic is absent; Record loses only mic and retains other gains; Monitor unchanged. No alternate mic/private tone, default substitution or renormalization. Report consumer fallback separately.",
+      "audio_scenario_during_loss": "mic-missing"
+    },
+    {
+      "id": "producer-controller-crash-during-mutation", "status": "blocked",
+      "prerequisites": ["disposable graph", "known mutation checkpoints", "continuous consumer capture and unrelated sentinel route"],
+      "steps": "Independently kill owned audio producer and controller at each creation/link/swap stage of a send change. Observe while the process is down, on restart, and after explicit release. Do not kill desktop audio.",
+      "expected": "No transient private/callreturn leak, wrong-source fallback, stale owned routes or unrelated deletions. Missing producers contribute silence. Rollback touches owned objects only; record controller/producer outcomes separately. Steady-window analyzer alone cannot prove sub-100ms transient safety."
+    },
+    {
+      "id": "default-device-change", "status": "blocked",
+      "prerequisites": ["disposable test account/audio server or dedicated native test host", "two device UIDs"],
+      "steps": "In a separately authorized disposable environment change default input/output while exact configured sources and Monitor output are active; capture before/during/after. This batch does not change live defaults.",
+      "expected": "Configured UIDs remain selected; new default never silently replaces a missing source. Independently record whether each consumer changes its selected input."
+    },
+    {
+      "id": "owned-cleanup-and-unrelated-links", "status": "blocked",
+      "prerequisites": ["before/during/after graph snapshots", "unrelated sentinel source/consumer route"],
+      "steps": "Apply twice, fail halfway, restart controller, explicitly release application management, then remove owned graph. Record sentinel continuously.",
+      "expected": "Idempotent apply with no duplicate routes. Unrelated IDs/links and audio remain intact; release stops repairs; owned teardown has no stale links."
+    },
+    {
+      "id": "wireplumber-recovery", "platform": "linux", "status": "blocked",
+      "prerequisites": ["isolated PipeWire AND WirePlumber", "actual managed consumer", "explicit opt-in repair"],
+      "steps": "Only in the isolated stack: remove/recreate target, restart its WirePlumber session manager, duplicate events, restart isolated PipeWire, and reopen consumers. Keep graph snapshots and continuous captures.",
+      "expected": "Bounded recovery without policy oscillation, fallback source, unrelated repair or leaks. Test no-fallback route, silence, and app input selection separately. Bare PipeWire cannot pass this gate."
+    },
+    {
+      "id": "permission-denied-and-revoked", "status": "blocked",
+      "prerequisites": ["native OS", "controlled per-app microphone/process-capture permission"],
+      "steps": "Capture with permission denied, then separately revoke during capture in a dedicated test account. Preserve stderr, exit status and backend envelope.",
+      "expected": "Explicit permission-denied diagnostic and nonzero failure; no false capability/audio pass, no substitute source. Recovery requires explicit permission and remains independently measured."
+    },
+    {
+      "id": "endpoint-loss-and-consumer-fallback", "status": "blocked",
+      "prerequisites": ["actual call/record app versions", "dedicated test virtual transport"],
+      "steps": "Separately interrupt producer, audio server, and virtual driver/endpoint. Observe app input choices and record fallback before reselecting endpoints. Do not install drivers or restart live services in this batch.",
+      "expected": "Report each failure layer and app separately. Mixyard graph ownership cannot guarantee a consumer will never fall back outside the graph. Consumer reopen restores the intended UID and verified audio only when observed."
+    },
+    {
+      "id": "independent-clock-endurance", "status": "blocked",
+      "prerequisites": ["at least two independent physical clock domains", "proposed eight-hour continuous capture target (not executed)", "buffer/overflow/underrun telemetry and time-stamped reference markers"],
+      "steps": "Target eight hours looping source fixtures across independent devices under simultaneous call+record+monitor. Save continuous captures, start/end and periodic PCM segments plus queue occupancy, xruns, sample counts and measured marker delay. Repeat USB, Bluetooth profile/rate changes and suspend/replug on a dedicated host.",
+      "expected": "Measure drift in ppm, latency percentiles, maximum queue occupancy and gaps; explicitly declare acceptable budgets before run. No unbounded buffer trend, overflow, unexpected silence, channel swap or leakage. At 48 kHz, 100 ppm gives 288 frames / 6 ms per minute without adaptation. Tone membership alone cannot establish latency or clock adaptation."
+    }
+  ]
+}

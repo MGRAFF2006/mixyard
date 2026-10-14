@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "implementation-independent-contract-cases",
+  "execution_status": "see-separate-run-result",
+  "reason": "Semantic cases; policy_check.py runs a focused black-box subset against an externally built CLI. This file itself is not an implementation test result.",
+  "cases": [
+    {"id": "arbitrary-mix-counts-names", "input": "4+ mixes with stable IDs and arbitrary user labels including spaces/Unicode; Call/Record/Monitor optional", "expect": "accept all requested mixes, no fixed three-name/count cap or silent truncation; this test size is not a product limit"},
+    {"id": "one-mix-many-outputs", "input": "Same mix -> two physical sinks plus a virtual consumer, with distinct output gains/mutes", "expect": "all edges retained; output A gain/mute does not change B, other mixes or shared mix sends"},
+    {"id": "capacity-preflight", "input": "Requested endpoint/device/buffer capacity exceeds actual backend resources", "expect": "explicit preflight failure with required/available limits; no silent dropping, partial publication or unrelated mutation"},
+    {"id": "rename-stable-identity", "input": "Rename display label on an active user mix", "expect": "mix/output stable IDs and selected consumer/device identity unchanged; no duplicate endpoint"},
+    {"id": "physical-mic-consent", "input": "Mic reaches any physical output, including via a mix named Call, Archive, or a user label", "expect": "explicit physical-output consent required independently of mix name; a rename cannot enable mic monitoring or bypass consent"},
+    {"id": "duplicate-physical-target", "input": "Two output edges converge on the same exact physical target UID", "expect": "reject initially before mutation; output gain is included in each accepted target's conservative headroom calculation; never double-sum a physical target silently"},
+    {"id": "display-labels-not-identities", "input": "Two stable mix IDs have the same display label; rename one while a call-return exclusion is active", "expect": "accept duplicate labels; route/exclusion/device selection remains keyed by stable IDs and groups, not labels"},
+    {"id": "dynamic-create-rename-delete", "input": "Create/rename/delete a mix while unrelated held consumer endpoints and sibling output routes remain active", "expect": "all requested endpoints accounted for; scoped lifecycle and explicitly reported held-endpoint behavior; no sibling interruption, unrelated disruption or stale owned publication"},
+    {"id": "partial-publication-capacity-failure", "input": "Capacity preflight fails or native publication fails after some owned endpoints were created", "expect": "explicit failure/degraded outcome and owned-only rollback; held existing endpoints and sibling devices continue, no partial-success pass"},
+    {"id": "independent-sends", "input": "Same mic into three arbitrary mixes with gains 1/.5/0; per-mix master=1", "expect": "accept independent sends; zero-gain destination silent; starter names are not schema enums"},
+    {"id": "change-one-send", "input": "Change only Call mic from 1 to .25", "expect": "Record stays .5 and Monitor stays 0"},
+    {"id": "per-send-mute", "input": "Mute Record mic with retained gain .5", "expect": "Record mic silence; Call gain 1 unchanged; unmute restores .5"},
+    {"id": "mix-minus", "input": "A user mix receives a source from its excluded logical call-return group, including through alias/recapture", "expect": "reject before mutation; multiple destination-specific groups allowed and rename never alters exclusions"},
+    {"id": "cycles", "input": "A -> B -> A or a self-loop", "expect": "reject before mutation"},
+    {"id": "private-default", "input": "Unselected private application is active", "expect": "no send to any bus; no all-system playback default"},
+    {"id": "producer-recapture", "input": "Mixyard-owned output/producer selected as application source", "expect": "reject before mutation"},
+    {"id": "missing-source", "input": "Selected exact UID absent, another mic/default present", "expect": "disconnected/silence; never choose another mic or normalize surviving sends"},
+    {"id": "ambiguous-source", "input": "Selector matches two persistent identities", "expect": "disconnected with diagnostic; never first-match selection"},
+    {"id": "invalid-gains", "input": "send=-.1, NaN, +Infinity, -Infinity; master=-.1, 1.1, NaN, Infinity", "expect": "reject every invalid value; master 0 and 1 accepted; finite send >1 allowed only when peak bound permits"},
+    {"id": "headroom", "input": "master * sum(unmuted send gains) = 1.01", "expect": "reject; no silent normalization or unimplemented limiter"},
+    {"id": "headroom-boundary", "input": "master=.5, one unmuted send=2; or master=1 and unmuted gains=.5+.25+.25", "expect": "accept exact conservative bound 1"},
+    {"id": "muted-headroom", "input": "master=1, mic=1 plus muted media=1", "expect": "accept while muted; reject unmute unless headroom changed explicitly"},
+    {"id": "channels", "input": "mono -> stereo; stereo -> mono; 6-channel -> any unsupported mix/output layout", "expect": "duplicate; average (L+R)/2; reject unsupported layout respectively"},
+    {"id": "idempotence-rollback", "input": "apply twice, interrupt mutation, reapply, release management, teardown", "expect": "bounded changes of owned objects only; unrelated routes unchanged; release disables repair"}
+  ]
+}

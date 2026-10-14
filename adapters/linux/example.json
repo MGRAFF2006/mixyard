@@ -1,0 +1,19 @@
+{
+  "instance": "mathis",
+  "mixes": [
+    {"id": "call", "name": "Call", "channels": ["MONO"], "master": 1.0,
+     "virtualInput": true, "excludeRoles": ["call-return"]},
+    {"id": "record", "name": "Record", "channels": ["FL", "FR"], "master": 1.0,
+     "virtualInput": true, "excludeRoles": []},
+    {"id": "monitor", "name": "Monitor", "channels": ["FL", "FR"], "master": 1.0,
+     "virtualInput": false, "excludeRoles": []}
+  ],
+  "sources": [
+    {"id": "mic", "selector": {"node.name": "mixyard-test-mic"}, "role": "mic",
+     "channels": ["MONO"], "gains": {"call": 1.0, "record": 0.5, "monitor": 0.0}}
+  ],
+  "outputs": [
+    {"id": "headphones", "mix": "monitor", "selector": {"node.name": "mixyard-test-headphones"},
+     "channels": ["FL", "FR"], "gain": 1.0, "enabled": false}
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "identifier": "mixer-shell",
+  "description": "Local mixer window may read shell status, hide itself or quit the UI. No runtime, shell, filesystem, device or remote permissions.",
+  "local": true,
+  "windows": ["main"],
+  "permissions": ["allow-shell-status", "allow-hide-mixer", "allow-quit-ui"]
+}

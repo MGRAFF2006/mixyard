@@ -1,0 +1,5 @@
+/build*/
+*.wav
+*.gaps.jsonl
+/model-check
+/check.log
