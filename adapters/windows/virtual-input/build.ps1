@@ -26,14 +26,11 @@ try {
     if ($LASTEXITCODE -ne 0 -or !$vs) { throw 'BLOCKED: existing VS2022 17.14 C++ tools required' }
     $msvc = (Get-Content (Join-Path $vs 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt')).Trim()
     if (!$msvc.StartsWith('14.44.')) { throw "BLOCKED: MSVC 14.44 required, found $msvc" }
-    # Import the existing developer environment without printing its variables.
-    $devcmd = Join-Path $vs 'Common7/Tools/VsDevCmd.bat'
-    $lines = & $env:ComSpec /d /s /c "`"`"$devcmd`" -no_logo -arch=x64 -host_arch=x64 -vcvars_ver=14.44 && set`""
-    if ($LASTEXITCODE -ne 0) { throw 'VS developer environment failed' }
-    foreach ($line in $lines) {
-        if ($line -match '^([^=]+)=(.*)$') {
-            [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
-        }
+    # The supported PowerShell launcher avoids cmd.exe quoting/native argument conversion.
+    $devshell = Join-Path $vs 'Common7/Tools/Launch-VsDevShell.ps1'
+    & $devshell -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+    if (!$env:VCToolsVersion -or $env:VCToolsVersion.TrimEnd('\') -ne $msvc) {
+        throw 'VS developer environment did not select the pinned MSVC version'
     }
     $tools = [ordered]@{
         vs = (Get-Item (Join-Path $vs 'Common7/IDE/devenv.exe')).VersionInfo.ProductVersion
