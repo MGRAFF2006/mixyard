@@ -12,9 +12,10 @@ use std::{
 
 // Exit 0 means completed validation/planning, including a plan with disconnected
 // sources. It never attests to native audio. Errors are one JSON object on stderr;
-// normal validate/plan results are one JSON object on stdout. Help is plain text.
+// normal results are one JSON object on stdout. Inspection also writes its
+// report on preflight rejection (exit 3). Help is plain text.
 // 2: usage/unsupported command, 3: invalid JSON/policy, 4: input/output failure.
-const USAGE: &str = "Usage: mixyard validate CONFIG.json\n       mixyard plan CONFIG.json INVENTORY.json\n       mixyard plan-media CONFIG.json INVENTORY.json REQUEST.json\nRead-only routing/media planning. No OS audio changes or media dispatch.\nExit codes: 0 completed (including degraded/unavailable plans), 2 usage/unsupported command, 3 invalid input/policy, 4 I/O failure.";
+const USAGE: &str = "Usage: mixyard validate CONFIG.json\n       mixyard plan CONFIG.json INVENTORY.json\n       mixyard inspect CONFIG.json INVENTORY.json\n       mixyard explain CONFIG.json INVENTORY.json\n       mixyard plan-media CONFIG.json INVENTORY.json REQUEST.json\nRead-only routing/media planning. No OS audio changes or media dispatch.\nExit codes: 0 completed (including degraded/unavailable plans), 2 usage/unsupported command, 3 invalid input/policy, 4 I/O failure.";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,12 +82,12 @@ fn run(args: &[OsString], output: &mut impl Write) -> Result<(), CliError> {
     }
     let expected = if command == "validate" {
         2
-    } else if command == "plan" {
+    } else if command == "plan" || command == "inspect" || command == "explain" {
         3
     } else if command == "plan-media" {
         4
     } else {
-        return Err(CliError::new("unsupported-command", "Command unavailable; only validate, plan and plan-media are implemented. No mutation, media dispatch or runtime connection was attempted.", 2));
+        return Err(CliError::new("unsupported-command", "Command unavailable; only validate, plan, plan-media, inspect and explain are implemented. No mutation, media dispatch or runtime connection was attempted.", 2));
     };
     if args.len() != expected {
         return Err(CliError::new("usage", USAGE, 2));
@@ -109,6 +110,15 @@ fn run(args: &[OsString], output: &mut impl Write) -> Result<(), CliError> {
         );
     }
     let inventory: Inventory = read_json(Path::new(&args[2]))?;
+    if command == "inspect" || command == "explain" {
+        let inspection = mixyard::diagnostics::inspect(&config, &inventory);
+        write_json(output, &inspection)?;
+        return if inspection.plan_available {
+            Ok(())
+        } else {
+            Err(CliError::new("inspection-preflight-failed", "Inspection written to stdout; authoritative planner rejected input. No routing attempted.", 3))
+        };
+    }
     if command == "plan-media" {
         let request: MediaRequest = read_json(Path::new(&args[3]))?;
         let result = plan_media(&config, &inventory, &request)
