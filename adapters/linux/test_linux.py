@@ -39,6 +39,25 @@ def consent_tokens(config):
     return [path["token"] for path in m.required_mic_consents(config)]
 
 
+def observation_cli(directory, command, text):
+    """Actual CLI, with isolated fixture commands; no PipeWire server access."""
+    directory = Path(directory)
+    dump = directory / "observation"
+    dump.write_text(text)
+    for tool in ("pw-dump", "pw-top"):
+        executable = directory / tool
+        executable.write_text(f"#!{sys.executable}\nfrom pathlib import Path\n"
+                              "print(Path(__file__).with_name('observation').read_text(), end='')\n")
+        executable.chmod(0o700)
+    args = [sys.executable, "-B", str(HERE / "mixyard_linux.py"), command]
+    if command == "plan":
+        args += [str(HERE / "example.json"), "--dump", str(dump)]
+    else:
+        args += ["--remote", "fixture-only"]
+    return subprocess.run(args, env=dict(os.environ, PATH=str(directory)),
+                          capture_output=True, text=True, timeout=5)
+
+
 def evaluate(module, samples):
     """Interpret only the emitted native copy/mixer graph as scalar math."""
     graph = module["args"]["filter.graph"]
@@ -236,6 +255,113 @@ class LinuxOffline(unittest.TestCase):
             for side in ("capture.props", "playback.props"):
                 self.assertFalse(mod["args"][side]["node.autoconnect"])
                 self.assertTrue(mod["args"][side]["node.dont-fallback"])
+
+    def test_actual_cli_rejects_structural_observations_without_partial_results(self):
+        cases = [None, {}, [None], [False], [[]], [{"type": []}], [{"type": None}]]
+        for field, value in (("info", None), ("info", []), ("id", None),
+                             ("id", True), ("id", "90"), ("id", -1), ("id", 2**32),
+                             ("type", {})):
+            bad = obj(90, "Node")
+            bad[field] = value
+            cases.append(source_graph() + [bad])
+        missing_id = obj(90, "Device")
+        del missing_id["id"]
+        cases += [source_graph() + [missing_id], source_graph() + [obj(10, "Node")]]
+        for what in ("Node", "Device", "Port"):
+            for value in (None, [], "props"):
+                bad = obj(90, what)
+                bad["info"]["props"] = value
+                cases.append(source_graph() + [bad])
+        bad = obj(90, "Node")
+        bad["info"]["state"] = []
+        cases.append(source_graph() + [bad])
+        for what, key, value in (
+            ("Node", "media.class", []), ("Node", "media.class", {}),
+            ("Node", "device.id", {}), ("Node", "device.id", True),
+            ("Node", "device.id", 2**32), ("Node", "node.virtual", []),
+            ("Node", "bluez5.loopback", "maybe"), ("Port", "node.id", None),
+            ("Port", "node.id", "1.0"), ("Port", "port.direction", []),
+            ("Port", "audio.channel", {}), ("Port", "port.control", 1),
+        ):
+            cases.append(source_graph() + [obj(90, what, **{key: value})])
+        deeply_nested = (json.dumps(source_graph())[:-1] +
+                         ', {"id":90,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":' +
+                         "[" * 2000 + "0" + "]" * 2000 + "}}}]")
+        with tempfile.TemporaryDirectory() as directory:
+            for text in [json.dumps(case) for case in cases] + ["[", "not JSON", deeply_nested]:
+                for command in ("snapshot", "plan"):
+                    with self.subTest(command=command, observation=text):
+                        observed = observation_cli(directory, command, text)
+                        self.assertEqual(observed.returncode, 1, observed.stderr)
+                        self.assertEqual(observed.stderr, "")
+                        result = json.loads(observed.stdout)
+                        self.assertEqual(result["schemaVersion"], 1)
+                        self.assertEqual(result["devices"], [])
+                        self.assertEqual(result["diagnostics"][0]["code"], "malformed-observation")
+                        if command == "snapshot":
+                            self.assertFalse(any(result["capabilities"].values()))
+                        else:
+                            self.assertEqual(result["routes"], [])
+                            self.assertNotIn("producerConfig", result)
+                            self.assertFalse(result["mutationAvailable"])
+
+    def test_actual_cli_preserves_exact_identities_and_unknown_fields(self):
+        graph = source_graph()
+        m.props(graph[0]).update({"device.id": "100", "application.id": -(2**63),
+                                 "node.virtual": "false", "future.property": {"nested": [None]}})
+        m.props(graph[1]).update({"node.id": "10", "port.control": "false"})
+        graph[0]["info"]["future"] = [None]
+        graph.append(obj(100, "Device", **{"device.serial": 2**63 - 1}))
+        graph.append({"type": "PipeWire:Interface:Future", "info": None, "future": []})
+        with tempfile.TemporaryDirectory() as directory:
+            for command in ("snapshot", "plan"):
+                observed = observation_cli(directory, command, json.dumps(graph))
+                self.assertEqual(observed.returncode, 0, observed.stderr)
+                self.assertEqual(observed.stderr, "")
+                result = json.loads(observed.stdout)
+                if command == "snapshot":
+                    self.assertEqual(result["devices"][0]["id"], "pipewire:node.name:mixyard-test-mic")
+                else:
+                    self.assertEqual(len(result["routes"]), 2)
+            m.props(graph[0])["node.name"] = 123
+            observed = observation_cli(directory, "snapshot", json.dumps(graph))
+            self.assertEqual(observed.returncode, 0, observed.stderr)
+            self.assertEqual(json.loads(observed.stdout)["devices"][0]["id"], "pipewire:node.name:123")
+            m.props(graph[0])["node.name"] = []
+            for command in ("snapshot", "plan"):
+                observed = observation_cli(directory, command, json.dumps(graph))
+                self.assertEqual(observed.returncode, 1)
+                self.assertEqual(observed.stderr, "")
+                result = json.loads(observed.stdout)
+                self.assertEqual(result["devices"], [])
+                self.assertEqual(result["diagnostics"][0]["code"], "unsupported-identity-encoding")
+
+    def test_actual_health_cli_rejects_malformed_owned_rows_as_a_whole(self):
+        valid = "R 55 256 48000 1us 1us 0.1 0.1 2 F32P 1 48000 + mixyard.mathis.mix.call.out\n"
+        private = "malformed private-app\n"
+        with tempfile.TemporaryDirectory() as directory:
+            for bad in ("²", "[]", "-1", "NaN"):
+                with self.subTest(counter=bad):
+                    observed = observation_cli(directory, "health", private + valid + valid.replace("0.1 2", "0.1 " + bad))
+                    self.assertEqual(observed.returncode, 1)
+                    self.assertEqual(observed.stderr, "")
+                    result = json.loads(observed.stdout)
+                    self.assertEqual(result["schemaVersion"], 1)
+                    self.assertEqual(result["ownedRows"], [])
+                    self.assertFalse(result["countersAvailable"])
+                    self.assertIsNone(result["zeroDropouts"])
+                    self.assertEqual(result["diagnostics"][0]["code"], "malformed-observation")
+                    self.assertNotIn("private-app", observed.stdout)
+            observed = observation_cli(directory, "health", valid + "R 55 mixyard.mathis.mix.call.out\n")
+            self.assertEqual(observed.returncode, 1)
+            self.assertEqual(json.loads(observed.stdout)["ownedRows"], [])
+            observed = observation_cli(directory, "health", private + valid)
+            self.assertEqual(observed.returncode, 0)
+            self.assertEqual(json.loads(observed.stdout)["ownedRows"][0]["errorsAndXruns"], 2)
+            self.assertNotIn("private-app", observed.stdout)
+            observed = observation_cli(directory, "health", valid.replace("0.1 2", "0.1 -"))
+            self.assertEqual(observed.returncode, 1)
+            self.assertIsNone(json.loads(observed.stdout)["ownedRows"][0]["errorsAndXruns"])
 
     def test_custom_mix_ids_names_count_and_exclusions(self):
         self.config["mixes"][0].update(id="team_chat", name="Besprechung 🎧")

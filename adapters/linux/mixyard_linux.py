@@ -35,6 +35,56 @@ class IdentityEncodingError(ValueError):
     pass
 
 
+class ObservationError(ValueError):
+    pass
+
+
+def validate_observation(objects):
+    """Check consumed fields before any inventory or routes can be trusted."""
+    if not isinstance(objects, list):
+        raise ObservationError("pw-dump: expected array")
+    ids = set()
+    for index, obj in enumerate(objects):
+        label = f"pw-dump[{index}]"
+        if not isinstance(obj, dict) or not isinstance(obj.get("type"), str):
+            raise ObservationError(f"{label}: expected object with string type")
+        if not any(kind(obj, k) for k in ("Node", "Device", "Port")):
+            continue  # Unknown interface fields are not consumed.
+        oid = obj.get("id")
+        if type(oid) is not int or not 0 <= oid < 2**32 or oid in ids:
+            raise ObservationError(f"{label}.id: expected unique unsigned 32-bit integer")
+        ids.add(oid)
+        info = obj.get("info", {})
+        if not isinstance(info, dict) or not isinstance(info.get("props", {}), dict):
+            raise ObservationError(f"{label}.info/props: expected objects")
+        if kind(obj, "Node") and "state" in info and not isinstance(info["state"], str):
+            raise ObservationError(f"{label}.info.state: expected string")
+        p = props(obj)
+        for key in (("media.class",) if kind(obj, "Node") else
+                    ("port.direction", "audio.channel") if kind(obj, "Port") else ()):
+            if key in p and not isinstance(p[key], str):
+                raise ObservationError(f"{label}.{key}: expected string")
+        for key in (("device.id",) if kind(obj, "Node") else
+                    ("node.id",) if kind(obj, "Port") else ()):
+            if key in p:
+                value = p[key]
+                if not ((type(value) is int and 0 <= value < 2**32) or
+                        (isinstance(value, str) and re.fullmatch(r"[0-9]{1,10}", value)
+                         and int(value) < 2**32)):
+                    raise ObservationError(f"{label}.{key}: expected unsigned 32-bit ID or decimal string")
+        for key in (("node.virtual", "bluez5.loopback") if kind(obj, "Node") else
+                    ("port.control",) if kind(obj, "Port") else ()):
+            if key in p and not (type(p[key]) is bool or
+                                (isinstance(p[key], str) and p[key] in ("true", "false"))):
+                raise ObservationError(f"{label}.{key}: expected boolean or true/false string")
+        if kind(obj, "Node") or kind(obj, "Device"):
+            for key in IDENTITY_KEYS:
+                if key in p:
+                    semantic_identity(p[key], key)
+        if kind(obj, "Node") and "node.description" in p:
+            semantic_identity(p["node.description"], "node.description")
+
+
 def semantic_identity(value, key):
     # pw-dump put_value emits int64 properties as numbers; floats lose precision.
     if isinstance(value, str) and value:
@@ -173,8 +223,10 @@ def matches(objects, selected, media):
     devices = {str(o["id"]): props(o) for o in objects if kind(o, "Device")}
     result = []
     for obj in objects:
+        if not kind(obj, "Node"):
+            continue
         p = props(obj)
-        if not kind(obj, "Node") or p.get("media.class") not in media:
+        if p.get("media.class") not in media:
             continue
         identity = node_identity(obj, devices)
         if all(identity.get(k) == v for k, v in selected.items()):
@@ -191,7 +243,7 @@ def port_map(objects, node, direction, channels):
     ports = [o for o in objects if kind(o, "Port")
              and str(props(o).get("node.id")) == str(node["id"])
              and props(o).get("port.direction") == direction
-             and not props(o).get("port.control", False)]
+             and props(o).get("port.control") not in (True, "true")]
     result = []
     for channel in channels:
         found = [o for o in ports if props(o).get("audio.channel") == channel]
@@ -281,6 +333,7 @@ def required_mic_consents(config):
 
 
 def plan(config, objects, arm_outputs=False, mic_consents=()):
+    validate_observation(objects)
     validate(config)
     diagnostics, routes, resolved_ids = [], [], set()
     mixes = {mix["id"]: mix for mix in config["mixes"]}
@@ -357,6 +410,13 @@ def plan(config, objects, arm_outputs=False, mic_consents=()):
                                "context.modules": modules}}
 
 
+def observation_json(text):
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError) as error:
+        raise ObservationError(f"pw-dump: invalid JSON: {error}") from error
+
+
 def dump_graph(remote):
     try:
         result = subprocess.run(["pw-dump", "-r", remote], check=True, capture_output=True,
@@ -365,10 +425,7 @@ def dump_graph(remote):
         if any(text in (error.stderr or "").lower() for text in ("permission denied", "operation not permitted")):
             raise PermissionError("PipeWire denied access to the requested server") from error
         raise
-    data = json.loads(result.stdout)
-    if not isinstance(data, list):
-        raise ValueError("pw-dump returned non-array")
-    return data
+    return observation_json(result.stdout)
 
 
 def discover(remote):
@@ -377,12 +434,15 @@ def discover(remote):
         "independentMixes": False, "routeRecovery": False}, "devices": [], "diagnostics": []}
     try:
         objects = dump_graph(remote)
+        validate_observation(objects)
         devices = {str(o["id"]): props(o) for o in objects if kind(o, "Device")}
         envelope["capabilities"]["deviceDiscovery"] = True
         for obj in objects:
+            if not kind(obj, "Node"):
+                continue
             p = props(obj)
             direction = {"Audio/Source": "input", "Audio/Sink": "output"}.get(p.get("media.class"))
-            if kind(obj, "Node") and direction:
+            if direction:
                 identity = node_identity(obj, devices)
                 if "node.name" not in identity:
                     continue
@@ -400,11 +460,14 @@ def discover(remote):
             "message": "pw-dump is not a gap/xrun measurement. Use native profiler/pw-top and PCM qualification; no counter does not mean zero dropouts."})
         return envelope, 0
     except (OSError, subprocess.SubprocessError, ValueError) as error:
+        envelope["capabilities"]["deviceDiscovery"] = False
+        envelope["devices"] = []
+        envelope["diagnostics"] = []
         code = "permission-denied" if isinstance(error, PermissionError) else "pipewire-unavailable"
         if isinstance(error, IdentityEncodingError):
             code = "unsupported-identity-encoding"
-            envelope["capabilities"]["deviceDiscovery"] = False
-            envelope["devices"] = []
+        if isinstance(error, ObservationError):
+            code = "malformed-observation"
         if isinstance(error, FileNotFoundError):
             code = "dependency-unavailable"
         envelope["diagnostics"].append({"code": code, "severity": "error",
@@ -413,7 +476,7 @@ def discover(remote):
 
 
 def health(remote, iterations):
-    result = {"platform": "linux", "evidence": "native-counter-observation",
+    result = {"schemaVersion": 1, "platform": "linux", "evidence": "native-counter-observation",
               "counterScope": "pw-top observation window; ERR combines xruns and errors",
               "ownedRows": [], "countersAvailable": False, "verifiedAudio": False,
               "gapsMeasured": False, "zeroDropouts": None}
@@ -423,18 +486,26 @@ def health(remote, iterations):
         for line in observed.stdout.splitlines():
             # Do not forward other applications' names from the profiler table.
             columns = line.split(maxsplit=9)
-            if len(columns) != 10:
+            name = re.search(r"(?:^|\s)[+=]?\s*(mixyard\.[a-z0-9_-]+\.(?:mix|output)\.[a-z0-9_-]+\.(?:in|out))\s*$", line)
+            if not name:
                 continue
-            name = re.search(r"(?:^|\s)[+=]?\s*(mixyard\.[a-z0-9_-]+\.(?:mix|output)\.[a-z0-9_-]+\.(?:in|out))\s*$", columns[9])
-            if name:
-                result["ownedRows"].append({"node": name[1], "state": columns[0],
-                    "errorsAndXruns": int(columns[8]) if columns[8].isdigit() else None,
-                    "nativeRow": line})
+            if len(columns) != 10 or not (columns[8] == "-" or re.fullmatch(r"[0-9]+", columns[8])):
+                raise ObservationError("pw-top: malformed owned row or ERR counter")
+            try:
+                errors = None if columns[8] == "-" else int(columns[8])
+            except ValueError as error:
+                raise ObservationError("pw-top: invalid ERR counter in owned row") from error
+            result["ownedRows"].append({"node": name[1], "state": columns[0],
+                "errorsAndXruns": errors, "nativeRow": line})
         result["countersAvailable"] = any(row["errorsAndXruns"] is not None for row in result["ownedRows"])
         result["diagnostic"] = "Native counters do not prove absence of PCM gaps or past dropouts"
         return result, 0 if result["countersAvailable"] else 1
-    except (OSError, subprocess.SubprocessError) as error:
+    except (OSError, subprocess.SubprocessError, ObservationError) as error:
+        result["ownedRows"] = []
+        result["countersAvailable"] = False
         result["diagnostic"] = f"xrun counters unavailable: {error}"
+        result["diagnostics"] = [{"code": "malformed-observation" if isinstance(error, ObservationError)
+                                 else "pipewire-unavailable", "severity": "error", "message": str(error)}]
         return result, 1
 
 
@@ -505,17 +576,18 @@ def main():
         return status
     try:
         if args.command == "plan":
-            print(json.dumps(plan(json.loads(args.config.read_text()), json.loads(args.dump.read_text()),
+            print(json.dumps(plan(json.loads(args.config.read_text()), observation_json(args.dump.read_text()),
                                   args.arm_outputs, args.consent_mic_path), indent=2))
         else:
             if not math.isfinite(args.interval) or args.interval < 0.1:
                 raise ValueError("interval must be finite and >= 0.1 seconds")
             apply(args.config, args.remote, args.runtime_dir, args.arm_outputs, args.interval)
         return 0
-    except IdentityEncodingError as error:
+    except (IdentityEncodingError, ObservationError) as error:
         print(json.dumps({"schemaVersion": 1, "platform": "linux", "evidence": "command-plan-only",
-            "mutationAvailable": False, "routes": [], "diagnostics": [{
-                "code": "unsupported-identity-encoding", "severity": "error", "message": str(error)}]}))
+            "mutationAvailable": False, "devices": [], "routes": [], "diagnostics": [{
+                "code": "unsupported-identity-encoding" if isinstance(error, IdentityEncodingError)
+                        else "malformed-observation", "severity": "error", "message": str(error)}]}))
         return 1
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
         print(f"mixyard-linux: {error}", file=sys.stderr)

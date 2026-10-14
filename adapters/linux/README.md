@@ -27,11 +27,24 @@ identities, never transient IDs. Duplicate names require a more specific selecto
 Only discovery is advertised; transport and recovery capabilities remain false
 pending native qualification. A third-party source does not establish transport.
 
+Before discovery or offline planning consumes a dump, it validates the entire
+observation: object/type structure, unique unsigned 32-bit native IDs, Node/Device/
+Port info and property objects, and the identity, state, media class, ID reference,
+channel/direction and boolean fields those commands use. Missing optional properties
+stay absent; unknown interfaces and unconsumed forward fields are ignored safely.
+Malformed consumed fields or invalid dump JSON return `malformed-observation` in
+versioned JSON with exit 1. No partial device inventory or route/producer plan is
+retained, and discovery capabilities remain unavailable. Unsupported semantic
+identity encodings retain their separate diagnostic below.
+
 `health --remote NAME --iterations 3` optionally observes native `pw-top` ERR
 counters for Mixyard nodes, omitting unrelated application rows. ERR combines
 xruns and errors within that profiler's observation window. Missing counters
 exit nonzero; even an observed zero never proves zero PCM gaps or past dropouts.
 This command is read-only, and needs `pw-top` and the server profiler facility.
+Malformed owned rows or ERR counters reject the entire health sample with a
+versioned diagnostic and no retained owned rows/counters; `-` remains unknown.
+Other applications' rows are ignored rather than exposed.
 
 Save `pw-dump` JSON on a test server, then inspect an offline plan:
 
@@ -170,6 +183,10 @@ configured/resolved sink convergence rejection, custom IDs/names, twelve configu
 mixes, sixteen-source mixer cascades, independent two-device output gain planning,
 stable control planning, unconditional mutation rejection before external access,
 and actual child termination after parent SIGKILL. **None of this proves native PCM, dropout-free audio or sound quality.**
+Actual CLI regressions use isolated fake `pw-dump`/`pw-top` executables to check
+malformed mixed observations, failure envelopes, exact identities and unknown
+forward fields. These fixtures do not establish that ordinary PipeWire emits
+the tested malformed structures and never connect to an audio server.
 `snapshot` on this host correctly returns `dependency-unavailable` with exit 1.
 
 Native prerequisite set, to be provided separately rather than installed here:
