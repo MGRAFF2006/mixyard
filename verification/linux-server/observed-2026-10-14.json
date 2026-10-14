@@ -5,27 +5,34 @@
   "archive_sha256": "67929f63e6d75d7d058d94a5c7e3595478ecbc4034c64187b41683d300c22107",
   "execution_version": "/work/verification/linux-server/build/install/bin/pipewire\nCompiled with libpipewire 1.6.9\nLinked with libpipewire 1.6.9\n",
   "image_id": "sha256:71067b22d8c8d483c44d81259ccdc9eb40212796646f20646cec2d3e7dba4f87",
+  "production_apply": false,
   "status": "fail",
   "acceptance": "blocked",
-  "production_apply": false,
+  "privacy": "blocked",
+  "sentinel_reproduced": false,
+  "executed_source_commit": "cbcb581c8543de48f23741e749f8e774dba014b6",
+  "partial_fix_commits": [
+    "f9303729b91f0fc9bb3a376230a9bae60343480d",
+    "cbcb581c8543de48f23741e749f8e774dba014b6"
+  ],
   "source_sha256": {
     "adapters/linux/server-proof/compile.sh": "654aeff3b2d21867100947b2e7e494732b021252ce565663081c395a6d9aaf79",
-    "adapters/linux/server-proof/README.md": "abdf29e5e6cf33bbbbf92e59222c9a0f076e5f7a402a591477926ab44d225bf3",
-    "adapters/linux/server-proof/module.c": "eed7d947dcb9a49ef78c4b8ab823a1f2c56cc2a90d5b6032a70a55314095f8ff",
-    "verification/linux_server_ingress.py": "219c15c0758d85f98d8a2764515c29c48e8099e415f682da7b7d4734c63b4671",
+    "adapters/linux/server-proof/README.md": "23702b2dcffe003c103bb73ddb8b6b81a25b43f174650fed199f17e30918a9e2",
+    "adapters/linux/server-proof/module.c": "14532466d1dd2eff85fac28fa7bfdb9803e3f8f1c8d6a8391fdcf1b496988e38",
+    "verification/linux_server_ingress.py": "8363b8464548ce2c160cd60db6ca5937dfce120400ac2171545f2c941aa5c653",
     "verification/linux-server/Dockerfile": "69f4c354c5ea0aced3aef1317d049f3027535bbabd06c374e2456895ee4325a4",
     "verification/linux-server/pipewire.conf": "11397095de8f22f3504f1fdecc9e2eeaae93bcb36af5275fb882810ff26b8f48",
-    "verification/linux-server/fixture.c": "4b9ca24ca8ef2602cb1ec31ac4e764e639f240b9c8a572b9901089c945902be2",
+    "verification/linux-server/fixture.c": "4fafaa93fb0ee746b663d0a1f0dec57d5b6a46e787addb122b9341da245c2fb9",
     "verification/linux-server/.gitignore": "0cf256cc9234b415f912f5b0e9f8c9364688466041611047cd3f599c35f4efa6",
     "verification/linux-server/compile.sh": "2759e6482c036b90e6ef2b60ead38e231fe6b6149d87ce1c01bad0fc818a6f0c",
-    "verification/linux-server/README.md": "745e6fa881b133d796d6ba7796b62ca6452c833be4a452e8534be1ca45392bc1",
+    "verification/linux-server/README.md": "dd904b7394db0716ee940483b2883297fe89ec041bdfb76dbe2a06d530fd0c15",
     "verification/linux-server/build.sh": "99c0bd6a600befe073b5d0b45fa52c8d5ac8379dc453900228236233151a4f81",
-    "verification/linux-server/selfcheck.py": "b12788fdac9a45599fb0650237e399a07f3f635cb3026740b4050d83891a63f5",
-    "verification/linux-server/run.sh": "f6d7b11005d58a33955bc75257a9ca2b6468dca16fcf20e6f245c0b402c84c5f"
+    "verification/linux-server/selfcheck.py": "ada8ab81d71772184cd96f49a4e09cefc314a371146af6b96ef163574df4bd4e",
+    "verification/linux-server/run.sh": "1a4ddc3a10428cb57d28fc6f884f8dbd42717fd79f04b8ce970b409eb63a35ee"
   },
   "build_artifacts_sha256": {
-    "modules/libpipewire-module-mixyard-server-proof.so": "fc47258e3359d1da9c53c2cbfe7b45bd8400fa020126f6dde34a7442440ed256",
-    "fixture": "52f6332272aab0ec14207a0fcedf20759ef5876da774ddfd27b22705303ffa46",
+    "modules/libpipewire-module-mixyard-server-proof.so": "eeed069f4a2af2a0cd86673eeda71b4e116bd2f25ec9662c02c4d841d5289b04",
+    "fixture": "dcca4e8f922dd23fe254a7e9b0e82136c5cd45b63e4f827a8667fa3815269f79",
     "install/bin/pipewire": "2d055253765909022913077969209de73abc62efdd77514074b1a8b093ebf87d",
     "install/lib/libpipewire-0.3.so.0.1609.0": "a60de8c78da7e04ac17ee0dcf7a0339f6a40a2b9dbd042152b2c21f1bcc33407",
     "source/build/config.h": "7ef45d361f89fa9e83fcbd8b74b54e989a1bc47f71889c6e4299ba905cbc9c3e",
@@ -36,17 +43,88 @@
     "evidence-01": "f9ee919f38c590d7771f3652ab3073fc8ccd6352aa326988e2d0b7663b3d4612",
     "evidence-02": "e191f3a991e842afd0ff3a665a5b9acb010c09200b8c8c83929af6c872e97073",
     "evidence-03": "b996ddd9a726c6b9535d628648835d9ea3cbfcfe8d8ef2f20d5669c081c7c1e6",
+    "evidence-04": "7ed9ac95d405882047ff7678fdee21380f317ed17fdff6f8253fae5426a8a0a0",
+    "evidence-05": "c6dd64af6824faad3eef066927a069b7422c0becd55f56518748a38fd5d872ce",
     "client-negative-control": "dbfe6a5382bfa99d015da742a87669e5c26aa53b52b0bdc7de25a8f9e3ceb905"
   },
-  "last_runtime": "daemon exits during ingress creation; no PCM",
-  "sentinel_reproduced": false,
-  "privacy": "blocked",
-  "limits": [
-    "all protected PCM/adversarial acceptance blocked",
-    "RT unavailable; load/resources retained",
-    "latency unknown",
-    "internal ABI/version build coupled"
-  ],
+  "new_run_provenance_sha256": {
+    "evidence-04": "07011c87937c4e9619996adcda1c66beaa2b51993ae6e36c32d328f23845746e",
+    "evidence-05": "8eed782e12ca91b5af22bd774853f2ff3369d98967488ebd365cdd4325f22d1b"
+  },
+  "latest_runtime": {
+    "daemon_started": true,
+    "select_control_reply": "control_done generation1; not PCMack",
+    "error": "pw-dump timeout before forbidden-route request",
+    "captured_frames": 0,
+    "checks_executed": 0,
+    "daemon_cleanup_returncode": 0
+  },
+  "provider_blocker": {
+    "task_id": "node:delegated-task:command%3Amcp%3A9b644e22-0984-4986-b4a5-3b99a91a74e8%3Adelegate-task%3Aserver-pr16-different-fixer-r1-2a139b1",
+    "terminal_status": "failed",
+    "reason": "This content was flagged for possible cybersecurity risk.",
+    "retry_performed": false,
+    "fixer_response_complete": false
+  },
+  "review_gates": {
+    "round1_review": "request changes; 8 findings; 3/10 original experimental readiness",
+    "partial_corrections_independently_reviewed": false,
+    "extra_final_review": "not performed",
+    "merge_ready": false
+  },
+  "validation": "20 focused all-frame synthetic checks and shell syntax passed; no post-blocker runtime",
   "evidence_relative_path": "verification/linux-server/build",
-  "historical_client_negative": "PR13 original FAIL retained; current read-only rerun times out before sentinel, reproduction BLOCKED"
+  "historical_client_negative": "PR13 original FAIL retained; current read-only rerun times out before sentinel, reproduction BLOCKED",
+  "historical_checkpoint_2a139b1": {
+    "base_commit": "fa99a9d8fbdb291ea72b7f594ec4e8c5e22c4e78",
+    "target_observed": "401dc438e35a3f682183b063d8310d02cdf2d236",
+    "upstream_commit": "8fa27cabdc6c0c1350c69c026af5850ef0af1e26",
+    "archive_sha256": "67929f63e6d75d7d058d94a5c7e3595478ecbc4034c64187b41683d300c22107",
+    "execution_version": "/work/verification/linux-server/build/install/bin/pipewire\nCompiled with libpipewire 1.6.9\nLinked with libpipewire 1.6.9\n",
+    "image_id": "sha256:71067b22d8c8d483c44d81259ccdc9eb40212796646f20646cec2d3e7dba4f87",
+    "status": "fail",
+    "acceptance": "blocked",
+    "production_apply": false,
+    "source_sha256": {
+      "adapters/linux/server-proof/compile.sh": "654aeff3b2d21867100947b2e7e494732b021252ce565663081c395a6d9aaf79",
+      "adapters/linux/server-proof/README.md": "abdf29e5e6cf33bbbbf92e59222c9a0f076e5f7a402a591477926ab44d225bf3",
+      "adapters/linux/server-proof/module.c": "eed7d947dcb9a49ef78c4b8ab823a1f2c56cc2a90d5b6032a70a55314095f8ff",
+      "verification/linux_server_ingress.py": "219c15c0758d85f98d8a2764515c29c48e8099e415f682da7b7d4734c63b4671",
+      "verification/linux-server/Dockerfile": "69f4c354c5ea0aced3aef1317d049f3027535bbabd06c374e2456895ee4325a4",
+      "verification/linux-server/pipewire.conf": "11397095de8f22f3504f1fdecc9e2eeaae93bcb36af5275fb882810ff26b8f48",
+      "verification/linux-server/fixture.c": "4b9ca24ca8ef2602cb1ec31ac4e764e639f240b9c8a572b9901089c945902be2",
+      "verification/linux-server/.gitignore": "0cf256cc9234b415f912f5b0e9f8c9364688466041611047cd3f599c35f4efa6",
+      "verification/linux-server/compile.sh": "2759e6482c036b90e6ef2b60ead38e231fe6b6149d87ce1c01bad0fc818a6f0c",
+      "verification/linux-server/README.md": "745e6fa881b133d796d6ba7796b62ca6452c833be4a452e8534be1ca45392bc1",
+      "verification/linux-server/build.sh": "99c0bd6a600befe073b5d0b45fa52c8d5ac8379dc453900228236233151a4f81",
+      "verification/linux-server/selfcheck.py": "b12788fdac9a45599fb0650237e399a07f3f635cb3026740b4050d83891a63f5",
+      "verification/linux-server/run.sh": "f6d7b11005d58a33955bc75257a9ca2b6468dca16fcf20e6f245c0b402c84c5f"
+    },
+    "build_artifacts_sha256": {
+      "modules/libpipewire-module-mixyard-server-proof.so": "fc47258e3359d1da9c53c2cbfe7b45bd8400fa020126f6dde34a7442440ed256",
+      "fixture": "52f6332272aab0ec14207a0fcedf20759ef5876da774ddfd27b22705303ffa46",
+      "install/bin/pipewire": "2d055253765909022913077969209de73abc62efdd77514074b1a8b093ebf87d",
+      "install/lib/libpipewire-0.3.so.0.1609.0": "a60de8c78da7e04ac17ee0dcf7a0339f6a40a2b9dbd042152b2c21f1bcc33407",
+      "source/build/config.h": "7ef45d361f89fa9e83fcbd8b74b54e989a1bc47f71889c6e4299ba905cbc9c3e",
+      "meson-config.txt": "57244cecca49e615beeecdf1d246d396a39fcc931d06b5f4dec8b6e66db5cca3",
+      "packages.tsv": "e2dc8134dcde136cec43cc409de431265f9d6a44952bc3861ea60e70274cea3b"
+    },
+    "evidence_report_sha256": {
+      "evidence-01": "f9ee919f38c590d7771f3652ab3073fc8ccd6352aa326988e2d0b7663b3d4612",
+      "evidence-02": "e191f3a991e842afd0ff3a665a5b9acb010c09200b8c8c83929af6c872e97073",
+      "evidence-03": "b996ddd9a726c6b9535d628648835d9ea3cbfcfe8d8ef2f20d5669c081c7c1e6",
+      "client-negative-control": "dbfe6a5382bfa99d015da742a87669e5c26aa53b52b0bdc7de25a8f9e3ceb905"
+    },
+    "last_runtime": "daemon exits during ingress creation; no PCM",
+    "sentinel_reproduced": false,
+    "privacy": "blocked",
+    "limits": [
+      "all protected PCM/adversarial acceptance blocked",
+      "RT unavailable; load/resources retained",
+      "latency unknown",
+      "internal ABI/version build coupled"
+    ],
+    "evidence_relative_path": "verification/linux-server/build",
+    "historical_client_negative": "PR13 original FAIL retained; current read-only rerun times out before sentinel, reproduction BLOCKED"
+  }
 }
