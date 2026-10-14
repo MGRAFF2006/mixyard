@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "policy_schema_version": 2,
+  "evidence_kind": "independent-synthetic-capture-expectations-not-core-config",
+  "status": "blocked",
+  "reason": "Expected measurements only. No native output or device has been tested.",
+  "mixes": [
+    {"id": "focus", "name": "Focus desk", "channels": 2, "sends": {"mic": 0.5, "media": 0.25}},
+    {"id": "kitchen", "name": "Kitchen / Musik", "channels": 2, "sends": {"media": 0.5, "callreturn": 0.25}},
+    {"id": "archive", "name": "録音 Ⅳ", "channels": 1, "sends": {"mic": 1}},
+    {"id": "quiet", "name": "Quiet practice", "channels": 2, "sends": {}}
+  ],
+  "outputs": [
+    {"id": "headphones-a", "mix_id": "focus", "device_uid": "qualification:device:a", "gain": 1, "mute": false,
+     "tone_peaks": [{"600": 0.04, "1100": 0.02}, {"600": 0.04, "1700": 0.02}]},
+    {"id": "speakers-b", "mix_id": "focus", "device_uid": "qualification:device:b", "gain": 0.5, "mute": false,
+     "tone_peaks": [{"600": 0.02, "1100": 0.01}, {"600": 0.02, "1700": 0.01}]},
+    {"id": "virtual-copy", "mix_id": "focus", "device_uid": "qualification:virtual:copy", "gain": 1, "mute": true,
+     "tone_peaks": [{}, {}]},
+    {"id": "kitchen-c", "mix_id": "kitchen", "device_uid": "qualification:device:c", "gain": 1, "mute": false,
+     "tone_peaks": [{"1100": 0.04, "2900": 0.02}, {"1700": 0.04, "2900": 0.02}]},
+    {"id": "archive-input", "mix_id": "archive", "device_uid": "qualification:virtual:archive", "gain": 1, "mute": false,
+     "tone_peaks": [{"600": 0.08}]},
+    {"id": "quiet-e", "mix_id": "quiet", "device_uid": "qualification:device:e", "gain": 1, "mute": false,
+     "tone_peaks": [{}, {}]}
+  ]
+}

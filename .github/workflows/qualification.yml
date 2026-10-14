@@ -1,0 +1,177 @@
+name: Qualification models and native builds (not native audio)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'examples/**'
+      - 'adapters/**'
+      - 'verification/**'
+      - '.github/workflows/qualification.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'examples/**'
+      - 'adapters/**'
+      - 'verification/**'
+      - '.github/workflows/qualification.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: Synthetic PCM oracle only
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      core_present: ${{ steps.inventory.outputs.core_present }}
+      linux_present: ${{ steps.inventory.outputs.linux_present }}
+      windows_present: ${{ steps.inventory.outputs.windows_present }}
+      macos_present: ${{ steps.inventory.outputs.macos_present }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Check qualification scenarios and native evidence placeholders
+        run: |
+          python3 -B - <<'PY'
+          import json
+          from pathlib import Path
+          for path in Path('verification').glob('*.json'):
+              data = json.loads(path.read_text())
+              assert data['schema_version'] == 1
+          native = json.loads(Path('verification/native-evidence.template.json').read_text())
+          assert native['status'] == 'blocked'
+          assert all(case['status'] == 'blocked' for case in native['scenarios'])
+          quality = json.loads(Path('verification/quality-release-matrix.json').read_text())
+          assert quality['status'] == 'blocked'
+          assert all(gate['status'] == 'blocked' for gate in quality['gates'])
+          interface = json.loads(Path('verification/interface-scenarios.json').read_text())
+          assert interface['status'] == 'blocked'
+          assert all(case['status'] == 'blocked' for case in interface['cases'])
+          PY
+      - name: Synthetic analyzer self-check (no routing or policy implementation exercised)
+        run: python3 -B verification/selfcheck.py
+      - name: Build availability and evidence boundary
+        id: inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f Cargo.toml; then
+            echo 'core_present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'core_present=false' >> "$GITHUB_OUTPUT"
+            echo '::warning::BLOCKED: core Cargo.toml absent; hosted core build jobs skipped.'
+          fi
+          for platform in linux windows macos; do
+            case "$platform" in
+              linux) files='adapters/linux/mixyard_linux.py adapters/linux/test_linux.py' ;;
+              windows) files='adapters/windows/CMakeLists.txt adapters/windows/probe.cpp adapters/windows/model_check.cpp' ;;
+              macos) files='adapters/macos/build.sh adapters/macos/probe.mm' ;;
+            esac
+            present=true
+            for file in $files; do
+              if ! test -f "$file"; then present=false; fi
+            done
+            echo "${platform}_present=$present" >> "$GITHUB_OUTPUT"
+            if test "$present" = false; then
+              echo "::warning::BLOCKED: $platform build inputs absent; corresponding job skipped."
+            fi
+          done
+          {
+            echo 'Synthetic analyzer checks only. Native audio gates remain BLOCKED.'
+            echo 'Core jobs are build/policy-test evidence only, and skip if Cargo.toml is absent.'
+            echo 'Native jobs use adapter-owned build commands; missing inputs explicitly skip the corresponding build.'
+            echo 'A compiler/SDK/dependency failure fails the build; it never counts as native audio evidence.'
+            echo 'No device, permission, virtual transport, signing, recovery, or latency certification.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  core:
+    name: Core policy build/tests (${{ matrix.os }}, no native audio)
+    needs: offline
+    if: needs.offline.outputs.core_present == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Disk prerequisite (at least 10 GiB)
+        shell: python
+        run: |
+          import shutil
+          free = shutil.disk_usage('.').free
+          print(f'Available: {free / 2**30:.1f} GiB')
+          if free < 10 * 2**30:
+              raise SystemExit('BLOCKED: less than 10 GiB free before build')
+      - name: Root core package tests only
+        run: cargo test --locked --manifest-path Cargo.toml --package mixyard
+      - name: Build policy CLI for independent black-box checks
+        run: cargo build --locked --manifest-path Cargo.toml --package mixyard
+      - name: Independent policy CLI checks (simulated inventory, no native audio)
+        shell: python
+        run: |
+          import os, subprocess, sys
+          binary = 'target/debug/mixyard' + ('.exe' if os.name == 'nt' else '')
+          subprocess.run([sys.executable, '-B', 'verification/policy_check.py', binary], check=True)
+          subprocess.run([sys.executable, '-B', 'verification/policy_selfcheck.py', binary], check=True)
+
+  linux:
+    name: Linux adapter CLI check (no PipeWire audio)
+    needs: offline
+    if: needs.offline.outputs.linux_present == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Native Linux CLI imports and help only
+        run: python3 -B adapters/linux/mixyard_linux.py --help
+      - name: Linux offline model tests (no PipeWire routing)
+        run: python3 -B adapters/linux/test_linux.py
+
+  windows:
+    name: Windows native compile and buffer model (no devices)
+    needs: offline
+    if: needs.offline.outputs.windows_present == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Disk prerequisite (at least 10 GiB)
+        shell: python
+        run: |
+          import shutil
+          if shutil.disk_usage('.').free < 10 * 2**30:
+              raise SystemExit('BLOCKED: less than 10 GiB free before build')
+      - name: Configure native MSVC backend
+        run: cmake -S adapters/windows -B build/windows -A x64
+      - name: Compile native capture probe and model
+        run: cmake --build build/windows --config Release --target mixyard-windows-probe mixyard-windows-model-check
+      - name: Buffer/WAV model only (not WASAPI or endpoint injection)
+        run: ctest --test-dir build/windows -C Release -R '^windows-buffer-wav-model$' --output-on-failure --no-tests=error
+
+  macos:
+    name: macOS native compile (no permissions, capture or HAL)
+    needs: offline
+    if: needs.offline.outputs.macos_present == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Core Audio probe with SDK/disk preflight
+        run: bash adapters/macos/build.sh
