@@ -9,8 +9,15 @@ import sys
 
 
 def validate(package: Path) -> dict:
-    files = [package / f"MixyardIngress.{ext}" for ext in ("sys", "inf", "cat")]
-    files.append(package / "LICENSE")
+    entries = list(package.iterdir())
+    files = []
+    for name in ("MixyardIngress.sys", "MixyardIngress.inf", "MixyardIngress.cat", "LICENSE"):
+        matches = [p for p in entries if p.name.casefold() == name.casefold()]
+        if not matches:
+            raise ValueError(f"missing artifact: {name}")
+        if len(matches) != 1:
+            raise ValueError(f"ambiguous artifact: {name}")
+        files.append(matches[0])
     for path in files:
         if not path.is_file() or not path.stat().st_size:
             raise ValueError(f"missing/empty artifact: {path.name}")
