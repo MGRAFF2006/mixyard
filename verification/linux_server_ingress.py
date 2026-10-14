@@ -127,7 +127,22 @@ class Probe:
         return child.returncode
 
     def run(self, args):
-        return subprocess.run(list(map(str, args)), env=self.env, text=True, capture_output=True, timeout=10)
+        self.sequence += 1
+        name = "command-run-" + str(self.sequence)
+        stdout_path = self.evidence / (name + ".stdout")
+        with stdout_path.open("w") as out, (self.evidence / (name + ".log")).open("w") as err:
+            child = subprocess.Popen(list(map(str, args)), env=self.env, stdout=out, stderr=err)
+        self.children.append(child)
+        self.processes[child.pid] = {"name": name, "args": list(map(str, args)), "pid": child.pid,
+                                     "termination_requested": False, "forced": False}
+        try:
+            child.wait(10)
+        except subprocess.TimeoutExpired:
+            self.stop(child)
+            raise RuntimeError("command timeout: " + str(args))
+        self.stop(child)
+        return subprocess.CompletedProcess(args, child.returncode, stdout_path.read_text(),
+                                           (self.evidence / (name + ".log")).read_text())
 
     def graph(self, name):
         result = self.run(["pw-dump"])
