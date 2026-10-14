@@ -40,6 +40,7 @@
 //! an independent native runtime surviving UI closure; this crate has no UI deps.
 
 pub mod diagnostics;
+pub mod profiles;
 
 use serde::{Deserialize, Serialize};
 pub mod runtime;
