@@ -33,7 +33,7 @@
   "ran": [
     "docker build -t mixyard-desktop-native-sdk:local verification/desktop-native",
     "pnpm install --frozen-lockfile",
-    "pnpm check (TypeScript and 7 model tests)",
+    "pnpm check (TypeScript and 9 model tests)",
     "pnpm build",
     "cargo fmt --check --manifest-path apps/desktop/src-tauri/Cargo.toml",
     "pnpm tauri info (container)",

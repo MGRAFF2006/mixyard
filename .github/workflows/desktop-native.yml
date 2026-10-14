@@ -117,7 +117,7 @@ jobs:
             echo 'No live audio, IPC meter, device latency, signing or installer qualification.'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Labelled release binary
-        if: steps.build.outcome == 'success'
+        if: always() && steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: desktop-release-${{ matrix.os }}-${{ runner.arch }}-${{ github.sha }}
