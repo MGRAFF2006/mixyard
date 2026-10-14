@@ -24,6 +24,12 @@ run by CI. Native compilation is explicitly unavailable on Linux (exit 2), with
 no replacement HAL stub. The workflow uploads artifacts, toolchain, checks and
 SHA-256 manifest under `verification/macos-input/build/` (git-ignored).
 
+Leak checking is unavailable/unexecuted on the selected hosted Apple sanitizer
+runtime: [`detect_leaks=1` aborted before `main`](https://github.com/MGRAFF2006/mixyard/actions/runs/38641673720/job/116118444842).
+The recipe uses `ASAN_OPTIONS=detect_leaks=0`, retains address/undefined
+instrumentation and compiler warnings, and records this limit in the manifest.
+Other macOS toolchains' leak-checking support has not been established.
+
 The harness loads the exact signed bundle with `dlopen` into its ordinary process
 and tests release ABI/silence. A separately compiled `MIXYARD_INPUT_TESTING` source
 instance then exercises owned registry/UID translation/notifications, stereo

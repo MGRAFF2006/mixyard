@@ -56,7 +56,8 @@ import sys
 symbols = [line.split()[-1] for line in open(sys.argv[1]) if line.strip()]
 assert symbols == ['_MixyardInput_Create'], symbols
 PY
-ASAN_OPTIONS=detect_leaks=1 "$artifact_dir/abi-harness" "$bundle/Contents/MacOS/MixyardInput" > "$artifact_dir/harness.json"
+# Leak detection aborted before main on the selected hosted Apple sanitizer runtime.
+ASAN_OPTIONS=detect_leaks=0 "$artifact_dir/abi-harness" "$bundle/Contents/MacOS/MixyardInput" > "$artifact_dir/harness.json"
 python3 - "$artifact_dir" <<'PY'
 import hashlib, json, pathlib, platform, subprocess, sys
 root = pathlib.Path(sys.argv[1])
@@ -70,6 +71,7 @@ manifest = {
     'schema_version': 1, 'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
     'platform': platform.platform(), 'architecture': platform.machine(),
     'evidence_kind': 'artifact_compile_sign_and_in_process_ABI_only',
+    'leak_checking': 'UNEXECUTED: disabled after detect_leaks=1 aborted on selected hosted Apple runtime',
     'native_HAL_PCM': 'BLOCKED', 'producer_authentication': 'BLOCKED', 'production_apply': False,
     'sha256': {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)},
 }
