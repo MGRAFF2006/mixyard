@@ -2,8 +2,9 @@
 
 This lane is independent of the Rust policy CLI. `example.json` is an adapter
 sample, not the shared core config. There is no integration yet. Python 3.10+
-stdlib controls native PipeWire filter-chain streams; Python never sees PCM.
-Child stdin carries graph commands only, never samples. There is no custom
+stdlib plans native PipeWire filter-chain streams; Python never sees PCM.
+External graph mutation is disabled. Discovery, health observation and offline
+command/graph modeling remain available. There is no custom
 realtime engine, sample FIFO, media player, recorder or Bluetooth controller.
 The product contract is **user-defined mixes and device fanout**, without a
 fixed mix-count limit. Call/Record/Monitor are sample templates only. The current
@@ -42,28 +43,35 @@ python3 -B adapters/linux/mixyard_linux.py plan adapters/linux/example.json --du
 evidence, not measured sound. Missing/ambiguous sources and mismatched port maps
 produce disconnected-route diagnostics without selecting any default.
 
-To apply to an **already running disposable** server:
+`apply` is unavailable and exits nonzero before reading config, discovering a
+server, acquiring locks or starting clients. This includes disposable servers,
+armed outputs and repeated invocations; there is no unsafe override.
 
-```sh
-python3 -B adapters/linux/mixyard_linux.py apply adapters/linux/example.json \
-  --remote mixyard-test-audio --runtime-dir /path/to/private-test-runtime
-```
+The removed CLI controller could connect replacement audio after numeric
+node/port ID reuse between observation and link creation. Post-link readback
+cannot retract leaked audio. It also treated command exit zero as native
+control acknowledgment, which `pw-cli` does not guarantee. Consent does not
+solve either problem. A future backend must gate audio until identities are
+verified and native controls acknowledged, before mutation can return.
 
-`apply` stays in the foreground, reloads the config once a second, and owns its
-producer and control clients until interrupted. The runtime directory must be
-user-owned, private (0700), and contain the named server socket. Mutation rejects
-`pipewire-0` and accepts only `mixyard-test-*` names; never point this at a renamed
-live server. Use tmux for a long native run, check `df -h` first, retain 10 GiB,
-and inspect logs periodically. No packages or services are installed/reconfigured.
+To inspect a physical-output path offline, enable its explicit output in the
+config and run `plan --arm-outputs`. Microphone paths stay disconnected and
+`requiredMicConsents` lists each source/mix/output path, its selectors and token.
+After reviewing those paths and the config, repeat the plan with one
+`--consent-mic-path TOKEN` per required path. Every microphone feeding an output
+must have consent before that output appears in the route plan. These tokens
+acknowledge only the exact offline path; they never enable native mutation.
 
 ## Routing and limits
+
+These describe the proposed offline graph; no endpoints or routes are published.
 
 - `mixes[]` declares arbitrary unique `id`, display `name`, `channels`, `master`,
   `virtualInput`, explicit `excludeRoles`, and optional `excludeSources`.
   IDs determine stable names `mixyard.<instance>.mix.<id>.out`; display names do
-  not determine policy. `virtualInput=true` publishes a selectable Audio/Source;
-  false keeps an internal output stream. Multiple consumers may use a published
-  mix. The sample publishes mono Call and stereo Record, with internal Monitor.
+  not determine policy. `virtualInput=true` plans a selectable Audio/Source;
+  false plans an internal output stream. Multiple consumers are intended to use
+  a published mix. The sample plans mono Call and stereo Record, with internal Monitor.
 - `sources[].gains` maps mix IDs to independent sends; omitted sends mean zero.
   Each mix has separate native capture ports and per-source copy/mixer filter
   nodes. Gains live in that mix's builtin mixer controls, never source volume.
@@ -73,7 +81,12 @@ and inspect logs periodically. No packages or services are installed/reconfigure
   A mix can feed several outputs/devices. Every route has a separate native
   output filter/stream named `mixyard.<instance>.output.<id>.out`; changing one
   output gain does not change the mix or other outputs. Hardware routes require
-  both `enabled=true` and `--arm-outputs`. The sample's headphone route is off.
+  `enabled=true`, `--arm-outputs`, and explicit consent for every microphone path
+  feeding that output. Tokens bind the instance, source, mix and output config,
+  including selectors, gains, master, mute and channels; edits require renewed
+  consent. Muted/zero-master paths with configured positive sends still require
+  consent. This deliberately also invalidates consent on unrelated fields within
+  those objects. The sample's headphone route is off.
   No output is inferred from system defaults. Separate device clocks and rate
   adaptation are delegated to PipeWire, with native qualification still pending.
   Sample alignment between devices, especially Bluetooth, is not promised.
@@ -87,14 +100,12 @@ and inspect logs periodically. No packages or services are installed/reconfigure
   conversion remain.
 - Sends must be finite/nonnegative; masters are in [0,1]. Every mix must satisfy
   `master * sum(unmuted gains) <= 1`, including absent sources. Lower the master
-  explicitly to reserve headroom. Enabled outputs into the same configured or
-  resolved sink must also have combined conservative peak <=1. Nothing silently
-  normalizes other sends.
-- Gain/mute edits use native filter Props controls, leave links/endpoints intact,
-  and change only affected mix/output controls. Click-free ramps and atomic
-  native readback are not proved. Identical reapply creates nothing. Mix/output
-  additions and layout/slot/instance edits require explicit stop/start in this
-  prototype; rejected topology edits retain the previous graph.
+  explicitly to reserve headroom. Multiple enabled outputs into the same
+  configured or resolved sink are rejected regardless of headroom, mute, gain,
+  arming or consent. Nothing silently normalizes other sends.
+- Offline gain/mute edits change only affected mix/output coefficient plans and
+  retain the planned topology. There is no native gain/mute application, live
+  config reload, endpoint publication or reconciliation in this version.
 - Exact `node.name` plus optional `device.serial` / `application.id` selectors
   are supported. Serial is resolved through the parent Device when needed.
   Names may change with device profiles/drivers or app relaunch. IDs/PIDs are
@@ -116,48 +127,26 @@ and inspect logs periodically. No packages or services are installed/reconfigure
 
 ## Ownership and failure behavior
 
-All producer nodes carry `mixyard.owner=<instance>`. Each long-lived control
-client owns one tagged **non-lingering** link. Closing that client releases just
-its link; no global `destroy`, unlink-all, volume change, route move, metadata or
-default-device command exists. Existing tagged nodes are not adopted/destroyed.
-The remote has a single-controller lock. An unexpected unowned internal input/output
-route into the producer aborts the session; it is never deleted. Ordinary
-published-mix consumer links are allowed. This does not police other applications'
-fallback choices or user-modified mix source volumes.
+Planned producer nodes carry `mixyard.owner=<instance>` and disable autoconnect,
+fallback and movement. These are proposed native properties, not evidence of
+native isolation. No graph mutation or reconciliation code remains: `apply`
+always fails, so malformed edits, rejected topology, server errors, ID reuse,
+control rejection or repeated disappearance cannot leave this adapter's routes
+active. There are no active native controls to acknowledge or link repair
+counters to reset. External applications and defaults are never changed.
 
-- Missing source: remove only affected owned links; other source/mix links stay.
-  Endpoints remain, and unconnected native input ports are expected to supply
-  silence (native PCM gate pending). Reappearance of the exact unique selector
-  repairs those links. Each observed edge identity has a total budget of three
-  creation/repair attempts, including successes, to stop policy oscillation.
-  Endpoint readiness is also checked with a bounded wait.
-- Controller exit/crash: normal cleanup stops only its children. Linux parent
-  death signals also terminate producer/link clients after SIGKILL. This is a
-  fail-closed lifetime, **not** persistent endpoints across controller restarts.
-  Real process cleanup was checked; PipeWire crash-mid-mutation leakage was not.
-- Producer failure: controller detects exit, releases owned link clients and
-  reports failure. No silent producer restart. Endpoints and attached consumer
-  links disappear; downstream apps may stop, error, or choose their own fallback.
-- Server failure: discovery fails, owned children are stopped, controller exits
-  nonzero. Endpoint re-publication needs an explicit restart. Numeric object IDs
-  change across server restarts; semantic names are reused where possible.
-- WirePlumber restart: manual routes should survive; missing owned links are
-  reconciled with bounded retries. No native policy recovery claim is made until
-  WirePlumber tests pass. The adapter does not recover profiles or claim to
-  prevent defaults changing outside its own streams.
-- Invalid config edits and topology changes retain the previous graph; invalid
-  initial config exits nonzero. Use atomic config replacement and validate with
-  `plan` first. A failed native control command ends the session and releases
-  endpoints. Native readback/rollback of a partially accepted control update
-  remains a gate.
+Before restoring a controller, require fresh observations and last-accepted-config
+safety reconciliation even when edited config is rejected. Require a lifetime
+per-identity creation/repair budget across temporary disappearance, identity-safe
+gated link creation, acknowledged controls with fail-closed handling of partial
+updates, and deterministic cleanup during mutation. Do not restore the retired
+CLI implementation behind an opt-in flag. Downstream application fallback remains
+a separate native qualification gate.
 
-Steady graph repair uses CLI observations, not an atomic native transaction.
-Transient node/port ID reuse between observation and link creation remains a
-race to qualify/fix before protected-routing claims. Serials detect changes
-between observations; they do not make the link-factory request conditional.
-The dedicated idle control process per link is a deliberately bounded prototype
-tradeoff, not a final event-driven controller. The realtime graph never waits
-for Python or these control processes.
+A retained Linux process-lifetime helper is tested using an ordinary sleeping
+child. Atomic PID publication and a bounded handshake expose no partial PID;
+parent SIGKILL terminates the child. This utility test does not start PipeWire,
+prove native graph cleanup or provide an alternate application path.
 
 ## Evidence and native prerequisites
 
@@ -168,11 +157,11 @@ Nothing was installed and no live graph was changed.
 
 Offline tests interpret emitted native mixer coefficients: scalar 0.2 produces
 Call 0.2, Record [0.1,0.1], Monitor [0,0]. They check channel rules, headroom,
-feedback rejection, selectors, armed outputs, custom IDs/names, twelve configured
+feedback rejection, selectors, path-specific microphone consent and invalidation,
+configured/resolved sink convergence rejection, custom IDs/names, twelve configured
 mixes, sixteen-source mixer cascades, independent two-device output gain planning,
-idempotent control planning,
-mock controller ownership/cleanup, and actual child termination after controller
-SIGKILL. **None of this proves native PCM, dropout-free audio or sound quality.**
+stable control planning, unconditional mutation rejection before external access,
+and actual child termination after parent SIGKILL. **None of this proves native PCM, dropout-free audio or sound quality.**
 `snapshot` on this host correctly returns `dependency-unavailable` with exit 1.
 
 Native prerequisite set, to be provided separately rather than installed here:
@@ -192,7 +181,8 @@ Native prerequisite set, to be provided separately rather than installed here:
    `pw-top` or a profiler exposing xrun/error counters. Test consumer PCM must not
    pass through the controller or shell sample pipes. There is no native build.
 
-Still-blocked native acceptance:
+Still-blocked native acceptance (requires a replacement backend before these
+checks can qualify this adapter):
 
 - Measure simultaneous source-to-Call unity, Record half amplitude, Monitor
   silence; then change only Record. Capture with two simultaneous consumers of
@@ -231,6 +221,7 @@ recreating its grouping and policy system.
   [filter-chain and builtin mixer](https://docs.pipewire.org/page_module_filter_chain.html),
   [base client filter configuration](https://github.com/PipeWire/pipewire/blob/master/src/daemon/filter-chain.conf.in),
   [pw-cli local module/link lifecycle](https://docs.pipewire.org/page_man_pw-cli_1.html),
+  [pw-cli asynchronous error handling](https://github.com/PipeWire/pipewire/blob/master/src/tools/pw-cli.c),
   [link factory](https://github.com/PipeWire/pipewire/blob/master/src/modules/module-link-factory.c).
 - [WirePlumber linking/fallback properties](https://pipewire.pages.freedesktop.org/wireplumber/policies/linking.html),
   [Bluetooth profiles/codecs/hardware volume](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/bluetooth.html),

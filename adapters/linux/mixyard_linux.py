@@ -3,22 +3,23 @@
 
 import argparse
 import ctypes
-import fcntl
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import subprocess
 import sys
-import tempfile
-import time
 
 PREFIX = "mixyard."
 TAG = "mixyard.owner"
-TOOLS = ("pipewire", "pw-cli", "pw-dump")
+MUTATION_UNAVAILABLE = (
+    "external graph mutation unavailable: pw-* CLI linking cannot enforce observed "
+    "node/port identities before audio flows, and command exit status does not "
+    "acknowledge native gain/mute. Use snapshot, health, or offline plan; no override."
+)
 
 
 def props(obj):
@@ -123,7 +124,7 @@ def validate(config):
             raise ValueError("excludeSources references an unknown source")
         if peak(config, mix) > 1:
             raise ValueError(f"{mix['id']}: conservative peak bound exceeds 1; lower sends/master")
-    sink_bounds = {}
+    sink_selectors = set()
     for output in config["outputs"]:
         checked_keys(output, ("id", "mix", "selector", "channels", "gain", "enabled"), "output")
         oid = identifier(output.get("id"), "output ID")
@@ -138,10 +139,9 @@ def validate(config):
         if not isinstance(output.get("enabled", False), bool):
             raise ValueError("output.enabled must be boolean")
         if output.get("enabled", False):
-            mix = next(m for m in config["mixes"] if m["id"] == output["mix"])
-            sink_bounds[selected] = sink_bounds.get(selected, 0) + output["gain"] * peak(config, mix)
-            if sink_bounds[selected] > 1:
-                raise ValueError("combined output peak bound at explicit sink exceeds 1")
+            if selected in sink_selectors:
+                raise ValueError("multiple enabled outputs select the same configured sink")
+            sink_selectors.add(selected)
     return config
 
 
@@ -237,11 +237,48 @@ def filter_module(config, family, item, sources, output_layout, virtual):
         "capture.props": capture, "playback.props": playback}}
 
 
-def plan(config, objects, arm_outputs=False):
+def required_mic_consents(config):
+    """Bind each configured mic/output path to its identities and controls, even muted."""
+    result = []
+    mixes = {mix["id"]: mix for mix in config["mixes"]}
+    for output in config["outputs"]:
+        if not output.get("enabled", False):
+            continue
+        mix = mixes[output["mix"]]
+        for source in config["sources"]:
+            if source["role"] != "mic" or not source["gains"].get(mix["id"], 0):
+                continue
+            path = {"instance": config["instance"], "source": source, "mix": mix, "output": output}
+            token = hashlib.sha256(json.dumps(path, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            result.append({"source": source["id"], "mix": mix["id"], "output": output["id"],
+                           "sourceSelector": source["selector"], "outputSelector": output["selector"],
+                           "token": token})
+    return result
+
+
+def plan(config, objects, arm_outputs=False, mic_consents=()):
     validate(config)
     diagnostics, routes, resolved_ids = [], [], set()
     mixes = {mix["id"]: mix for mix in config["mixes"]}
-    active_outputs = [o for o in config["outputs"] if o.get("enabled", False) and arm_outputs]
+    required = required_mic_consents(config)
+    blocked_outputs = {path["output"] for path in required if path["token"] not in mic_consents}
+    active_outputs = [o for o in config["outputs"] if o.get("enabled", False) and arm_outputs
+                      and o["id"] not in blocked_outputs]
+    if arm_outputs:
+        for oid in sorted(blocked_outputs):
+            diagnostics.append({"code": "mic-consent-required", "output": oid,
+                                "reason": "explicit consent required for every configured microphone path"})
+    # Reject convergence even when disarmed, muted, attenuated or missing a port map.
+    output_nodes, resolved_sinks = {}, set()
+    for output in config["outputs"]:
+        if not output.get("enabled", False):
+            continue
+        found = matches(objects, output["selector"], ("Audio/Sink",))
+        output_nodes[output["id"]] = found
+        if len(found) == 1:
+            if found[0]["id"] in resolved_sinks:
+                raise ValueError("multiple enabled outputs resolve to the same sink")
+            resolved_sinks.add(found[0]["id"])
     active_mixes = {mid for mid, mix in mixes.items() if mix["virtualInput"]}
     active_mixes.update(o["mix"] for o in active_outputs)
     offset = 0
@@ -263,18 +300,13 @@ def plan(config, objects, arm_outputs=False):
                     routes.append({"from": source["selector"], "fromChannel": channel,
                                    "to": node_name(config, "mix", mid, "in"), "toChannel": f"AUX{offset+index}"})
         offset += len(source["channels"])
-    sink_bounds = {}
     for output in active_outputs:
-        found = matches(objects, output["selector"], ("Audio/Sink",))
+        found = output_nodes[output["id"]]
         ports = port_map(objects, found[0], "in", output["channels"]) if len(found) == 1 else None
         if ports is None:
             diagnostics.append({"code": "output-disconnected", "output": output["id"], "reason": "explicit sink unavailable"})
             continue
         mix = mixes[output["mix"]]
-        sink_id = found[0]["id"]
-        sink_bounds[sink_id] = sink_bounds.get(sink_id, 0) + output["gain"] * peak(config, mix)
-        if sink_bounds[sink_id] > 1:
-            raise ValueError("combined output peak bound at resolved sink exceeds 1")
         for index, channel in enumerate(mix["channels"]):
             routes.append({"from": node_name(config, "mix", mix["id"], "out"), "fromChannel": channel,
                            "to": node_name(config, "output", output["id"], "in"), "toChannel": f"AUX{index}"})
@@ -293,7 +325,8 @@ def plan(config, objects, arm_outputs=False):
         mix = mixes[output["mix"]]
         modules.append(filter_module(config, "output", output,
             [{"id": "mix", "channels": mix["channels"], "gain": output["gain"]}], output["channels"], False))
-    return {"evidence": "command-plan-only", "diagnostics": diagnostics, "routes": routes,
+    return {"evidence": "command-plan-only", "mutationAvailable": False,
+            "requiredMicConsents": required, "diagnostics": diagnostics, "routes": routes,
             "producerConfig": {"context.properties": {"log.level": 1},
                                "context.spa-libs": {"audio.convert.*": "audioconvert/libspa-audioconvert",
                                                     "support.*": "support/libspa-support"},
@@ -335,7 +368,7 @@ def discover(remote):
                     envelope["diagnostics"].append({"code": "node-error", "severity": "error",
                                                     "message": f"Audio node {name} reports error state"})
         envelope["diagnostics"].append({"code": "native-transport-unverified", "severity": "warning",
-            "message": "Discovery verified only; prototype transport/recovery needs disposable native qualification. node.name IDs are profile-dependent; reject duplicate matches."})
+            "message": "Discovery only; external mutation disabled pending identity-safe gated linking, acknowledged controls and native qualification. node.name IDs are profile-dependent; reject duplicate matches."})
         envelope["diagnostics"].append({"code": "xrun-counters-unavailable", "severity": "warning",
             "message": "pw-dump is not a gap/xrun measurement. Use native profiler/pw-top and PCM qualification; no counter does not mean zero dropouts."})
         return envelope, 0
@@ -375,7 +408,7 @@ def health(remote, iterations):
 
 
 def death_signal(parent):
-    # Fail closed even if the controller is SIGKILLed during mutation (Linux only).
+    # Retained process-lifetime utility (Linux only); apply never starts clients.
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
         raise OSError(ctypes.get_errno(), "prctl(PR_SET_PDEATHSIG)")
@@ -386,49 +419,6 @@ def death_signal(parent):
 def spawn(command, env, **kwargs):
     parent = os.getpid()
     return subprocess.Popen(command, env=env, preexec_fn=lambda: death_signal(parent), **kwargs)
-
-
-def stop(child):
-    if child is not None:
-        if child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                child.kill()
-        child.wait()
-
-
-def runtime_links(planned, objects, owner):
-    """Numeric IDs exist only for this observation. Include serials in the comparison key."""
-    edges = []
-    for route in planned["routes"]:
-        ends = []
-        for side, direction in (("from", "out"), ("to", "in")):
-            selected = route[side]
-            if isinstance(selected, str):
-                found = [o for o in objects if kind(o, "Node")
-                         and props(o).get("node.name") == selected and props(o).get(TAG) == owner]
-            else:
-                found = matches(objects, selected, ("Audio/Source", "Stream/Output/Audio", "Audio/Sink"))
-            if len(found) != 1:
-                break
-            ports = [o for o in objects if kind(o, "Port")
-                     and str(props(o).get("node.id")) == str(found[0]["id"])
-                     and props(o).get("port.direction") == direction
-                     and props(o).get("audio.channel") == route[side + "Channel"]]
-            if len(ports) != 1:
-                break
-            ends += [found[0]["id"], ports[0]["id"], props(ports[0]).get("object.serial")]
-        if len(ends) == 6:
-            edges.append(tuple(ends))
-    return tuple(sorted(edges))
-
-
-def link_command(edge, owner):
-    out_node, out_port, _, in_node, in_port, _ = edge
-    return (f"create-link {out_node} {out_port} {in_node} {in_port} "
-            f"{{ object.linger = false {TAG} = {json.dumps(owner)} }}\n")
 
 
 def topology(producer_config):
@@ -447,136 +437,9 @@ def controls(producer_config):
             for mod in producer_config["context.modules"] if "args" in mod}
 
 
-def control_command(name, values):
-    params = [item for key, value in values.items() for item in (key, value)]
-    return ["set-param", name, "Props", json.dumps({"params": params})]
-
-
 def apply(config_path, remote, runtime_dir, arm_outputs, interval, iterations=None):
-    """One foreground owner; repeat reconciliation without touching foreign objects."""
-    missing = [name for name in TOOLS if not shutil.which(name)]
-    if missing:
-        raise ValueError("missing native prerequisites: " + ", ".join(missing))
-    # Mutation is deliberately limited to disposable servers in this first batch.
-    runtime = Path(runtime_dir).resolve()
-    if not runtime.is_dir() or runtime.stat().st_uid != os.getuid() or runtime.stat().st_mode & 0o077:
-        raise ValueError("runtime-dir must be an existing private (0700), user-owned directory")
-    if remote == "pipewire-0" or not re.fullmatch(r"mixyard-test-[a-zA-Z0-9_-]+", remote):
-        raise ValueError("prototype mutation requires a disposable mixyard-test-* remote")
-    if not (runtime / remote).is_socket():
-        raise ValueError("disposable server socket missing in runtime-dir")
-    env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime), PIPEWIRE_RUNTIME_DIR=str(runtime),
-               PIPEWIRE_REMOTE=remote)
-    for key in ("PIPEWIRE_CONFIG_DIR", "PIPEWIRE_CONFIG_PREFIX", "PIPEWIRE_CONFIG_NAME"):
-        env.pop(key, None)
-    producer = None
-    linkers, failures = {}, {}
-    active_topology, active_controls = None, {}
-    readiness_attempts = 0
-    # Locks are scoped to the remote, not a config filename, preventing competing owners.
-    with (runtime / (remote + ".mixyard.lock")).open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with tempfile.TemporaryDirectory(prefix="mixyard-controller-", dir=runtime) as state:
-            try:
-                count = 0
-                while iterations is None or count < iterations:
-                    count += 1
-                    try:
-                        config = validate(json.loads(Path(config_path).read_text()))
-                    except (OSError, ValueError, TypeError) as error:
-                        if producer is None:
-                            raise
-                        print(f"config edit rejected; previous graph retained: {error}", file=sys.stderr)
-                        time.sleep(interval)
-                        continue
-                    observed = subprocess.run(["pw-dump", "-r", remote], env=env,
-                        check=True, text=True, capture_output=True, timeout=10)
-                    objects = json.loads(observed.stdout)
-                    owner = config["instance"]
-                    planned = plan(config, objects, arm_outputs)
-                    wanted_topology = topology(planned["producerConfig"])
-                    wanted_controls = controls(planned["producerConfig"])
-                    if producer is None:
-                        if any(TAG in props(o) and props(o).get(TAG) == owner for o in dump_with_env(remote, env)):
-                            raise ValueError("existing owned objects: refusing to adopt or destroy another producer")
-                        path = Path(state) / "producer.conf"
-                        path.write_text(json.dumps(planned["producerConfig"]))
-                        producer_env = dict(env, PIPEWIRE_CONFIG_DIR=state)
-                        producer = spawn(["pipewire", "-c", str(path)], producer_env, stdout=sys.stderr)
-                        active_topology, active_controls = wanted_topology, wanted_controls
-                        print("producer-started (native audio unverified)", file=sys.stderr)
-                        time.sleep(interval)
-                        continue
-                    if producer.poll() is not None:
-                        raise ValueError(f"producer exited {producer.returncode}; routes released")
-                    if wanted_topology != active_topology:
-                        print("topology edit rejected; stop/start explicitly to change layouts or source slots", file=sys.stderr)
-                        time.sleep(interval)
-                        continue
-                    names = [props(o).get("node.name") for o in objects if kind(o, "Node")
-                             and props(o).get(TAG) == owner]
-                    required = [mod["args"][side]["node.name"] for mod in planned["producerConfig"]["context.modules"]
-                                if "args" in mod for side in ("capture.props", "playback.props")]
-                    if any(names.count(name) != 1 for name in required):
-                        readiness_attempts += 1
-                        if readiness_attempts > 3:
-                            raise ValueError("owned endpoints failed to become uniquely available; releasing producer")
-                        print("owned endpoints not ready; native audio unverified", file=sys.stderr)
-                        time.sleep(interval)
-                        continue
-                    readiness_attempts = 0
-                    for name, values in wanted_controls.items():
-                        if active_controls.get(name) != values:
-                            nodes = [o for o in objects if kind(o, "Node") and props(o).get("node.name") == name
-                                     and props(o).get(TAG) == owner]
-                            if len(nodes) != 1:
-                                raise ValueError("owned control target unavailable or ambiguous")
-                            subprocess.run(["pw-cli", "-r", remote] + control_command(name, values), env=env,
-                                           check=True, stdout=subprocess.DEVNULL, timeout=10)
-                    active_controls = wanted_controls
-                    expected = runtime_links(planned, objects, owner)
-                    # Consumers may connect to published mixes. Internal routing ports stay protected.
-                    protected_inputs = {str(o["id"]) for o in objects if kind(o, "Node")
-                        and props(o).get(TAG) == owner and str(props(o).get("node.name", "")).endswith(".in")}
-                    protected_outputs = {str(o["id"]) for o in objects if kind(o, "Node")
-                        and props(o).get(TAG) == owner and props(o).get("media.class") == "Stream/Output/Audio"}
-                    foreign = [o for o in objects if kind(o, "Link") and props(o).get(TAG) != owner
-                               and (str(props(o).get("link.input.node")) in protected_inputs
-                                    or str(props(o).get("link.output.node")) in protected_outputs)]
-                    if foreign:
-                        raise ValueError("unowned links touch owned nodes; refusing repair and releasing producer")
-                    observed_edges = {(str(props(o).get("link.output.port")), str(props(o).get("link.input.port")))
-                                      for o in objects if kind(o, "Link") and props(o).get(TAG) == owner}
-                    for edge in set(linkers) - set(expected):
-                        stop(linkers.pop(edge))
-                        failures.pop(edge, None)
-                    for edge in expected:
-                        child = linkers.get(edge)
-                        if child is not None and child.poll() is None and (str(edge[1]), str(edge[4])) in observed_edges:
-                            continue
-                        stop(child)
-                        failures[edge] = failures.get(edge, 0) + 1
-                        if failures[edge] > 3:
-                            raise ValueError("owned link creation/repair budget exhausted; releasing producer")
-                        # Each control client owns one non-lingering link: close only the changed edge.
-                        child = spawn(["pw-cli", "-r", remote], env, stdin=subprocess.PIPE,
-                                      stdout=subprocess.DEVNULL, text=True)
-                        linkers[edge] = child
-                        child.stdin.write(link_command(edge, owner))
-                        child.stdin.flush()
-                    print(json.dumps({"observedRoutes": len(observed_edges), "desiredRoutes": len(expected),
-                                      "diagnostics": planned["diagnostics"], "verifiedAudio": False}), file=sys.stderr)
-                    time.sleep(interval)
-            finally:
-                for child in linkers.values():
-                    stop(child)
-                stop(producer)
-
-
-def dump_with_env(remote, env):
-    result = subprocess.run(["pw-dump", "-r", remote], env=env, check=True,
-                            capture_output=True, text=True, timeout=10)
-    return json.loads(result.stdout)
+    """Fail before any file, server or process access; the unsafe controller is retired."""
+    raise ValueError(MUTATION_UNAVAILABLE)
 
 
 def main():
@@ -588,10 +451,13 @@ def main():
     profiler.add_argument("--remote", required=True)
     profiler.add_argument("--iterations", type=int, choices=range(1, 21), default=3)
     for name in ("plan", "apply"):
-        cmd = commands.add_parser(name)
+        cmd = commands.add_parser(name, help="offline command plan" if name == "plan"
+                                  else "unavailable: native identity/control safety gates unresolved")
         cmd.add_argument("config", type=Path)
         cmd.add_argument("--arm-outputs", action="store_true")
         if name == "plan":
+            cmd.add_argument("--consent-mic-path", action="append", default=[], metavar="TOKEN",
+                             help="consent to one exact microphone/output path from requiredMicConsents")
             cmd.add_argument("--dump", type=Path, required=True, help="saved pw-dump JSON; offline only")
         else:
             cmd.add_argument("--remote", required=True)
@@ -609,11 +475,10 @@ def main():
     try:
         if args.command == "plan":
             print(json.dumps(plan(json.loads(args.config.read_text()), json.loads(args.dump.read_text()),
-                                  args.arm_outputs), indent=2))
+                                  args.arm_outputs, args.consent_mic_path), indent=2))
         else:
             if not math.isfinite(args.interval) or args.interval < 0.1:
                 raise ValueError("interval must be finite and >= 0.1 seconds")
-            signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
             apply(args.config, args.remote, args.runtime_dir, args.arm_outputs, args.interval)
         return 0
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:

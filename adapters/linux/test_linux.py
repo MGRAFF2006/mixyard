@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import signal
-import socket
+import select
 import subprocess
 import sys
 import tempfile
@@ -27,6 +27,16 @@ def source_graph(channels=("MONO",)):
     return [obj(10, "Node", **{"node.name": "mixyard-test-mic", "media.class": "Audio/Source"})] + [
         obj(11+i, "Port", **{"node.id": 10, "port.direction": "out", "audio.channel": channel,
                             "object.serial": 100+i}) for i, channel in enumerate(channels)]
+
+
+def sink_graph(name="headphones", oid=30):
+    return [obj(oid, "Node", **{"node.name": name, "media.class": "Audio/Sink"})] + [
+        obj(oid+1+i, "Port", **{"node.id": oid, "port.direction": "in", "audio.channel": c})
+        for i, c in enumerate(("FL", "FR"))]
+
+
+def consent_tokens(config):
+    return [path["token"] for path in m.required_mic_consents(config)]
 
 
 def evaluate(module, samples):
@@ -133,8 +143,12 @@ class LinuxOffline(unittest.TestCase):
         graph += [obj(31+i, "Port", **{"node.id": 30, "port.direction": "in", "audio.channel": c})
                   for i, c in enumerate(("FL", "FR"))]
         self.assertEqual(len(m.plan(self.config, graph)["routes"]), 2)
-        self.assertEqual(len(m.plan(self.config, graph, True)["routes"]), 7)
-        missing = m.plan(self.config, source_graph(), True)
+        unconsented = m.plan(self.config, graph, True)
+        self.assertEqual(len(unconsented["routes"]), 2)
+        self.assertEqual(unconsented["diagnostics"][0]["code"], "mic-consent-required")
+        tokens = consent_tokens(self.config)
+        self.assertEqual(len(m.plan(self.config, graph, True, tokens)["routes"]), 7)
+        missing = m.plan(self.config, source_graph(), True, tokens)
         self.assertEqual(missing["diagnostics"][0]["code"], "output-disconnected")
         for mod in mix_modules(missing):
             for side in ("capture.props", "playback.props"):
@@ -171,12 +185,12 @@ class LinuxOffline(unittest.TestCase):
             graph.append(obj(oid, "Node", **{"node.name": f"sink-{index}", "media.class": "Audio/Sink"}))
             graph += [obj(oid+1+i, "Port", **{"node.id": oid, "port.direction": "in", "audio.channel": c})
                       for i, c in enumerate(("FL", "FR"))]
-        before = m.plan(self.config, graph, True)
+        before = m.plan(self.config, graph, True, consent_tokens(self.config))
         modules = before["producerConfig"]["context.modules"][-2:]
         self.assertEqual([evaluate(mod, [0.1, -0.1]) for mod in modules], [[0.1, -0.1], [0.025, -0.025]])
         self.assertEqual(len(before["routes"]), 10)
         self.config["outputs"][0]["gain"] = 0.5
-        after = m.plan(self.config, graph, True)
+        after = m.plan(self.config, graph, True, consent_tokens(self.config))
         self.assertEqual(before["routes"], after["routes"])
         self.assertEqual(m.topology(before["producerConfig"]), m.topology(after["producerConfig"]))
         self.assertEqual(m.controls(before["producerConfig"])["mixyard.mathis.output.device_1.in"],
@@ -185,7 +199,7 @@ class LinuxOffline(unittest.TestCase):
             output.update(gain=1, selector={"node.name": "sink-0"})
         third = dict(self.config["outputs"][0], id="third")
         self.config["outputs"].append(third)
-        with self.assertRaisesRegex(ValueError, "combined output peak"):
+        with self.assertRaisesRegex(ValueError, "same configured sink"):
             m.validate(self.config)
 
     def test_native_mixer_cascade_avoids_eight_source_product_limit(self):
@@ -219,99 +233,85 @@ class LinuxOffline(unittest.TestCase):
         self.assertNotIn("private data", json.dumps(result))
         self.assertIn("xrun-counters-unavailable", json.dumps(result))
 
-    def test_controller_idempotence_and_owned_cleanup_simulation(self):
-        self.config["mixes"][0]["master"] = 0.5
-        second = deepcopy(self.config["sources"][0])
-        second.update(id="shared", selector={"node.name": "shared-app"}, role="application")
-        self.config["sources"].append(second)
-        graph = source_graph()
-        graph += [obj(20, "Node", **{"node.name": "shared-app", "media.class": "Stream/Output/Audio"}),
-                  obj(21, "Port", **{"node.id": 20, "audio.channel": "MONO",
-                                     "port.direction": "out", "object.serial": 200})]
-        modules = [mod for mod in m.plan(self.config, graph)["producerConfig"]["context.modules"] if "args" in mod]
-        for index, module in enumerate(modules):
-            oid = 100 + index * 10
-            graph.append(obj(oid, "Node", **module["args"]["capture.props"]))
-            graph.append(obj(oid+5, "Node", **module["args"]["playback.props"]))
-            for channel in range(2):
-                graph.append(obj(oid+1+channel, "Port", **{"node.id": oid, "audio.channel": f"AUX{channel}",
-                                 "port.direction": "in", "object.serial": oid+1000+channel}))
-        # A consumer's own link from Call is allowed and never edited by the controller.
-        graph += [obj(701, "Link", **{"link.output.node": 105, "link.input.node": 901})]
-        # An unrelated route remains byte-for-byte unchanged.
-        foreign = obj(700, "Link", **{"link.output.node": 800, "link.input.node": 900})
-        graph.append(foreign)
-        initial = deepcopy(foreign)
-        children, control_commands = [], []
-        ticks = 0
+    def test_mutation_disabled_before_any_external_access(self):
+        # No command status, stale config, ID reuse or repeated call can enable mutation.
+        with patch.object(m.subprocess, "run") as run, patch.object(m, "spawn") as spawn, \
+                patch.object(Path, "read_text") as read:
+            for remote in ("pipewire-0", "mixyard-test-offline"):
+                for armed in (False, True):
+                    for _ in range(5):
+                        with self.assertRaisesRegex(ValueError, "external graph mutation unavailable"):
+                            m.apply(Path("missing.json"), remote, "/missing", armed, 0.1)
+            run.assert_not_called()
+            spawn.assert_not_called()
+            read.assert_not_called()
+        with patch.object(sys, "argv", ["mixyard-linux", "apply", "missing.json",
+                "--remote", "mixyard-test-offline", "--runtime-dir", "/missing", "--arm-outputs"]), \
+                patch.object(m.subprocess, "run") as run, patch.object(m, "spawn") as spawn, \
+                patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(m.main(), 1)
+            self.assertIn("no override", stderr.getvalue())
+            run.assert_not_called()
+            spawn.assert_not_called()
 
-        class Child:
-            def __init__(self, command):
-                self.command, self.returncode, self.stdin = command, None, io.StringIO()
-                self.edge = None
+    def test_mic_consent_is_per_path_and_invalidated_by_edits(self):
+        self.config["outputs"] = [dict(self.config["outputs"][0], id=f"out_{i}", mix="record",
+            enabled=True, selector={"node.name": f"sink-{i}"}) for i in range(2)]
+        graph = source_graph() + sink_graph("sink-0", 30) + sink_graph("sink-1", 40)
+        paths = m.required_mic_consents(self.config)
+        one = m.plan(self.config, graph, True, [paths[0]["token"]])
+        self.assertTrue(any(r["to"] == {"node.name": "sink-0"} for r in one["routes"]))
+        self.assertFalse(any(r["to"] == {"node.name": "sink-1"} for r in one["routes"]))
+        self.assertEqual(one["diagnostics"][0]["code"], "mic-consent-required")
+        self.assertFalse(one["mutationAvailable"])
+        tokens = consent_tokens(self.config)
+        for edit in (
+            lambda c: c["sources"][0]["gains"].update(record=0.25),
+            lambda c: c["sources"][0]["selector"].update({"device.serial": "replacement"}),
+            lambda c: c["sources"][0].update(mute=True),
+            lambda c: c["mixes"][1].update(master=0.5),
+            lambda c: c["outputs"][0].update(gain=0.25),
+            lambda c: c["outputs"][0]["selector"].update({"device.serial": "replacement"}),
+        ):
+            config = deepcopy(self.config)
+            edit(config)
+            planned = m.plan(config, graph, True, tokens)
+            self.assertFalse(any(r["to"] == config["outputs"][0]["selector"] for r in planned["routes"]))
+            self.assertTrue(any(d["code"] == "mic-consent-required" for d in planned["diagnostics"]))
+        # Muted/zero-master paths still need consent, so unmuting cannot inherit consent.
+        self.config["sources"][0]["mute"] = True
+        self.config["mixes"][1]["master"] = 0
+        self.assertEqual(len(m.required_mic_consents(self.config)), 2)
+        muted_tokens = consent_tokens(self.config)
+        self.config["sources"][0]["mute"] = False
+        self.assertTrue(set(muted_tokens).isdisjoint(consent_tokens(self.config)))
+        # With two microphones in one path, consenting to only one keeps the sink disconnected.
+        self.config["mixes"][1]["master"] = 1
+        other = deepcopy(self.config["sources"][0])
+        other.update(id="other", selector={"node.name": "other"}, gains={"record": 0.25})
+        self.config["sources"].append(other)
+        paths = m.required_mic_consents(self.config)
+        only_first_mic = [p["token"] for p in paths if p["source"] == "mic"]
+        planned = m.plan(self.config, graph, True, only_first_mic)
+        self.assertFalse(any(isinstance(r["to"], dict) for r in planned["routes"]))
 
-            def poll(self):
-                return self.returncode
-
-            def terminate(self):
-                self.returncode = 0
-                if self.edge in graph:
-                    graph.remove(self.edge)
-
-            def wait(self, **_):
-                return self.returncode
-
-        def spawned(command, env, **kwargs):
-            child = Child(command)
-            children.append(child)
-            return child
-
-        def tick(_):
-            nonlocal ticks
-            ticks += 1
-            for child in children:
-                if child.command[0] == "pw-cli" and child.edge is None and child.poll() is None:
-                    line = child.stdin.getvalue().split()
-                    child.edge = obj(400+len(children), "Link", **{m.TAG: "mathis", "link.output.port": int(line[2]),
-                                     "link.input.port": int(line[4])})
-                    graph.append(child.edge)
-            if ticks == 3:
-                self.config["sources"][0]["gains"]["record"] = 0.25
-                path.write_text(json.dumps(self.config))
-            if ticks == 4:
-                path.write_text("{")
-            if ticks == 5:
-                path.write_text(json.dumps(self.config))
-                graph[:] = [o for o in graph if o["id"] not in (10, 11)
-                            and not (m.kind(o, "Link") and m.props(o).get("link.output.port") == 11)]
-            if ticks == 6:
-                self.assertEqual(sum(c.poll() is None for c in children), 3)  # Producer + shared Call/Record.
-
-        def read_dump(*args, **kwargs):
-            if args[0][0] == "pw-cli":
-                control_commands.append(args[0])
-            return subprocess.CompletedProcess(args[0], 0, stdout=json.dumps(graph))
-
-        with tempfile.TemporaryDirectory() as directory:
-            runtime = Path(directory)
-            sock = socket.socket(socket.AF_UNIX)
-            sock.bind(str(runtime / "mixyard-test-offline"))
-            path = runtime / "config.json"
-            path.write_text(json.dumps(self.config))
-            with patch.object(m.shutil, "which", return_value="mock-tool"), \
-                    patch.object(m.subprocess, "run", side_effect=read_dump), \
-                    patch.object(m, "dump_with_env", return_value=[]), \
-                    patch.object(m, "spawn", side_effect=spawned), \
-                    patch.object(m.time, "sleep", side_effect=tick):
-                m.apply(path, "mixyard-test-offline", runtime, False, 0.1, iterations=7)
-            sock.close()
-        self.assertEqual([c.command[0] for c in children], ["pipewire"] + ["pw-cli"] * 4)
-        self.assertEqual(len(control_commands), 1)
-        self.assertEqual(control_commands[0][3:6], ["set-param", "mixyard.mathis.mix.record.in", "Props"])
-        self.assertTrue(all(c.poll() == 0 for c in children))
-        self.assertEqual(foreign, initial)
-        self.assertNotIn("destroy", " ".join(" ".join(c.command) for c in children))
-        self.assertIn("object.linger = false", children[1].stdin.getvalue())
+    def test_destination_convergence_rejected_independent_of_peak_or_arming(self):
+        self.config["outputs"] = [dict(self.config["outputs"][0], id=f"out_{i}", mix="record",
+            enabled=True, gain=g, selector={"node.name": "headphones"}) for i, g in enumerate((1, 0.5))]
+        # Combined peak is only 0.75, but configured convergence is still rejected.
+        with self.assertRaisesRegex(ValueError, "same configured sink"):
+            m.plan(self.config, source_graph())
+        self.config["outputs"][1]["selector"]["device.serial"] = "same-device"
+        graph = source_graph() + sink_graph()
+        m.props(graph[2])["device.serial"] = "same-device"
+        for armed in (False, True):
+            for g in (0, 0.5):
+                self.config["outputs"][1]["gain"] = g
+                with self.assertRaisesRegex(ValueError, "same sink"):
+                    m.plan(self.config, graph, armed, consent_tokens(self.config))
+        # A disabled output does not converge.
+        self.config["outputs"][1]["enabled"] = False
+        m.plan(self.config, graph, True, consent_tokens(self.config))
 
     def test_health_reports_native_errors_without_claiming_zero_dropouts(self):
         table = ("S ID QUANT RATE WAIT BUSY W/Q B/Q ERR FORMAT NAME\n"
@@ -333,15 +333,35 @@ class LinuxOffline(unittest.TestCase):
     def test_parent_death_releases_child_process_not_audio_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             pidfile = Path(directory) / "child.pid"
-            code = ("import os,sys,time; import mixyard_linux as m; "
-                    "p=m.spawn([sys.executable,'-c','import time; time.sleep(30)'],dict(os.environ)); "
-                    "open(sys.argv[1],'w').write(str(p.pid)); time.sleep(30)")
-            parent = subprocess.Popen([sys.executable, "-c", code, str(pidfile)], cwd=HERE)
+            code = """
+import os, sys, time
+from pathlib import Path
+import mixyard_linux as m
+p = m.spawn([sys.executable, '-c', 'import time; time.sleep(30)'], dict(os.environ))
+pidfile = Path(sys.argv[1])
+staged = pidfile.with_suffix('.tmp')
+with staged.open('w') as stream:
+    print('staged', flush=True)
+    sys.stdin.readline()
+    stream.write(str(p.pid))
+staged.replace(pidfile)
+print('published', flush=True)
+time.sleep(30)
+"""
+            parent = subprocess.Popen([sys.executable, "-B", "-c", code, str(pidfile)], cwd=HERE,
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
+            def handshake(expected):
+                self.assertTrue(select.select([parent.stdout], [], [], 3)[0], "PID publisher not ready")
+                self.assertEqual(parent.stdout.readline().strip(), expected)
+
             try:
-                deadline = time.monotonic() + 3
-                while not pidfile.exists() and time.monotonic() < deadline:
-                    time.sleep(0.01)
-                self.assertTrue(pidfile.exists())
+                handshake("staged")
+                self.assertTrue(pidfile.with_suffix(".tmp").exists())
+                self.assertFalse(pidfile.exists())  # An incomplete write is never public.
+                parent.stdin.write("publish\n")
+                parent.stdin.flush()
+                handshake("published")
                 child_pid = int(pidfile.read_text())
                 parent.kill()
                 parent.wait(timeout=3)
@@ -362,6 +382,8 @@ class LinuxOffline(unittest.TestCase):
                 if parent.poll() is None:
                     parent.kill()
                 parent.wait()
+                parent.stdin.close()
+                parent.stdout.close()
 
 
 if __name__ == "__main__":
