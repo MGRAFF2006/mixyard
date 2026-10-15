@@ -1,0 +1,384 @@
+{
+  "milestone": "allowed-only enumeration diagnostic; incomplete transport",
+  "execution_base_revision": "4bdae512556e5711645c22b399f27bc1c9a8d398",
+  "execution_sources": "Dirty sources bound by per-run SHA256; latest run snapshots match executable source files below.",
+  "previous_manifest_sha256": "2ea0f5c6308dbb0d4b40ed2db28aeb5734649bd7eb563a738f37bb56c7f70e63",
+  "source_sha256": {
+    "adapters/linux/server-proof/module.c": "ddf8f3992d89fdbbaa9aa2e2e32dd37bf217f0f06571b7d958fdf68c3f5e4b43",
+    "verification/linux-server/fixture.c": "11222f8713c7f2a1d4bed9e4b164f3902626d3d623b988737b4252ce1d45c3bd",
+    "verification/linux-server/diagnostic.py": "aebabe1137dd8d286d74e7d455bb73c4cf94b242073a2c1d09d4a8498be0678c",
+    "verification/linux-server/run-diagnostic.sh": "becd2ee821fa66ddf30d3eb7580486494f382f09b3880e361a44b71bb423847a",
+    "verification/linux-server/pipewire.conf": "5553557a686268bef2f09c7f57639e05c20052f28f027507305274ba42096a6c",
+    "verification/linux-server/README.md": "23324000cc456a0109d41410526b6a747077b1375fcf584ed6f71ad1327876d8"
+  },
+  "historical_integrity": {
+    "evidence-01": {
+      "report_sha256": "f9ee919f38c590d7771f3652ab3073fc8ccd6352aa326988e2d0b7663b3d4612",
+      "artifacts": 4,
+      "mismatches": []
+    },
+    "evidence-02": {
+      "report_sha256": "e191f3a991e842afd0ff3a665a5b9acb010c09200b8c8c83929af6c872e97073",
+      "artifacts": 4,
+      "mismatches": []
+    },
+    "evidence-03": {
+      "report_sha256": "b996ddd9a726c6b9535d628648835d9ea3cbfcfe8d8ef2f20d5669c081c7c1e6",
+      "artifacts": 4,
+      "mismatches": []
+    },
+    "evidence-04": {
+      "report_sha256": "7ed9ac95d405882047ff7678fdee21380f317ed17fdff6f8253fae5426a8a0a0",
+      "artifacts": 13,
+      "mismatches": []
+    },
+    "evidence-05": {
+      "report_sha256": "c6dd64af6824faad3eef066927a069b7422c0becd55f56518748a38fd5d872ce",
+      "artifacts": 19,
+      "mismatches": []
+    },
+    "diagnostic-baseline-01": {
+      "report_sha256": "b7e9dfc2d9f6ccbf162256748ff1fa1924d9e4663cf34cc4b7b8be4399c995bd",
+      "artifacts": 29,
+      "mismatches": []
+    },
+    "diagnostic-socket-fixed-01": {
+      "report_sha256": "e87274714f5dfaf70b6512abdea32ac7460b35aedded8cf89a512e748a6defa6",
+      "artifacts": 539,
+      "mismatches": []
+    },
+    "diagnostic-trace-01": {
+      "report_sha256": "36293de0b7f08c8827e4ff5afe68cfd6ebf937213fb1c6dae1cf0a355a7a8a7f",
+      "artifacts": 57,
+      "mismatches": []
+    },
+    "diagnostic-link-01": {
+      "report_sha256": "abec8b916cb9d0daa04decfe031369b48e92e295fabccc2c0ca56e717a2c05fe",
+      "artifacts": 57,
+      "mismatches": []
+    },
+    "diagnostic-planar-01": {
+      "report_sha256": "59c2ecf93864a86477eded2deda8ece88d4d8aaad5f9b5fefd19a5184b9d7cfb",
+      "artifacts": 57,
+      "mismatches": []
+    }
+  },
+  "reports": {
+    "diagnostic-baseline-01": {
+      "report_sha256": "b7e9dfc2d9f6ccbf162256748ff1fa1924d9e4663cf34cc4b7b8be4399c995bd",
+      "matrix": [
+        {
+          "case": "without-module",
+          "status": "fail",
+          "error": "command timeout: ['pw-dump']"
+        },
+        {
+          "case": "module-unselected",
+          "status": "fail",
+          "error": "command timeout: ['pw-dump']"
+        },
+        {
+          "case": "module-selected-allowed",
+          "status": "fail",
+          "error": "command timeout: ['pw-dump']"
+        }
+      ],
+      "allowed_transport": null,
+      "status": "fail"
+    },
+    "diagnostic-socket-fixed-01": {
+      "report_sha256": "e87274714f5dfaf70b6512abdea32ac7460b35aedded8cf89a512e748a6defa6",
+      "matrix": [
+        {
+          "case": "without-module",
+          "status": "pass",
+          "elapsed_seconds": 0.008880333974957466,
+          "globals": 24
+        },
+        {
+          "case": "module-unselected",
+          "status": "pass",
+          "elapsed_seconds": 0.017034183954820037,
+          "globals": 31
+        },
+        {
+          "case": "module-selected-allowed",
+          "status": "pass",
+          "elapsed_seconds": 0.017026200890541077,
+          "globals": 31,
+          "error": "timeout: allowed capture port"
+        }
+      ],
+      "allowed_transport": null,
+      "status": "fail"
+    },
+    "diagnostic-trace-01": {
+      "report_sha256": "36293de0b7f08c8827e4ff5afe68cfd6ebf937213fb1c6dae1cf0a355a7a8a7f",
+      "matrix": [
+        {
+          "case": "without-module",
+          "status": "pass",
+          "elapsed_seconds": 0.01713832002133131,
+          "globals": 24
+        },
+        {
+          "case": "module-unselected",
+          "status": "pass",
+          "elapsed_seconds": 0.01722928206436336,
+          "globals": 31
+        },
+        {
+          "case": "module-selected-allowed",
+          "status": "pass",
+          "elapsed_seconds": 0.01725321006961167,
+          "globals": 31
+        }
+      ],
+      "allowed_transport": {
+        "phase": "selected",
+        "frames": 0,
+        "allowed_frames": 0,
+        "silent_frames": 0,
+        "forbidden_frames": 0,
+        "other_frames": 0,
+        "nonfinite_frames": 0,
+        "first_frame": null,
+        "last_frame": null,
+        "position_gaps": 0,
+        "bad_packets": 194,
+        "bad_metadata": false,
+        "drops": {
+          "process_calls": 194,
+          "no_buffer": 0,
+          "bad_buffer": 194,
+          "no_clock": 0,
+          "bad_format": 0,
+          "frames": 49664,
+          "trace": 0,
+          "storage": 0,
+          "queue_errors": 0
+        },
+        "clock_ids": [
+          30
+        ],
+        "complete": false,
+        "privacy": "blocked",
+        "continuity": "blocked",
+        "status": "blocked",
+        "reason": "hostile forbidden sentinel not reproduced",
+        "capture_returncode": 2,
+        "transport_status": "fail"
+      },
+      "status": "fail"
+    },
+    "diagnostic-link-01": {
+      "report_sha256": "abec8b916cb9d0daa04decfe031369b48e92e295fabccc2c0ca56e717a2c05fe",
+      "matrix": [
+        {
+          "case": "without-module",
+          "status": "pass",
+          "elapsed_seconds": 0.017112846951931715,
+          "globals": 24
+        },
+        {
+          "case": "module-unselected",
+          "status": "pass",
+          "elapsed_seconds": 0.017930653877556324,
+          "globals": 31
+        },
+        {
+          "case": "module-selected-allowed",
+          "status": "pass",
+          "elapsed_seconds": 0.01705109514296055,
+          "globals": 31
+        }
+      ],
+      "allowed_transport": {
+        "phase": "selected",
+        "frames": 0,
+        "allowed_frames": 0,
+        "silent_frames": 0,
+        "forbidden_frames": 0,
+        "other_frames": 0,
+        "nonfinite_frames": 0,
+        "first_frame": null,
+        "last_frame": null,
+        "position_gaps": 0,
+        "bad_packets": 190,
+        "bad_metadata": false,
+        "drops": {
+          "process_calls": 190,
+          "no_buffer": 0,
+          "bad_buffer": 190,
+          "no_clock": 0,
+          "bad_format": 0,
+          "frames": 48640,
+          "trace": 0,
+          "storage": 0,
+          "queue_errors": 0
+        },
+        "clock_ids": [
+          30
+        ],
+        "complete": false,
+        "privacy": "blocked",
+        "continuity": "blocked",
+        "status": "blocked",
+        "reason": "hostile forbidden sentinel not reproduced",
+        "capture_returncode": 2,
+        "transport_status": "fail"
+      },
+      "status": "fail"
+    },
+    "diagnostic-planar-01": {
+      "report_sha256": "59c2ecf93864a86477eded2deda8ece88d4d8aaad5f9b5fefd19a5184b9d7cfb",
+      "matrix": [
+        {
+          "case": "without-module",
+          "status": "pass",
+          "elapsed_seconds": 0.018104501999914646,
+          "globals": 24
+        },
+        {
+          "case": "module-unselected",
+          "status": "pass",
+          "elapsed_seconds": 0.017315379111096263,
+          "globals": 31
+        },
+        {
+          "case": "module-selected-allowed",
+          "status": "pass",
+          "elapsed_seconds": 0.017100270837545395,
+          "globals": 31
+        }
+      ],
+      "allowed_transport": {
+        "phase": "selected",
+        "frames": 0,
+        "allowed_frames": 0,
+        "silent_frames": 0,
+        "forbidden_frames": 0,
+        "other_frames": 0,
+        "nonfinite_frames": 0,
+        "first_frame": null,
+        "last_frame": null,
+        "position_gaps": 0,
+        "bad_packets": 190,
+        "bad_metadata": false,
+        "drops": {
+          "process_calls": 190,
+          "no_buffer": 0,
+          "bad_buffer": 190,
+          "no_clock": 0,
+          "bad_format": 0,
+          "frames": 48640,
+          "trace": 0,
+          "storage": 0,
+          "queue_errors": 0
+        },
+        "clock_ids": [
+          30
+        ],
+        "complete": false,
+        "privacy": "blocked",
+        "continuity": "blocked",
+        "status": "blocked",
+        "reason": "hostile forbidden sentinel not reproduced",
+        "capture_returncode": 2,
+        "transport_status": "fail"
+      },
+      "status": "fail"
+    },
+    "diagnostic-checkpoint-01": {
+      "report_sha256": "7908d24f9e4f45e55b8719db2b43fe4952f009fab94c025e3f6028c017d97536",
+      "matrix": [
+        {
+          "case": "without-module",
+          "status": "pass",
+          "elapsed_seconds": 0.01718267612159252,
+          "globals": 24
+        },
+        {
+          "case": "module-unselected",
+          "status": "pass",
+          "elapsed_seconds": 0.017195186112076044,
+          "globals": 31
+        },
+        {
+          "case": "module-selected-allowed",
+          "status": "pass",
+          "elapsed_seconds": 0.01733062998391688,
+          "globals": 31
+        }
+      ],
+      "allowed_transport": {
+        "phase": "selected",
+        "frames": 0,
+        "allowed_frames": 0,
+        "silent_frames": 0,
+        "forbidden_frames": 0,
+        "other_frames": 0,
+        "nonfinite_frames": 0,
+        "first_frame": null,
+        "last_frame": null,
+        "position_gaps": 0,
+        "bad_packets": 191,
+        "bad_metadata": false,
+        "drops": {
+          "process_calls": 191,
+          "no_buffer": 0,
+          "bad_buffer": 191,
+          "no_clock": 0,
+          "bad_format": 0,
+          "frames": 48896,
+          "trace": 0,
+          "storage": 0,
+          "queue_errors": 0
+        },
+        "clock_ids": [
+          30
+        ],
+        "complete": false,
+        "privacy": "blocked",
+        "continuity": "blocked",
+        "status": "blocked",
+        "reason": "hostile forbidden sentinel not reproduced",
+        "capture_returncode": 2,
+        "transport_status": "fail"
+      },
+      "status": "fail"
+    }
+  },
+  "build": {
+    "log": "build/diagnostic-checkpoint-build-01.log",
+    "sha256": "48d021d3c47d21e601a86ffd92d209af53416e80120008801e62b8ebe01b97d0",
+    "exit_code": 0,
+    "matched_module_load_audit": "pass"
+  },
+  "root_cause": "Explicit socket access map omitted pw-dump manager socket; waits before core read/sync/registry enumeration.",
+  "pcm_blocker": "Pinned native raw mixer non-dynamic copy path updates datas[0] only; ingress and capture plane1 stays empty.",
+  "proposed_transport": "Native NO_MIXER and exclusive input for ingress and fixture-local capture with matched private headers; borrowed ingress storage must not be wiped. PENDING USER DECISION; NOT IMPLEMENTED.",
+  "eight_findings": {
+    "1": "Original NULL-props defect addressed; fresh daemon startup and enumeration demonstrated. Independent exact-HEAD review pending.",
+    "2": "Borrowed-buffer invalidation source correction retained; renegotiation/RETIRE/unload lifetime acceptance unexecuted.",
+    "3": "Source revocation guards retained; stale driver bookkeeping and initial public-output Format handling corrected. Planar failure still closes allowed generation; format/recovery acceptance unexecuted.",
+    "4": "BLOCKED. No negative sentinel, forbidden selection or external forbidden-route task executed by this diagnostic.",
+    "5": "20 synthetic all-frame checks pass; diagnostic rejects actual malformed planar capture and binds expected dummy-driver ID. Positive/retired/reopen native PCM remain unproved.",
+    "6": "OPEN. No hostile/WirePlumber/lifecycle adjudication tests executed; prior source gaps unchanged.",
+    "7": "New per-process exits/log hashes plus source/binary/config snapshots and report artifact hashes retained. Historical reports immutable; old harness reporting limitations unchanged.",
+    "8": "Narrowed duration/quantum claim retained; no arbitrary quantum-change qualification claimed."
+  },
+  "tmux_session": "pr16-diagnostic",
+  "jobs_completed": true,
+  "cpus": 2,
+  "minimum_free_bytes": 10737418240,
+  "disk_free_bytes": 51239133184,
+  "scope": {
+    "adversarial_execution": false,
+    "privacy_acceptance": "blocked",
+    "audio_qualification": false,
+    "production_apply": false,
+    "host_changes": false
+  },
+  "safeguard_preservation": "Prior provider task terminated: This content was flagged for possible cybersecurity risk. Retained separately in earlier PR16 comments and manifest; not retried."
+}

@@ -1,0 +1,71 @@
+name: Linux server diagnostic (isolated allowed transport)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'adapters/linux/server-proof/**'
+      - 'verification/linux-server/**'
+      - 'verification/linux_server_ingress.py'
+      - '.github/workflows/linux-server.yml'
+  pull_request:
+    paths:
+      - 'adapters/linux/server-proof/**'
+      - 'verification/linux-server/**'
+      - 'verification/linux_server_ingress.py'
+      - '.github/workflows/linux-server.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  checker:
+    name: Server evidence checker (no daemon or audio)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Reject invalid synthetic server capture evidence
+        run: python3 -B verification/linux-server/selfcheck.py
+      - name: Check proof build and run shell syntax
+        run: |
+          for script in adapters/linux/server-proof/*.sh verification/linux-server/*.sh; do
+            bash -n "$script"
+          done
+      - name: Record evidence scope
+        run: echo 'Synthetic server evidence rejection and shell syntax only. No server build, daemon execution, PCM capture, privacy or lifecycle qualification.' >> "$GITHUB_STEP_SUMMARY"
+
+  allowed-transport:
+    name: Pinned server enumeration and allowed stereo (no privacy proof)
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build matching pinned server, module and fixture
+        shell: bash
+        run: |
+          mkdir -p verification/linux-server/build
+          bash verification/linux-server/build.sh 2>&1 | tee verification/linux-server/build/ci-build.log
+      - name: Enumerate three daemon states and capture allowed stereo
+        run: bash verification/linux-server/run-diagnostic.sh verification/linux-server/build/ci-allowed --capture
+      - name: Retain diagnostic reports, logs and captured PCM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-allowed-transport
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            verification/linux-server/build/ci-build.log
+            verification/linux-server/build/ci-allowed/*.json
+            verification/linux-server/build/ci-allowed/*.log
+            verification/linux-server/build/ci-allowed/*.stdout
+            verification/linux-server/build/ci-allowed/*.f32
+            verification/linux-server/build/ci-allowed/*.conf
+      - name: Record native diagnostic scope
+        if: always()
+        run: echo 'This job checks a matched private server, registry enumeration and allowed fixture stereo transport. It provides no forbidden-sentinel, protected-privacy, lifecycle, hardware-audio or production qualification.' >> "$GITHUB_STEP_SUMMARY"
