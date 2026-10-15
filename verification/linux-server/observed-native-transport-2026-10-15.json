@@ -269,5 +269,21 @@
     "physical_audio_quality": "unqualified",
     "revocation_timing": "unqualified",
     "merge_approval": false
+  },
+  "source_queue_observation": {
+    "pre_capture_discarded_frames": 0,
+    "running_discarded_frames": [
+      2048,
+      2048,
+      2048,
+      2048,
+      2048,
+      2048,
+      2048,
+      2048,
+      2048,
+      2048
+    ],
+    "scope": "Capture packet drops/gaps are zero; 2048 input frames discarded during consumer setup before first running STATUS. No zero-startup-loss or source-to-consumer timestamp/latency claim."
   }
 }

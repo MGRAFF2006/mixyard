@@ -62,9 +62,13 @@ strides `[4,0]`, and zero accepted frames. Exact 1.6.9's default raw mixer copy
 path updates only the first plane. Mathis subsequently approved native exclusive
 single-input scheduling at ingress and fixture-local capture. That correction now
 preserves both planes without mixing: the first fresh run records all 49,152 stereo
-frames exactly `.125/-.125`, with no drops, gaps or malformed packets and sustained
+frames exactly `.125/-.125`, with no capture drops, gaps or malformed packets and sustained
 generation 1. Expected graph-driver identity is checked independently. This is
 bounded allowed transport evidence, not privacy/lifecycle qualification.
+The exact-source run also records 2,048 input frames discarded while the bounded
+queue fills during consumer setup; that counter remains fixed through all ten
+running samples. Zero capture drops does not establish zero startup input loss or
+source-to-consumer timestamp alignment/latency.
 The fixture uses the exact source/build private headers and library; after stream
 creation it checks its local input is unlinked and CONFIGURE, then sets NO_MIXER
 and exclusivity before the first native port Format negotiation. The SPA adapter
