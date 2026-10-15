@@ -2,6 +2,7 @@
 // Original disposable harness. Native operations are supplied only after CLI opt-in.
 #pragma once
 #include <windows.h>
+#include <winioctl.h>
 #include <swdevice.h>
 #include "../capture/control.hpp"
 #include <array>

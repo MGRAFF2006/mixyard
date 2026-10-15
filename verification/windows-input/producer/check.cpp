@@ -157,7 +157,15 @@ void packet_checks() {
             require(fixture.submits == 8, "all packets checked");
         } else fails([] { (void)produce({open_file, ioctl, close_file}, 7, 8); });
         require(fixture.opens == 1 && fixture.closes == (fault == Fault::open ? 0u : 1u), "error closes once");
-        require(fault == Fault::none || fixture.submits <= 1, "no retry after errors");
+        unsigned expected_submits = 0;
+        switch (fault) {
+        case Fault::none: case Fault::close: expected_submits = 8; break;
+        case Fault::reply_ioctl: case Fault::reply_short: case Fault::reply_version:
+        case Fault::reply_bytes: case Fault::reply_reserved: case Fault::reply_result:
+            expected_submits = 1; break;
+        default: break;
+        }
+        require(fixture.submits == expected_submits, "exact submissions; no retry after errors");
         for (const auto& p : fixture.transport.packets) for (auto sample : p.samples)
             require(!sample, "injected close clears queued samples");
     }
