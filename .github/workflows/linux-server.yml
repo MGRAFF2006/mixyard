@@ -1,0 +1,39 @@
+name: Linux server proof checker (synthetic only)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'adapters/linux/server-proof/**'
+      - 'verification/linux-server/**'
+      - 'verification/linux_server_ingress.py'
+      - '.github/workflows/linux-server.yml'
+  pull_request:
+    paths:
+      - 'adapters/linux/server-proof/**'
+      - 'verification/linux-server/**'
+      - 'verification/linux_server_ingress.py'
+      - '.github/workflows/linux-server.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  checker:
+    name: Server evidence checker (no daemon or audio)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Reject invalid synthetic server capture evidence
+        run: python3 -B verification/linux-server/selfcheck.py
+      - name: Check proof build and run shell syntax
+        run: |
+          for script in adapters/linux/server-proof/*.sh verification/linux-server/*.sh; do
+            bash -n "$script"
+          done
+      - name: Record evidence scope
+        run: echo 'Synthetic server evidence rejection and shell syntax only. No server build, daemon execution, PCM capture, privacy or lifecycle qualification.' >> "$GITHUB_STEP_SUMMARY"
