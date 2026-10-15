@@ -46,6 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build matching pinned server, module and fixture
+        shell: bash
         run: |
           mkdir -p verification/linux-server/build
           bash verification/linux-server/build.sh 2>&1 | tee verification/linux-server/build/ci-build.log
