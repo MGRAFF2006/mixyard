@@ -5,11 +5,13 @@ on:
   push:
     paths:
       - 'adapters/macos/virtual-input/**'
+      - 'adapters/macos/input-broker/**'
       - 'verification/macos-input/**'
       - '.github/workflows/macos-input.yml'
   pull_request:
     paths:
       - 'adapters/macos/virtual-input/**'
+      - 'adapters/macos/input-broker/**'
       - 'verification/macos-input/**'
       - '.github/workflows/macos-input.yml'
 
@@ -18,18 +20,30 @@ permissions:
 
 jobs:
   artifact:
-    name: Apple ABI harness and signed artifact only
+    name: Apple ABI and authenticated anonymous XPC fixture
     runs-on: macos-latest
     timeout-minutes: 10
+    env:
+      MIXYARD_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      MIXYARD_CURRENT_BASE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Bind source, current base and executed ancestry before building
+        run: python3 verification/macos-input/evidence.py verification/macos-input/build incomplete
       - name: Build, sign, and test in-process only (no install or audio access)
         run: bash verification/macos-input/build-check.sh
+      - name: Native authenticated process fixtures (no install or audio access)
+        run: bash verification/macos-input/broker-check.sh
       - name: Evidence boundary
         if: always()
         run: |
-          echo 'Artifact compile/ad-hoc signature/in-process ABI only.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'HAL loading, external consumer PCM, TCC, authenticated producer, restart and production apply remain BLOCKED.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Artifact ABI plus native app-owned/anonymous XPC peer requirements, packet, credit and lifetime fixtures only.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'System bootstrap, hosted HAL peer identity/loading, external consumer PCM, TCC, restart, physical quality and production apply remain BLOCKED.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve source and partial artifact hashes on every outcome
+        if: always()
+        run: python3 verification/macos-input/evidence.py verification/macos-input/build '${{ job.status }}'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

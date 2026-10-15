@@ -8,6 +8,8 @@
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>1</string>
+  <!-- Inert future system contract; release driver never performs IPC lookup. -->
+  <key>AudioServerPlugIn_MachServices</key><array><string>org.mixyard.input.broker</string></array>
   <key>CFPlugInDynamicRegistration</key><false/>
   <key>CFPlugInFactories</key><dict>
     <key>38DAE4C2-8FA6-4C75-889D-01690EDD6874</key><string>MixyardInput_Create</string>
