@@ -31,6 +31,9 @@ jobs:
       - name: Reject invalid synthetic server capture evidence
         run: python3 -B verification/linux-server/selfcheck.py
       - name: Check proof build and run shell syntax
-        run: bash -n adapters/linux/server-proof/compile.sh verification/linux-server/build.sh verification/linux-server/compile.sh verification/linux-server/run.sh
+        run: |
+          for script in adapters/linux/server-proof/*.sh verification/linux-server/*.sh; do
+            bash -n "$script"
+          done
       - name: Record evidence scope
         run: echo 'Synthetic server evidence rejection and shell syntax only. No server build, daemon execution, PCM capture, privacy or lifecycle qualification.' >> "$GITHUB_STEP_SUMMARY"
