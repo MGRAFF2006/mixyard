@@ -1,0 +1,273 @@
+{
+  "milestone": "bounded allowed native single-input transport only",
+  "exact_execution_revision": "ff88cb7830030d3962cfb24089be6d9699e551da",
+  "approved_option": "Mathis explicitly approved A; https://github.com/MGRAFF2006/mixyard/pull/16#issuecomment-6189047093",
+  "report": {
+    "path": "build/native-transport-exact-01/report.json",
+    "sha256": "5d8c91d548e597e04bff7e7b8d5ea392b559337fb59bc8d6ff43422c8fb710f5",
+    "verified_artifact_count": 87
+  },
+  "provenance": {
+    "path": "build/native-transport-exact-01/provenance.json",
+    "sha256": "afed71e3306a6d665864d6246514d76058a88dad758dcf78fa8614377a2e8a19",
+    "inputs": {
+      "source_revision": "ff88cb7830030d3962cfb24089be6d9699e551da",
+      "sha256": {
+        "verification/linux-server/diagnostic.py": "707278a4dc2640ef8d5a1ab895ecfd5bf01e37635554ba644a7832d68776a4f9",
+        "verification/linux_server_ingress.py": "8363b8464548ce2c160cd60db6ca5937dfce120400ac2171545f2c941aa5c653",
+        "adapters/linux/server-proof/module.c": "cd9f95a2ca9d83136fa80e28ffa26604b74ded7e84e22ed35e4697be414a19ab",
+        "adapters/linux/server-proof/compile.sh": "654aeff3b2d21867100947b2e7e494732b021252ce565663081c395a6d9aaf79",
+        "verification/linux-server/fixture.c": "a061282403fef8e833c6cc015e906714f5be5d9dd56a438fcd3e37eea5f65707",
+        "verification/linux-server/transport-check.c": "a1ec66d65a935457249defdc1ba2f6fdc3c2e97943662184bb2879eb78eb12de",
+        "verification/linux-server/compile.sh": "e6f089f3dc316936a6e9746bf17c49218b37d527012c1f3e0d5e3bbf16bc2d08",
+        "verification/linux-server/run-diagnostic.sh": "892067dfe35600c632512939c74a78bba1c2dbce9735cf032cc5624b40489123",
+        "verification/linux-server/pipewire.conf": "5553557a686268bef2f09c7f57639e05c20052f28f027507305274ba42096a6c",
+        "verification/linux-server/build/modules/libpipewire-module-mixyard-server-proof.so": "9f06c554f2869c47f32d5ba43716ae35617c36588db09661a651c9a3cd33df59",
+        "verification/linux-server/build/fixture": "08f5df0e3caa93da9c9e6dd9b20641e2f476a6cb7f4e2404d236d9a835f93004",
+        "verification/linux-server/build/transport-check": "89472145e304dc99dd234541226db0083246b03085397866809fa86eb6788a76",
+        "verification/linux-server/build/source/src/pipewire/private.h": "68bcb44b55a560347fd39422577e2ffa4454ef8513a054ada7eab2d029976931",
+        "verification/linux-server/build/install/bin/pipewire": "2d055253765909022913077969209de73abc62efdd77514074b1a8b093ebf87d",
+        "verification/linux-server/build/install/bin/pw-dump": "e66e070d45ef05aed24379ad327894a9dc7a370f468a9b27b8a7f865a744b9bb",
+        "verification/linux-server/build/install/bin/pw-link": "68da4435dfb887f87b255c26c2de9ee31ab6ce0ece25252a634bbc5358c89076",
+        "verification/linux-server/build/install/lib/libpipewire-0.3.so.0.1609.0": "a60de8c78da7e04ac17ee0dcf7a0339f6a40a2b9dbd042152b2c21f1bcc33407",
+        "verification/linux-server/build/source/build/config.h": "7ef45d361f89fa9e83fcbd8b74b54e989a1bc47f71889c6e4299ba905cbc9c3e"
+      },
+      "enumeration_timeout_seconds": 10,
+      "version": "/work/verification/linux-server/build/install/bin/pipewire\nCompiled with libpipewire 1.6.9\nLinked with libpipewire 1.6.9\n"
+    }
+  },
+  "pcm": {
+    "path": "build/native-transport-exact-01/allowed-capture.f32",
+    "sha256": "aae2003911ced020f55806b021f35a8ce6c80da1f4814d939bb22d3385283959",
+    "trace_sha256": "aaa786d848c53cd05d1ba9964e9cb09ed09467267ea3294352f14ac96b7f156b",
+    "all_frames": {
+      "phase": "selected",
+      "frames": 49152,
+      "allowed_frames": 49152,
+      "silent_frames": 0,
+      "forbidden_frames": 0,
+      "other_frames": 0,
+      "nonfinite_frames": 0,
+      "first_frame": [
+        0.125,
+        -0.125
+      ],
+      "last_frame": [
+        0.125,
+        -0.125
+      ],
+      "position_gaps": 0,
+      "bad_packets": 0,
+      "bad_metadata": false,
+      "drops": {
+        "process_calls": 192,
+        "no_buffer": 0,
+        "bad_buffer": 0,
+        "no_clock": 0,
+        "bad_format": 0,
+        "frames": 0,
+        "trace": 0,
+        "storage": 0,
+        "queue_errors": 0
+      },
+      "clock_ids": [
+        30
+      ],
+      "complete": true,
+      "privacy": "blocked",
+      "continuity": "pass",
+      "status": "blocked",
+      "reason": "hostile forbidden sentinel not reproduced",
+      "capture_returncode": 0,
+      "expected_clock_id": 30,
+      "capture_endpoint": {
+        "node_id": 34,
+        "node_serial": 36,
+        "port_id": 35,
+        "port_serial": 37,
+        "local_port_id": 0
+      },
+      "public_link_active": true,
+      "sustained_generation": true,
+      "transport_status": "pass"
+    }
+  },
+  "matrix": [
+    {
+      "case": "without-module",
+      "status": "pass",
+      "elapsed_seconds": 0.01721714809536934,
+      "globals": 24
+    },
+    {
+      "case": "module-unselected",
+      "status": "pass",
+      "elapsed_seconds": 0.01725293812341988,
+      "globals": 31
+    },
+    {
+      "case": "module-selected-allowed",
+      "status": "pass",
+      "elapsed_seconds": 0.017138825030997396,
+      "globals": 31
+    }
+  ],
+  "unchanged_enumeration_timeout_seconds": 10,
+  "native_configuration": {
+    "initial_ingress": {
+      "node_id": 22,
+      "node_serial": 22,
+      "port_id": 23,
+      "port_serial": 23,
+      "node_mask": 0,
+      "port_mask": 0,
+      "processed_frames": 0,
+      "position_frames": 0,
+      "formatted": false,
+      "no_mixer": true,
+      "exclusive": true,
+      "mix_count": 0
+    },
+    "selected_ingress": {
+      "node_id": 22,
+      "node_serial": 22,
+      "port_id": 23,
+      "port_serial": 23,
+      "node_mask": 0,
+      "port_mask": 0,
+      "processed_frames": 768,
+      "position_frames": 52799753198,
+      "formatted": true,
+      "no_mixer": true,
+      "exclusive": true,
+      "mix_count": 1
+    },
+    "selected_fixture": {
+      "node_id": 26,
+      "node_serial": 26,
+      "port_id": 27,
+      "port_serial": 27,
+      "node_mask": 472,
+      "port_mask": 328,
+      "processed_frames": 768,
+      "position_frames": 52799753198,
+      "formatted": true,
+      "no_mixer": false,
+      "exclusive": false,
+      "mix_count": 1
+    },
+    "capture_configuration_event_line": 726,
+    "capture_first_native_port_Format_line": 1260,
+    "capture_log_sha256": "fdfd06e7e06220616fbee9b26d78b88a652dc8d7836c45addf5fd2a690a3ea1a",
+    "timing_note": "Adapter SPA provisional Format can precede native port creation; NO_MIXER and exclusivity precede first native port Format negotiation/link.",
+    "expected_graph_driver_id": 30,
+    "generation_samples": 10,
+    "generation_values": [
+      1
+    ],
+    "selected_link_serials": [
+      32
+    ],
+    "public_links": [
+      {
+        "id": 37,
+        "type": "PipeWire:Interface:Link",
+        "version": 3,
+        "permissions": [
+          "r",
+          "x"
+        ],
+        "info": {
+          "output-node-id": 24,
+          "output-port-id": 25,
+          "input-node-id": 34,
+          "input-port-id": 35,
+          "change-mask": [
+            "state",
+            "format",
+            "props"
+          ],
+          "state": "active",
+          "error": null,
+          "format": {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32P",
+            "rate": 48000,
+            "channels": 2,
+            "position": [
+              "FL",
+              "FR"
+            ]
+          },
+          "props": {
+            "factory.id": 13,
+            "link.input.node": 34,
+            "link.input.port": 35,
+            "link.output.node": 24,
+            "link.output.port": 25,
+            "object.id": 37,
+            "object.linger": true,
+            "object.serial": 40
+          }
+        }
+      }
+    ]
+  },
+  "offline_check": {
+    "path": "transport-check.c",
+    "build_log": "build/native-transport-build-02.log",
+    "sha256": "1bfb4a633118ef32d6aaf93f99a11f497d0feced967ba8649f770f0ca48ed36d",
+    "exit_code": 0,
+    "scope": "Real module node_port_init and clear_rt paths; read-only producer mmap unchanged, ingress references reset, queue/output zeroed, clearing repeated. No daemon or graph test."
+  },
+  "nested_readonly_check": {
+    "request": "pr16-native-transport-ownership-readonly-20261015-r3",
+    "verdict": "No actionable issue in scoped transport/ownership diff; no final merge approval",
+    "scope": "Read-only source, hashes, PCM and graph analysis; no runtime by reviewer."
+  },
+  "original_eight_findings": {
+    "1": "Source addressed; startup and 3-state enumeration pass.",
+    "2": "Original stale-pointer invalidation retained; separate borrowed ingress wipe fixed and offline read-only-storage check passes. Renegotiation/rejected-format/unload stress unexecuted.",
+    "3": "Guard corrections retained; initial negotiation, exact allowed PCM and sustained generation demonstrated. Format-loss/rate/channel/recovery acceptance unexecuted.",
+    "4": "BLOCKED. No forbidden/sentinel/hostile execution. Exclusive single-input changes insecure control behavior; secondary-link denial cannot reproduce sentinel. Future controls unresolved.",
+    "5": "Principal checker correction retained; complete native selected PCM with independently observed expected clock passes. Retired/reopen/full-harness phase qualification remains unexecuted.",
+    "6": "OPEN. Hostile/lifecycle correlation and WirePlumber adjudication unchanged and unexecuted.",
+    "7": "Exact source revision, matching source/binary/header snapshots and 87 artifact hashes verified for this run. Known old client-control run.log mismatch preserved; earlier reporting limits remain.",
+    "8": "Narrowed quantum claim retained. No arbitrary quantum-change test or clock rewrite."
+  },
+  "review_5530710401": {
+    "P1_borrowed_wipe": "Source fixed plus real-path offline check; full lifecycle acceptance not claimed.",
+    "P1_planar_transport": "49,152 exact stereo frames, 192 packets, zero capture drops/gaps/bad metadata; sustained selection and 3-state enum pass.",
+    "P2_hostile_lifecycle": "OPEN; unchanged/unexecuted.",
+    "P2_phase_clock": "Positive diagnostic expected clock checked; retired/reopened/full-harness qualification and revocation timing remain OPEN."
+  },
+  "history": {
+    "previous_failed_diagnostic_manifest_sha256": "1d89168de1780eae4475ef775771bef8a50591fa67f44ca2f9ba6a87e0a9d60d",
+    "previous_failed_native_probe_preserved": "build/diagnostic-checkpoint-01",
+    "client_negative_control_log_exception": {
+      "recorded_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retained_sha256": "18cb1670713d9d1a71201e4eb6c82365fb2ee1cc5bc270809899e132ef157bf2",
+      "note": "Root independently confirmed/annotated. A post-hash stdout write is an inference; old report/log untouched. No blanket historical integrity claim."
+    },
+    "provider_safeguard": "Earlier provider-terminated task and absent response preserved separately; no rejected task retry/rephrasing or adversarial execution."
+  },
+  "resources": {
+    "host": "homelab-dev",
+    "cpus": 2,
+    "tmux_session": "pr16-native-transport",
+    "completed": true,
+    "minimum_disk_free_bytes": 10737418240,
+    "final_disk_free_bytes": 51026714624,
+    "temp_storage": "disk-backed private mounts; no host /tmp usage"
+  },
+  "limits": {
+    "privacy_acceptance": "blocked",
+    "hostile_execution": false,
+    "production_apply": false,
+    "host_changes": false,
+    "physical_audio_quality": "unqualified",
+    "revocation_timing": "unqualified",
+    "merge_approval": false
+  }
+}
