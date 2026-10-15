@@ -8,6 +8,26 @@ on:
 permissions:
   contents: read
 jobs:
+  producer:
+    name: Usermode producer SDK artifact (injected operations only)
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile/link real SDK executable and run safe injected selfcheck
+        shell: pwsh
+        run: ./adapters/windows/virtual-input/producer/build-check.ps1
+      - name: Preserve producer artifacts, source hashes, toolchain and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-producer-source-artifact-${{ github.run_id }}-${{ github.run_attempt }}
+          path: adapters/windows/virtual-input/producer/build/
+          if-no-files-found: error
+      - name: Record execution boundary
+        if: always()
+        shell: pwsh
+        run: "'Usermode SDK compile/link and INJECTED operations only. NEVER actual software-device creation, driver open/IOCTL or audio. Native execution and MMDevice/consumer PCM BLOCKED.' >> $env:GITHUB_STEP_SUMMARY"
   transport:
     name: Bounded ingress queue model (no kernel or PCM delivery)
     runs-on: ubuntu-24.04

@@ -81,6 +81,13 @@ does not inherit the EV-distribution prerequisite.
 
 ## Later publication and external PCM gates
 
+The [new usermode source artifact](../../adapters/windows/virtual-input/producer/README.md)
+provides handle-owned SwDevice provisioning and a separate fixed-path fixture
+producer. Its SDK build and injected-operation selfcheck execute no device APIs.
+Its future commands require a separately authorized snapshot guest; exact
+PnP-to-MMDevice mapping, driver startup, all native lifecycle and consumer PCM
+remain blocked. The existing one-adapter/one-stream ceiling remains in force.
+
 Implement original capture-only PortCls/WaveRT miniports, lifetime-safe preallocated
 delivery and an actual matching Media/PnP package first. A subsequent broker may
 use `SwDeviceCreate` only after that package exists, with stable independent UUIDs

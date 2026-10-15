@@ -10,7 +10,7 @@
     "Fresh exact-source CI must establish both packages: native .sys compilation/link, mandatory INF/catalog validation, unsigned PE/hash inventory and actual pinned toolchain",
     "An explicitly owned disposable Windows11 x64 guest with snapshot/rollback, console access, test-signing authorization and no physical microphone passthrough; no such guest is established on homelab-dev",
     "Reviewed local self-test-signed binary/catalog and guest-only trust setup; EV/Partner Center enrollment is not required for the separate local test-signing route",
-    "Native validation of the original single capture miniports and Media package; minimum SwDevice provisioning/producer harness still required before consumer selection; System ingress package retained separately",
+    "Native validation of the original single capture miniports and Media package; producer/ source artifact now supplies SwDevice/fixture code and injected-only checks, NEVER executed device APIs; guest execution and exact PnP-to-MMDevice mapping remain blocked; System ingress package retained separately",
     "Fresh instance identities across driver reload plus approved broker admission and adversarial handle/ACL/lifecycle tests",
     "Separate explicit-MMDevice WASAPI consumers and full native A/B/fanout/first-tail-frame/delivery-ACK evidence"
   ],
