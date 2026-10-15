@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "kind": "original MIT usermode provisioning/producer source artifact",
+  "foundation": "https://github.com/MGRAFF2006/mixyard/pull/21",
+  "native_device_execution": "BLOCKED; not attempted, including in hosted CI",
+  "allowed_execution": "SDK compile/link; executable --selfcheck using injected OS operations; argument rejection",
+  "injected_checks": "same lifecycle, packet serialization and status/reply validation code; does not prove OS callbacks or native device behavior",
+  "software_lifetime": "default handle-owned; callback actual PnP ID only; no ParentPresent persistence",
+  "producer_target": "fixed private capture path; no UUID/PnP/MMDevice association claimed",
+  "fixture": "1..8 packets of 128 stereo Float32 frames at 48000 Hz; L +0.25, R -0.125; bounded unpaced burst",
+  "native_calls": "synchronous; faulty-driver API stall/termination behavior unproved",
+  "native_evidence": "each CI evidence.json independently pins executed source HEAD/tree, toolchain, sources and artifacts; this manifest predeclares no successful build",
+  "unchanged_limits": [
+    "one adapter per driver load, one capture stream; not product capacity",
+    "DACL/FILE_OBJECT admission is not approved executable authentication; cross-reload identity open",
+    "exact device-to-MMDevice mapping, actual endpoint observation, dynamic A/B/names/fanout blocked",
+    "all native IRP/PnP/power/Verifier/RT/lifetime/consumer PCM/privacy/physical quality blocked",
+    "enqueue and cyclic writes are not sample-effective consumer acknowledgments",
+    "production Apply disabled; no real mic, default fallback, audio activation or consumer recording"
+  ]
+}
