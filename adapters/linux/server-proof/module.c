@@ -59,6 +59,7 @@ struct proof {
     struct pw_impl_link *link;
     struct pw_impl_node *selected_node;
     struct pw_impl_port *selected_port;
+    struct pw_properties *selected_props;
     struct spa_hook link_hook, selected_node_hook, selected_port_hook, owner_hook;
     struct block queue[QUEUE];
     uint32_t read, write; /* only accessed while holding the single shared data loop */
@@ -210,7 +211,7 @@ static int set_port(void *data, enum spa_direction d, uint32_t port,
     memset(n->buffers, 0, sizeof(n->buffers));
     memset(n->outstanding, 0, sizeof(n->outstanding));
     if (atomic_load(&n->proof->generation) &&
-        (was_formatted || !pod || n->proof->established)) fault(n->proof);
+        (was_formatted || !pod)) fault(n->proof);
     bool valid = !pod || fixed_format(pod);
     if (!valid) fault(n->proof);
     n->formatted = valid && pod != NULL;
@@ -284,7 +285,12 @@ static int process(void *data)
                 s->chunk->offset % 4 == 0 && s->chunk->offset <= s->maxsize &&
                 size <= s->maxsize - s->chunk->offset;
         }
-        if (!valid) { fault(p); io->status = SPA_STATUS_NEED_DATA; return -EINVAL; }
+        if (!valid) {
+            pw_log_debug("proof ingress chunks size:%u/%u stride:%d/%d",
+                b->datas[0].chunk->size, b->datas[1].chunk->size,
+                b->datas[0].chunk->stride, b->datas[1].chunk->stride);
+            fault(p); io->status = SPA_STATUS_NEED_DATA; return -EINVAL;
+        }
         uint32_t frames = size / 4;
         if (gen && p->write - p->read < QUEUE) {
             struct block *q = &p->queue[p->write % QUEUE];
@@ -380,6 +386,8 @@ static void retire(struct proof *p)
     remove_hook(&p->owner_hook);
     remove_hook(&p->link_hook);
     p->selected_node = NULL; p->selected_port = NULL;
+    if (p->selected_props) pw_properties_free(p->selected_props);
+    p->selected_props = NULL;
     struct pw_impl_link *link = p->link;
     p->link = NULL;
     if (link) pw_impl_link_destroy(link);
@@ -485,7 +493,24 @@ static void endpoint_destroy(void *data)
 static void selected_info(void *data, const struct pw_node_info *info)
 {
     struct proof *p = data;
-    if (!p->creating && (info->change_mask & PW_NODE_CHANGE_MASK_PROPS)) retire(p);
+    if (p->creating || !(info->change_mask & PW_NODE_CHANGE_MASK_PROPS)) return;
+    /* 1.6.9 may retain PROPS from its ordinary node.driver-id assignment
+     * until the RUNNING event. Revoke actual metadata changes, not that event. */
+    const struct spa_dict *saved = &p->selected_props->dict;
+    const struct spa_dict_item *item;
+    if (!info->props) { fault(p); return; }
+    spa_dict_for_each(item, saved) {
+        if (!strcmp(item->key, PW_KEY_NODE_DRIVER_ID)) continue;
+        if (!spa_streq(item->value, spa_dict_lookup(info->props, item->key))) {
+            fault(p); return;
+        }
+    }
+    spa_dict_for_each(item, info->props) {
+        if (!strcmp(item->key, PW_KEY_NODE_DRIVER_ID)) continue;
+        if (!spa_streq(item->value, spa_dict_lookup(saved, item->key))) {
+            fault(p); return;
+        }
+    }
 }
 static void selected_port_info(void *data, const struct pw_port_info *info)
 {
@@ -607,6 +632,8 @@ static int select_endpoint(struct proof *p, uint32_t node_id, uint64_t node_seri
     }
     int res = check_port_format(port);
     if (res < 0) return res;
+    p->selected_props = pw_properties_copy(pw_impl_node_get_properties(node));
+    if (!p->selected_props) return -ENOMEM;
     /* No yield from identity/format resolution through exact-pointer link creation. */
     p->creating = true;
     p->selected_node = node; p->selected_port = port;

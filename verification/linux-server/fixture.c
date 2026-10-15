@@ -41,6 +41,8 @@ struct packet {
     struct spa_meta_header header;
     uint64_t offset;
     uint32_t frames, source_frames, flags, chunk_flags[2];
+    uint32_t n_datas, chunk_size[2];
+    int32_t chunk_stride[2];
     bool has_header;
 };
 
@@ -180,6 +182,13 @@ static void on_process(void *data)
         return;
     }
     buffer = b->buffer;
+    p->n_datas = buffer->n_datas;
+    for (unsigned c = 0; c < buffer->n_datas && c < 2; c++) {
+        if (buffer->datas[c].chunk) {
+            p->chunk_size[c] = buffer->datas[c].chunk->size;
+            p->chunk_stride[c] = buffer->datas[c].chunk->stride;
+        }
+    }
     if (buffer->n_datas != 2) {
         valid = false;
     } else {
@@ -395,6 +404,8 @@ static void start(struct fixture *f)
             PW_KEY_MEDIA_CATEGORY, f->mode == PRODUCE ? "Playback" : "Capture",
             PW_KEY_MEDIA_CLASS, f->mode == PRODUCE ? "Stream/Output/Audio" : "Stream/Input/Audio",
             PW_KEY_NODE_AUTOCONNECT, "false", PW_KEY_NODE_WANT_DRIVER, "true",
+            /* No session manager in the diagnostic daemon. Keep raw stereo. */
+            "adapter.auto-port-config", "{ mode = passthrough position = preserve }",
             PW_KEY_NODE_RATE, "1/48000", NULL);
         if (!props) {
             fail(f, "stream-properties", -ENOMEM, "allocation failed");
@@ -563,11 +574,13 @@ static int write_capture(struct fixture *f)
             "\"clock_id\":%u,\"nsec\":%"PRIu64",\"clock_rate_num\":%u,"
             "\"clock_rate_denom\":%u,\"clock_flags\":%u,\"clock_cycle\":%u,"
             "\"clock_delay\":%"PRId64",\"clock_xrun\":%"PRIu64",\"flags\":%u,"
-            "\"chunk_flags\":[%u,%u],\"header\":",
+            "\"chunk_flags\":[%u,%u],\"n_datas\":%u,\"chunk_size\":[%u,%u],"
+            "\"chunk_stride\":[%d,%d],\"header\":",
             i ? ",\n" : "", p->clock.position, p->clock.duration,
             p->offset, p->frames, p->source_frames, p->clock.id, p->clock.nsec,
             p->clock.rate.num, p->clock.rate.denom, p->clock.flags, p->clock.cycle,
-            p->clock.delay, p->clock.xrun, p->flags, p->chunk_flags[0], p->chunk_flags[1]);
+            p->clock.delay, p->clock.xrun, p->flags, p->chunk_flags[0], p->chunk_flags[1],
+            p->n_datas, p->chunk_size[0], p->chunk_size[1], p->chunk_stride[0], p->chunk_stride[1]);
         if (p->has_header)
             fprintf(file, "{\"pts\":%"PRId64",\"seq\":%"PRIu64",\"offset\":%u,\"flags\":%u}",
                 p->header.pts, p->header.seq, p->header.offset, p->header.flags);

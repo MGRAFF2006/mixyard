@@ -41,6 +41,32 @@ The partial corrections are published unreviewed; no retry or readiness is claim
 Full ignored logs/resources remain in `build/evidence-01` through `build/evidence-05`
 and `build/client-negative-control`; the manifest preserves historical and new hashes.
 
+The separate 2026-10-15 **allowed-only diagnostic** resolves the `pw-dump` stall:
+its manager connection needs an explicit `mixyard-server-private-manager` entry
+alongside the normal socket in the isolated access map. Without that entry,
+all three cases (no module, module unselected, allowed fixture-0 SELECT) time out;
+with it, all three enumerate in about 17 ms at the unchanged 10-second bound.
+No SPA synchronization timeout was extended. Normal RUNNING notifications also
+carry stale PROPS after native `node.driver-id` assignment; selected metadata is
+now compared by value, ignoring only that bookkeeping field. Real metadata
+changes still close the generation. A first valid public-output Format is
+initial negotiation; repeated, NULL and invalid Format applications still revoke.
+
+Run just this bounded diagnostic in a named tmux session:
+`bash verification/linux-server/run-diagnostic.sh verification/linux-server/build/NEW-DIAGNOSTIC --capture`.
+It uses the retained image/build, CPU2, disk-backed temporary/private directories,
+and a fresh evidence directory containing source/binary snapshots and log hashes.
+It never calls the adversarial harness entry point. The current allowed capture
+still **FAILS**: raw F32P reaches ingress/capture with chunk sizes `[1024,0]`,
+strides `[4,0]`, and zero accepted frames. Exact 1.6.9's default raw mixer copy
+path updates only the first plane. Native exclusive single-input scheduling at
+ingress and fixture-local capture is a proposed correction, **pending Mathis's
+decision and not implemented**. The different source/buffer ownership implications
+must be reviewed before changing this transport. The prior provider safeguard
+failure remains a separate preserved blocker; this diagnostic executes no
+forbidden-route, adversarial or privacy acceptance tests. See
+`observed-diagnostic-2026-10-15.json`; all prior evidence remains unchanged.
+
 The harness inspects every stored first/tail frame without warmup trimming,
 alignment search, gain fitting or reconstruction. Missing frames/traces and clock
 gaps remain separate failures. Twenty focused synthetic rejection cases run with
