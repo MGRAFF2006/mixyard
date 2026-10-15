@@ -366,10 +366,18 @@ static int clear_rt(struct spa_loop *loop, bool async, uint32_t seq,
     memset(p->queue, 0, sizeof(p->queue));
     for (unsigned k = 0; k < 2; k++) {
         struct node *n = &p->nodes[k];
-        for (unsigned i = 0; i < n->n_buffers; i++)
-            for (unsigned c = 0; c < 2; c++)
-                memset(n->buffers[i]->datas[c].data, 0, n->buffers[i]->datas[c].maxsize);
+        /* Input storage belongs to the producer. Only output PCM is writable. */
+        if (k == 1)
+            for (unsigned i = 0; i < n->n_buffers; i++)
+                for (unsigned c = 0; c < 2; c++)
+                    memset(n->buffers[i]->datas[c].data, 0, n->buffers[i]->datas[c].maxsize);
         if (n->io) { n->io->buffer_id = SPA_ID_INVALID; n->io->status = SPA_STATUS_NEED_DATA; }
+        if (k == 0) {
+            n->started = false;
+            n->n_buffers = 0;
+            n->io = NULL;
+            memset(n->buffers, 0, sizeof(n->buffers));
+        }
         memset(n->outstanding, 0, sizeof(n->outstanding));
     }
     return 0;
@@ -429,6 +437,13 @@ static void node_port_init(void *data, struct pw_impl_port *port)
         abort();
     }
     n->port = port;
+    if (n->kind == 0) {
+        if (port->n_mix || port->state > PW_IMPL_PORT_STATE_CONFIGURE) abort();
+        /* Preserve both raw planes with native single-input buffer scheduling. */
+        port->flags |= PW_IMPL_PORT_FLAG_NO_MIXER;
+        if (pw_properties_set(port->properties, PW_KEY_PORT_EXCLUSIVE, "true") < 0) abort();
+        port->exclusive = true;
+    }
     pw_impl_port_add_listener(port, &n->port_hook, &own_port_events, n);
 }
 static void own_destroyed(void *data)
@@ -668,11 +683,15 @@ static size_t node_status(struct node *n, char *buf, size_t size)
     int len = snprintf(buf, size,
         "{\"node_id\":%u,\"node_serial\":%"PRIu64",\"port_id\":%u,\"port_serial\":%"PRIu64
         ",\"node_mask\":%u,\"port_mask\":%u,\"processed_frames\":%"PRIuFAST64
-        ",\"position_frames\":%"PRIuFAST64"}",
+        ",\"position_frames\":%"PRIuFAST64",\"formatted\":%s,\"no_mixer\":%s,"
+        "\"exclusive\":%s,\"mix_count\":%u}",
         g ? g->id : SPA_ID_INVALID, g ? g->serial : 0,
         pg ? pg->id : SPA_ID_INVALID, pg ? pg->serial : 0,
         g ? g->permission_mask : 0, pg ? pg->permission_mask : 0,
-        atomic_load(&n->processed), atomic_load(&n->position_frames));
+        atomic_load(&n->processed), atomic_load(&n->position_frames),
+        n->formatted ? "true" : "false",
+        n->port && (n->port->flags & PW_IMPL_PORT_FLAG_NO_MIXER) ? "true" : "false",
+        n->port && n->port->exclusive ? "true" : "false", n->port ? n->port->n_mix : 0);
     return len > 0 && (size_t)len < size ? (size_t)len : 0;
 }
 static void status(struct proof *p, char *reply, size_t size)

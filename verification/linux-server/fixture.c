@@ -10,6 +10,7 @@
  * Packet offsets/counts are stereo frames, not float indices or bytes.
  * Clock positions are the graph driver's clock, not an invented source timestamp.
  */
+#include <config.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <signal.h>
@@ -23,7 +24,7 @@
 #include <spa/buffer/meta.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/utils/result.h>
-#include <pipewire/pipewire.h>
+#include <pipewire/private.h>
 
 #define RATE 48000u
 #define FRAME_CAPACITY (RATE * 120u)
@@ -422,8 +423,27 @@ static void start(struct fixture *f)
             f->mode == PRODUCE ? PW_DIRECTION_OUTPUT : PW_DIRECTION_INPUT,
             PW_ID_ANY, PW_STREAM_FLAG_NO_CONVERT | PW_STREAM_FLAG_MAP_BUFFERS |
             PW_STREAM_FLAG_RT_PROCESS, params, 1);
-        if (result < 0)
+        if (result < 0) {
             fail(f, "connect-stream", result, spa_strerror(result));
+            return;
+        }
+        if (f->mode == CAPTURE) {
+            struct pw_impl_port *port = pw_impl_node_find_port(f->stream->node, PW_DIRECTION_INPUT, 0);
+            if (!port || port->n_mix || port->state > PW_IMPL_PORT_STATE_CONFIGURE) {
+                fail(f, "capture-input", -EBUSY, "input already negotiated or linked");
+                return;
+            }
+            port->flags |= PW_IMPL_PORT_FLAG_NO_MIXER;
+            const struct spa_dict_item item = SPA_DICT_ITEM_INIT(PW_KEY_PORT_EXCLUSIVE, "true");
+            result = pw_impl_port_update_properties(port, &SPA_DICT_INIT(&item, 1));
+            if (result < 0 || !port->exclusive) {
+                fail(f, "capture-input", result < 0 ? result : -EIO, "exclusive input required");
+                return;
+            }
+            printf("{\"event\":\"capture_input_configured\",\"local_port_id\":%u,"
+                   "\"state\":%d,\"mix_count\":%u,\"no_mixer\":true,\"exclusive\":true}\n",
+                port->port_id, port->state, port->n_mix);
+        }
     }
 }
 

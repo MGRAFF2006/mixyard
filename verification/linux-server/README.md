@@ -56,16 +56,34 @@ Run just this bounded diagnostic in a named tmux session:
 `bash verification/linux-server/run-diagnostic.sh verification/linux-server/build/NEW-DIAGNOSTIC --capture`.
 It uses the retained image/build, CPU2, disk-backed temporary/private directories,
 and a fresh evidence directory containing source/binary snapshots and log hashes.
-It never calls the adversarial harness entry point. The current allowed capture
-still **FAILS**: raw F32P reaches ingress/capture with chunk sizes `[1024,0]`,
+It never calls the adversarial harness entry point. The retained diagnostic checkpoint
+**FAILS**: raw F32P reached ingress/capture with chunk sizes `[1024,0]`,
 strides `[4,0]`, and zero accepted frames. Exact 1.6.9's default raw mixer copy
-path updates only the first plane. Native exclusive single-input scheduling at
-ingress and fixture-local capture is a proposed correction, **pending Mathis's
-decision and not implemented**. The different source/buffer ownership implications
-must be reviewed before changing this transport. The prior provider safeguard
+path updates only the first plane. Mathis subsequently approved native exclusive
+single-input scheduling at ingress and fixture-local capture. That correction now
+preserves both planes without mixing: the first fresh run records all 49,152 stereo
+frames exactly `.125/-.125`, with no drops, gaps or malformed packets and sustained
+generation 1. Expected graph-driver identity is checked independently. This is
+bounded allowed transport evidence, not privacy/lifecycle qualification.
+The fixture uses the exact source/build private headers and library; after stream
+creation it checks its local input is unlinked and CONFIGURE, then sets NO_MIXER
+and exclusivity before the first native port Format negotiation. The SPA adapter
+can emit a provisional fixed-format announcement before that native port exists.
+The scoped offline C check executes the real module's retirement path with
+read-only producer memory and verifies untouched input, released references and
+zeroed queue/output; `compile.sh` builds and runs it alongside the fixture.
+Exclusivity also changes insecure-control behavior, so a denied second input is
+not negative-sentinel reproduction and those controls remain unresolved.
+The prior provider safeguard
 failure remains a separate preserved blocker; this diagnostic executes no
 forbidden-route, adversarial or privacy acceptance tests. See
-`observed-diagnostic-2026-10-15.json`; all prior evidence remains unchanged.
+`observed-native-transport-2026-10-15.json` for the new evidence and
+`observed-diagnostic-2026-10-15.json` for the prior failed checkpoint.
+Historical artifacts are preserved, including one known exception: the old
+client-negative-control report hashes `run.log` as empty, while the retained log
+now contains its failure summary. Its post-hash stdout-write cause is an inference;
+the old report and log are unchanged. Evidence-01 through evidence-05 are distinct
+from that exception; no blanket historical integrity claim is made.
 
 The harness inspects every stored first/tail frame without warmup trimming,
 alignment search, gain fitting or reconstruction. Missing frames/traces and clock

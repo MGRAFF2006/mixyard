@@ -31,6 +31,9 @@ Fixture 0 emits FL=0.125, FR=-0.125; fixture 1 emits FL=0.75, FR=-0.75.
 `MIXYARD_INSECURE_NEGATIVE_CONTROL_V1\n`. It deliberately exposes ingress and
 marks every STATUS `insecure_negative_control=true`; it is only a leakage
 negative control, never a protected-mode bypass or production mode.
+Ingress remains exclusive and uses native single-input scheduling in this mode.
+This changes the earlier insecure multi-input behavior: refusal of another link
+does not reproduce a negative sentinel. Future negative controls remain unresolved.
 
 There is one hidden input port carrying two planar channels, not two DSP mono
 ports. Public output is a separate output-only Audio/Source, likewise one stereo
@@ -57,8 +60,13 @@ Transport limits: 4096 frames/block, eight queued blocks, sixteen SPA buffers,
 one shared data loop (checked at initialization). No clock is rewritten.
 FORMAT/IO/Start are synchronous; unsupported formats, invalid/oversized durations and rate changes,
 source/port/owner/link destruction and format loss close the generation. Durations from 1 through 4096 are accepted; quantum changes within that bound
-do not close selection. Queue
-and module PCM buffers are zeroed on retirement. Existing frames already read
+do not close selection. The ingress uses `PW_IMPL_PORT_FLAG_NO_MIXER` and
+`port.exclusive=true`, set before native port Format negotiation or link creation.
+PipeWire's existing single-input scheduler forwards buffer IDs without arithmetic;
+it preserves both raw planes. Exclusivity is enforced separately by PipeWire when
+initializing a port mix. Public output retains its normal tee.
+Queue and writable public-output PCM are zeroed on retirement; borrowed ingress
+buffer references and IO are reset without overwriting producer storage. Existing frames already read
 by consumers cannot be recalled. A consumer reopen that clears output format
 requires explicit re-selection. Output fanout is handled by PipeWire's normal
 output tee, not by adding another module input or mixer.

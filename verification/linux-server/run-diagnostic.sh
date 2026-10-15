@@ -13,8 +13,8 @@ mkdir -m700 "$evidence/tmp" "$evidence/private"
 mkdir "$evidence/inputs"
 # Keep the actual source and binaries even when later diagnostic builds replace
 # the shared retained build outputs. All paths are relative to this worktree.
-cp -L --parents adapters/linux/server-proof/module.c verification/linux-server/{fixture.c,diagnostic.py,run-diagnostic.sh,pipewire.conf,compile.sh} \
-  verification/linux_server_ingress.py verification/linux-server/build/{fixture,modules/libpipewire-module-mixyard-server-proof.so,install/bin/pipewire,install/bin/pw-dump,install/bin/pw-link,install/lib/libpipewire-0.3.so.0.1609.0,source/build/config.h} \
+cp -L --parents adapters/linux/server-proof/{module.c,compile.sh} verification/linux-server/{fixture.c,diagnostic.py,transport-check.c,run-diagnostic.sh,pipewire.conf,compile.sh} \
+  verification/linux_server_ingress.py verification/linux-server/build/{fixture,transport-check,modules/libpipewire-module-mixyard-server-proof.so,install/bin/pipewire,install/bin/pw-dump,install/bin/pw-link,install/lib/libpipewire-0.3.so.0.1609.0,source/build/config.h,source/src/pipewire/private.h} \
   "$evidence/inputs"
 docker image inspect mixyard-server-proof:local --format '{{.Id}}' > "$evidence/image-id"
 docker run --rm --name mixyard-server-diagnostic --network none --cpus 2 --memory 1g \
