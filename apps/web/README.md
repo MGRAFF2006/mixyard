@@ -165,12 +165,14 @@ snapshot, monotonic clock, revision context and manual-override input. Switching
 workspaces keeps the draft. It does not save graphs or change profiles/audio.
 Activation and controller ownership are separate integration work.
 
-Start with configurable headphones, interface-only hardware monitoring, or
+Start with configurable headphones, explicit interface endpoint-group hardware monitoring, or
 application-combination presets. Supply exact device/profile/source/mix/output
 IDs; saved profile IDs and current routing identities are offered as suggestions.
 No display-name-to-ID inference occurs. The monitor preset requires a complete
-single-device set and explicit hardware-monitor declaration, and suppresses only
-the chosen source-to-monitor send. Unknown gets its own configurable profile or
+connected endpoint set equal to an explicitly listed group (contains-all plus
+exact count), with a hardware-monitor declaration on a chosen listed member. A
+single UID is a group of one. It suppresses only the chosen source-to-monitor
+send; multiple endpoints are never inferred to be one physical box. Unknown gets its own configurable profile or
 no-change terminal. Time windows compose provider-supplied timezone and civil
 minutes; the browser does no fixed-offset conversion.
 
@@ -203,7 +205,9 @@ The fixed integration boundary uses the existing same-origin Api/CSRF session:
   `{mode:"read-only-live-context",snapshot,nowMs,catalog,providers}`
 
 Provider reports contain `{provider,status,reason}` with complete/partial/
-unsupported/error status. Collection never changes simulation inputs until the
+unsupported/error status. Application mapping-domain IDs are displayed when reported. Unmapped
+applications stay unknown; their absence never proves they are stopped.
+Collection never changes simulation inputs until the
 explicit copy action. Collection failure keeps local work and allows retry.
 Imports run graph validation **and full-request simulation** before replacing
 any active data. Services lacking these endpoints return a visible error;

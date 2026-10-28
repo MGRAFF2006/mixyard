@@ -131,3 +131,13 @@ test('graph/catalog policy and snapshot fact edits advance their owned revisions
   s.edit(r => { r.snapshot.facts.push({ key: { name: 'device.connected' }, status: 'unknown', provider: 'simulation', evidence: 'fixture', validForMs: 0, completeness: 'partial' }) }); assert.equal(s.request.snapshot.revision, 1)
   const before = dspJson(s.request); s.edit(r => { r.graph = renameNode(r.graph, 'when', 'active') }); assert.match(s.error, /already exists/); assert.equal(dspJson(s.request), before)
 })
+
+test('monitor endpoint groups are explicit exact sets, with declaration on a chosen member and singleton compatibility', () => {
+  const preset = { ...emptyPreset(), kind: 'monitor' as const, device: 'interface/input', endpointGroup: ['interface/input', 'interface/output'], source: 'source/mic', mix: 'mix/monitor', declared: true }
+  const request = buildPreset(preset, emptyRequest())
+  assert.deepEqual(request.graph.nodes[0]?.kind === 'decision' && request.graph.nodes[0].condition, { kind: 'all', conditions: [{ kind: 'fact', key: { name: 'device.connected' }, predicate: { op: 'contains-all', values: ['interface/input', 'interface/output'] } }, { kind: 'fact', key: { name: 'device.connected' }, predicate: { op: 'count', min: 2, max: 2 } }, { kind: 'fact', key: { name: 'device.hardware-monitor-declared', subject: 'interface/input' }, predicate: { op: 'eq', value: { type: 'bool', value: true } } }] })
+  assert.throws(() => buildPreset({ ...preset, device: 'unlisted/endpoint' }, emptyRequest()), /must be a listed group member/)
+  assert.throws(() => buildPreset({ ...preset, endpointGroup: ['interface/input', 'interface/input'] }, emptyRequest()), /unique, nonblank endpoint/)
+  const single = buildPreset({ ...preset, endpointGroup: [] }, emptyRequest())
+  assert.deepEqual(single.graph.nodes[0]?.kind === 'decision' && single.graph.nodes[0].condition, { kind: 'all', conditions: [{ kind: 'fact', key: { name: 'device.connected' }, predicate: { op: 'contains-all', values: ['interface/input'] } }, { kind: 'fact', key: { name: 'device.connected' }, predicate: { op: 'count', min: 1, max: 1 } }, { kind: 'fact', key: { name: 'device.hardware-monitor-declared', subject: 'interface/input' }, predicate: { op: 'eq', value: { type: 'bool', value: true } } }] })
+})

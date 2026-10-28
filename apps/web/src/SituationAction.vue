@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { useId } from 'vue'
 import type { Action, Override } from './situations.ts'
 import type { Config, Profile } from './model.ts'
+const listId = useId()
 const props = defineProps<{
   action: Action
   profiles: Profile[]
@@ -81,21 +83,21 @@ function gain(index: number, event: Event) {
   <fieldset><legend>{{ label }}</legend>
     <label class="situation-field">Action<select aria-label="Action" :value="action.kind" @change="kind"><option value="no-change">No change</option><option value="select">Select profile and/or reduce routes</option></select></label>
     <template v-if="action.kind === 'select'">
-      <label class="situation-field">Profile ID (optional with reductions)<input :value="action.profileId ?? ''" :list="`${label}-profiles`" @input="profile" /></label>
-      <datalist :id="`${label}-profiles`"><option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option></datalist>
+      <label class="situation-field">Profile ID (optional with reductions)<input :value="action.profileId ?? ''" :list="`${listId}-profiles`" @input="profile" /></label>
+      <datalist :id="`${listId}-profiles`"><option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option></datalist>
       <p class="situation-hint">Saved IDs: {{ profiles.map(p => `${p.name} (${p.id})`).join('; ') || 'No saved profiles available. Supply an exact opaque ID, never a display name.' }}</p>
       <fieldset v-for="(o, i) in action.overrides" :key="i" class="situation-reduction"><legend>Reduction {{ i + 1 }}</legend>
         <div class="situation-fields">
           <label class="situation-field">Reduction scope<select aria-label="Reduction scope" :value="o.scope" @change="scope(i, $event)"><option value="send">One source-to-mix send</option><option value="output">One output</option><option value="mix">One mix</option></select></label>
-          <label v-if="o.scope === 'send'" class="situation-field">Exact source ID<input :value="o.source" :list="`${label}-sources`" @input="change(i, { source: ($event.target as HTMLInputElement).value })" /></label>
-          <label v-if="o.scope !== 'output'" class="situation-field">Exact mix ID<input :value="o.mix" :list="`${label}-mixes`" @input="change(i, { mix: ($event.target as HTMLInputElement).value })" /></label>
-          <label v-if="o.scope === 'output'" class="situation-field">Exact output ID<input :value="o.output" :list="`${label}-outputs`" @input="change(i, { output: ($event.target as HTMLInputElement).value })" /></label>
+          <label v-if="o.scope === 'send'" class="situation-field">Exact source ID<input :value="o.source" :list="`${listId}-sources`" @input="change(i, { source: ($event.target as HTMLInputElement).value })" /></label>
+          <label v-if="o.scope !== 'output'" class="situation-field">Exact mix ID<input :value="o.mix" :list="`${listId}-mixes`" @input="change(i, { mix: ($event.target as HTMLInputElement).value })" /></label>
+          <label v-if="o.scope === 'output'" class="situation-field">Exact output ID<input :value="o.output" :list="`${listId}-outputs`" @input="change(i, { output: ($event.target as HTMLInputElement).value })" /></label>
           <label class="situation-field">Attenuation gain (optional, 0–1)<input type="number" min="0" max="1" step="any" :value="Object.is(o.gain, -0) ? '-0' : o.gain ?? ''" @input="gain(i, $event)" /></label>
         </div>
         <label class="situation-check"><input type="checkbox" :checked="o.mute === true" @change="mute(i, $event)" />Mute this {{ o.scope }} only</label>
         <button type="button" @click="remove(i)">Remove reduction {{ i + 1 }}</button>
       </fieldset>
-      <datalist :id="`${label}-sources`"><option v-for="v in config?.sources ?? []" :key="v.id" :value="v.id" /></datalist><datalist :id="`${label}-mixes`"><option v-for="v in config?.mixes ?? []" :key="v.id" :value="v.id" /></datalist><datalist :id="`${label}-outputs`"><option v-for="v in config?.outputs ?? []" :key="v.id" :value="v.id" /></datalist>
+      <datalist :id="`${listId}-sources`"><option v-for="v in config?.sources ?? []" :key="v.id" :value="v.id" /></datalist><datalist :id="`${listId}-mixes`"><option v-for="v in config?.mixes ?? []" :key="v.id" :value="v.id" /></datalist><datalist :id="`${listId}-outputs`"><option v-for="v in config?.outputs ?? []" :key="v.id" :value="v.id" /></datalist>
       <button type="button" :disabled="action.overrides.length >= 256" @click="emit('update', { ...action, overrides: [...action.overrides, { scope: 'output', output: '', mute: true }] })">Add scoped reduction</button>
       <p class="situation-hint">Reductions cannot unmute, raise levels, grant microphone consent, or remove exclusions. IDs are resolved by later integration, not inferred here.</p>
     </template>

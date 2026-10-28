@@ -55,7 +55,7 @@ function visited(id: string) {
 </script>
 <template>
   <div class="situation-diagram" role="region" aria-label="Decision graph diagram; scroll to explore. Node and labeled branch controls follow below." tabindex="0">
-    <svg :viewBox="`0 0 ${layout.width} ${layout.height}`" :style="{ width: `${layout.width}px`, height: `${layout.height}px` }" role="img" aria-labelledby="situation-map-title situation-map-description">
+    <svg :viewBox="`0 0 ${layout.width} ${layout.height}`" :style="{ width: `${layout.width}px`, height: `${layout.height}px` }" role="img" aria-labelledby="situation-map-title" aria-describedby="situation-map-description">
       <title id="situation-map-title">{{ graph.name }} decision graph</title><desc id="situation-map-description">Root {{ graph.root }}. Each decision has true, false and unknown directed edges. Heavy dashed edges show the evaluated path. Selected nodes have a double outline. Use the node list to edit and follow branches with the keyboard.</desc>
       <defs><marker id="situation-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 z" fill="currentColor" /></marker></defs>
       <g v-for="edge in layout.edges" :key="edge.id" :class="['situation-edge', { evaluated: edge.evaluated }]" ><title>{{ edge.source }} — {{ edge.truth }} → {{ edge.next }}{{ edge.evaluated ? ' (evaluated path)' : '' }}</title><path :d="edge.path" marker-end="url(#situation-arrow)" /><text :x="edge.x" :y="edge.y + 18" text-anchor="middle">{{ edge.truth }}</text></g>

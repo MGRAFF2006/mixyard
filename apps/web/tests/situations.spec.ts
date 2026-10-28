@@ -27,7 +27,7 @@ async function mockApi(page: Page) {
     if (path === '/api/automation/evaluate') { if (hold) await new Promise<void>(r => { held = r }); return reply(evaluation(body)) }
     if (path === '/api/automation/context') {
       if (offline) return reply({ error: { code: 'offline-provider', message: 'Context collector offline' } }, 503)
-      return reply({ mode: 'read-only-live-context', snapshot: { schemaVersion: 1, revision: 3, epoch: 'service-epoch', facts: [{ key: { name: 'device.connected' }, status: 'unknown', provider: 'devices', evidence: 'platform-observed', observedAtMs: 0, validForMs: 5000, completeness: 'partial', reason: 'More than 256 device identities; no truncated known set' }] }, nowMs: 0, catalog: emptyRequest().catalog, providers: [{ provider: 'devices', status: 'partial', reason: 'More than 256 device identities; unknown set' }, { provider: 'application.fullscreen', status: 'unsupported', reason: 'No window provider' }] })
+      return reply({ mode: 'read-only-live-context', snapshot: { schemaVersion: 1, revision: 3, epoch: 'service-epoch', facts: [{ key: { name: 'device.connected' }, status: 'unknown', provider: 'devices', evidence: 'platform-observed', observedAtMs: 0, validForMs: 5000, completeness: 'partial', reason: 'More than 256 device identities; no truncated known set' }] }, nowMs: 0, catalog: emptyRequest().catalog, applicationScope: ['application/MAPPED'], providers: [{ provider: 'devices', status: 'partial', reason: 'More than 256 device identities; unknown set' }, { provider: 'application.fullscreen', status: 'unsupported', reason: 'No window provider' }] })
     }
     throw new Error(`Unexpected API call ${path}`)
   })
@@ -99,19 +99,21 @@ test('compound typed conditions and scoped actions are editable through ordinary
   expect(r.graph.nodes[1]).toMatchObject({ action: { overrides: [{ gain: 0.9999999999999999 }] } })
 })
 
-test('hardware monitor preset requires declaration and only suppresses chosen monitor send when interface is the only device', async ({ page }) => {
+test('hardware monitor preset uses an explicit endpoint group and suppresses only its chosen monitor send', async ({ page }) => {
   await mockApi(page); await open(page)
   await page.getByLabel('Preset', { exact: true }).selectOption('monitor')
-  await page.getByLabel('Exact device UID', { exact: true }).fill('interface/EXACT')
+  await page.getByLabel('Hardware-monitor declaration endpoint UID', { exact: true }).fill('interface/INPUT')
+  await page.getByLabel('Interface endpoint group IDs (one per line; blank uses declaration UID)', { exact: true }).fill('interface/INPUT\ninterface/OUTPUT')
   await page.getByLabel('Mic source ID', { exact: true }).fill('source/mic')
   await page.getByLabel('Monitor mix ID', { exact: true }).fill('mix/monitor')
   await expect(page.getByRole('button', { name: 'Create preset graph', exact: true })).toBeDisabled()
-  await page.getByLabel('I explicitly declare this device provides hardware monitoring (simulation claim)', { exact: true }).check()
+  await page.getByLabel('I explicitly declare the chosen endpoint has hardware monitoring (simulation claim)', { exact: true }).check()
   await page.getByRole('button', { name: 'Create preset graph', exact: true }).click()
   const r = await exportRequest(page)
-  expect(r.graph.nodes[0]).toMatchObject({ condition: { kind: 'all', conditions: [{ key: { name: 'device.connected' }, predicate: { op: 'contains', value: 'interface/EXACT' } }, { predicate: { op: 'count', min: 1, max: 1 } }, { key: { name: 'device.hardware-monitor-declared', subject: 'interface/EXACT' } }] } })
+  expect(r.graph.nodes[0]).toMatchObject({ condition: { kind: 'all', conditions: [{ key: { name: 'device.connected' }, predicate: { op: 'contains-all', values: ['interface/INPUT', 'interface/OUTPUT'] } }, { predicate: { op: 'count', min: 2, max: 2 } }, { key: { name: 'device.hardware-monitor-declared', subject: 'interface/INPUT' } }] } })
   expect(r.graph.nodes[1]).toMatchObject({ action: { kind: 'select', overrides: [{ scope: 'send', source: 'source/mic', mix: 'mix/monitor', mute: true }] } })
   expect(r.snapshot.facts[0]).toMatchObject({ evidence: 'user-declared', provider: 'user-simulation' })
+  await page.screenshot({ path: 'test-results/situations-endpoint-group.png', fullPage: true })
 })
 
 test('full import validates before replacement, preserves raw parameters/signed zero and displays shared evidence/truncation', async ({ page }) => {
@@ -158,6 +160,9 @@ test('context provider gaps/offline recovery do not replace edits until explicit
   await expect(page.getByRole('alert').filter({ hasText: 'Context collector offline' })).toBeVisible()
   await expect(page.getByLabel('Graph name', { exact: true })).toHaveValue('Keep my work')
   api.offline(false); await page.getByRole('button', { name: 'Read live context', exact: true }).click()
+  await expect(page.getByText('An unmapped application remains unknown;', { exact: false })).toBeVisible()
+  await page.getByText('Application mapping domain (1)', { exact: true }).click()
+  await expect(page.getByText('application/MAPPED', { exact: true })).toBeVisible()
   await expect(page.getByText('devices: partial', { exact: true })).toBeVisible(); await expect(page.getByText('application.fullscreen: unsupported', { exact: true })).toBeVisible()
   await expect(page.getByLabel('Snapshot epoch', { exact: true })).toHaveValue('simulation')
   await page.getByRole('button', { name: 'Copy read-only context into simulation', exact: true }).click()

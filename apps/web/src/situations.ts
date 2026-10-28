@@ -153,11 +153,12 @@ export type Provider = Raw & {
   status: 'complete' | 'partial' | 'unsupported' | 'error'
   reason: string | null
 }
-export type LiveContext = {
+export type LiveContext = Raw & {
   snapshot: Snapshot
   nowMs: number
   catalog: Definition[]
   providers: Provider[]
+  applicationScope?: string[]
 }
 export const branches = [['onTrue', 'true'], ['onFalse', 'false'], ['onUnknown', 'unknown']] as const
 export const LIMITS = 'Format 1: 256 nodes, depth 32, 512 facts/catalog entries, 256 set/list items, 1024-byte texts, 4096 work units. Trace: 256 entries and a shared 256 KiB evidence budget. Inputs: 1 MiB. Rejected data is never silently cut.'
@@ -501,7 +502,8 @@ export function readLiveContext(v: unknown): LiveContext {
       text(p.reason)
     return p as Provider
   })
-  return { snapshot, catalog, nowMs: r.nowMs as number, providers }
+  if (r.applicationScope !== undefined) strings(r.applicationScope)
+  return { ...r, snapshot, catalog, nowMs: r.nowMs as number, providers } as LiveContext
 }
 export function readEvaluation(v: unknown, request: SituationRequest): Evaluation {
   const r = object(v)
@@ -610,6 +612,7 @@ export function emptyRequest(): SituationRequest {
 export type Preset = {
   kind: 'headphones' | 'monitor' | 'applications'
   device: string
+  endpointGroup: string[]
   profile: string
   normalProfile: string
   unknownProfile: string
@@ -625,12 +628,15 @@ export type Preset = {
   useTime: boolean
 }
 export function emptyPreset(): Preset {
-  return { kind: 'headphones', device: '', profile: '', normalProfile: '', unknownProfile: '', output: '', source: '', mix: '', declared: false, apps: [], power: '', timezone: '', startMinute: 540, endMinute: 1020, useTime: false }
+  return { kind: 'headphones', device: '', endpointGroup: [], profile: '', normalProfile: '', unknownProfile: '', output: '', source: '', mix: '', declared: false, apps: [], power: '', timezone: '', startMinute: 540, endMinute: 1020, useTime: false }
+}
+export function monitorEndpoints(p: Preset): string[] {
+  return p.endpointGroup.length ? [...p.endpointGroup] : [p.device]
 }
 export function presetProblems(p: Preset): string[] {
   const missing: string[] = []
   if (p.kind !== 'applications' && !p.device.trim())
-    missing.push('Exact device UID')
+    missing.push(p.kind === 'monitor' ? 'Hardware-monitor declaration endpoint UID' : 'Exact device UID')
   if (p.kind === 'headphones') {
     if (!p.profile.trim())
       missing.push('Headphone profile ID')
@@ -640,6 +646,9 @@ export function presetProblems(p: Preset): string[] {
       missing.push('Speaker output ID')
   }
   if (p.kind === 'monitor') {
+    const endpoints = monitorEndpoints(p)
+    if (endpoints.length > 256 || endpoints.some(id => !id.trim()) || new Set(endpoints).size !== endpoints.length) missing.push('1–256 unique, nonblank endpoint group IDs')
+    if (!endpoints.includes(p.device)) missing.push('Declaration endpoint UID must be a listed group member')
     if (!p.declared)
       missing.push('Explicit hardware-monitor declaration')
     if (!p.source.trim())
@@ -667,9 +676,10 @@ export function buildPreset(p: Preset, base: SituationRequest): SituationRequest
     throw new Error(`Preset incomplete: ${missing.join('; ')}.`)
   const r = copyDsp(base)
   const fact = (name: string, predicate: Predicate, subject?: string): Condition => ({ kind: 'fact', key: { name, ...(subject === undefined ? {} : { subject }) }, predicate })
-  const conditions: Condition[] = p.kind === 'applications' ? [fact('application.running', { op: 'contains-all', values: p.apps })] : [fact('device.connected', { op: 'contains', value: p.device })]
+  const endpoints = monitorEndpoints(p)
+  const conditions: Condition[] = p.kind === 'applications' ? [fact('application.running', { op: 'contains-all', values: p.apps })] : p.kind === 'monitor' ? [fact('device.connected', { op: 'contains-all', values: endpoints })] : [fact('device.connected', { op: 'contains', value: p.device })]
   if (p.kind === 'monitor') {
-    conditions.push(fact('device.connected', { op: 'count', min: 1, max: 1 }))
+    conditions.push(fact('device.connected', { op: 'count', min: endpoints.length, max: endpoints.length }))
     conditions.push(fact('device.hardware-monitor-declared', { op: 'eq', value: { type: 'bool', value: true } }, p.device))
   }
   if (p.power)
