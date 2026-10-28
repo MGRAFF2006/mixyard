@@ -184,6 +184,11 @@ fn bad_probe_resource_limits_and_alignment_selection_fail_explicitly() {
         Err(Error::Budget)
     ));
     let report = latency::measure(chain(delays()), probe(), limits()).unwrap();
+    let excessive: Vec<_> = (0..50_000).map(|i| format!("unknown-{i}")).collect();
+    assert_eq!(
+        latency::align(&report, &excessive, Feature::FirstResponse, 10).unwrap_err(),
+        Error::InvalidSelection
+    );
     assert_eq!(
         latency::align(
             &report,
