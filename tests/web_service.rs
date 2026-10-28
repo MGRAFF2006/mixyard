@@ -426,6 +426,93 @@ fn dsp_http_retains_float64_sample_and_parameter_bits() {
 }
 
 #[test]
+fn actual_delay_measurement_and_explicit_alignment_do_not_change_profiles() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let mut request = json!({"config":{"name":"Path probe","format":{"sampleRateHz":48000,"channels":["R","L"]},
+        "effects":[{"name":"R delay","enabled":true,"channels":["R"],"effect":{"kind":"delay","frames":3,"wet":1,"dry":0,"feedback":0}},
+        {"name":"L delay","enabled":true,"channels":["L"],"effect":{"kind":"delay","frames":7,"wet":1,"dry":0,"feedback":0}}]},
+        "probe":{"blockFrames":2,"observationFrames":16,"referenceChannels":["R","L"],"amplitude":1,"detectionThreshold":0,"bypassed":false},
+        "alignment":{"channels":["R","L"],"feature":"first-response"}});
+    let reply = service.ok("/api/dsp/delay", request.clone());
+    assert_eq!(reply["measurement"]["mode"], "offline-impulse-response");
+    assert_eq!(reply["measurement"]["channels"][0]["firstResponseFrame"], 3);
+    assert_eq!(reply["measurement"]["channels"][1]["strongestPeakFrame"], 7);
+    assert_eq!(reply["alignment"]["delays"][0]["frames"], 4);
+    assert_eq!(reply["alignment"]["delays"][1]["frames"], 0);
+    assert!(reply["alignmentError"].is_null());
+    let mut excessive = request.clone();
+    excessive["alignment"]["channels"] = json!((0..50_000)
+        .map(|i| format!("unknown-{i}"))
+        .collect::<Vec<_>>());
+    let encoded = excessive.to_string();
+    let rejected = service.post("/api/dsp/delay", excessive);
+    assert_eq!(
+        rejected.status, 422,
+        "Selection must be rejected before any expensive probe/alignment work"
+    );
+    thread::scope(|scope| {
+        let tasks: Vec<_> = (0..4)
+            .map(|_| {
+                let (address, token, body) = (
+                    service.address.clone(),
+                    service.token.clone(),
+                    encoded.clone(),
+                );
+                scope.spawn(move || {
+                    crate::request(
+                        &address,
+                        "POST",
+                        "/api/dsp/delay",
+                        &[
+                            ("X-Mixyard-Token", token.as_str()),
+                            ("Content-Type", "application/json"),
+                        ],
+                        &body,
+                    )
+                })
+            })
+            .collect();
+        for task in tasks {
+            assert_eq!(task.join().unwrap().status, 422);
+        }
+    });
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+    request["config"]["effects"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"Explicit compensation","enabled":true,
+        "channels":["R"],"effect":{"kind":"delay","frames":4,"wet":1,"dry":0,"feedback":0}}));
+    let aligned = service.ok("/api/dsp/delay", request.clone());
+    assert!(aligned["measurement"]["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|c| c["firstResponseFrame"] == 7));
+    request["probe"]["observationFrames"] = json!(131_072);
+    assert_eq!(service.post("/api/dsp/delay", request.clone()).status, 422);
+    request["probe"]["observationFrames"] = json!(2);
+    let partial = service.ok("/api/dsp/delay", request);
+    assert!(partial["measurement"]["channels"][0]["firstResponseFrame"].is_null());
+    assert!(!partial["measurement"]["responseWindowComplete"]
+        .as_bool()
+        .unwrap());
+    assert!(partial["alignment"].is_null());
+    assert!(partial["alignmentError"]
+        .as_str()
+        .unwrap()
+        .contains("NoResponse"));
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+    assert!(!fixture.root.join("store").exists());
+}
+
+#[test]
 fn dsp_measurement_resets_state_and_preserves_slow_full_output() {
     let fixture = Fixture::new();
     let service = fixture.start();

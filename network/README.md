@@ -28,3 +28,18 @@ a new generation and checks disconnect silence. Additional tests cover all five
 raw formats, eight channels, rates up to 768 kHz, source/peer rejection, bounded
 queues, loss/reorder and malformed control. This is a transport exercise, not
 real-time pacing, audio-quality, latency or device qualification.
+
+For measured **application control RTT** and sample-domain queue snapshots:
+
+```sh
+cargo run --locked --manifest-path network/Cargo.toml --example telemetry -j2
+```
+
+This prints actual paired encrypted loopback JSON, including unavailable, fresh,
+stale and disconnected observations. RTT includes peer worker turnaround; queue
+milliseconds use each negotiated sample rate. One-way delay, consumer prebuffer,
+clock synchronization and end-to-end audio latency remain explicitly unknown.
+See the [timing contract and bounds](../docs/network-audio.md#executable-timing-and-health-observations).
+For a small build cache set `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0`, and `CARGO_INCREMENTAL=0`; use a private target/cache
+and retain the 10 GiB free-space reserve.

@@ -1,5 +1,32 @@
 # Integrated development status
 
+## Channel controls and measured signal delay (2026-10-28)
+
+The merged channel DSP core (#37) supports explicit per-effect channel selection
+and signed matrices. The browser adds beginner channel operations, everyday
+selection/parameter controls and expert coefficients around one complete chain.
+View changes keep custom settings; renames update the same lane's references.
+Removing referenced lanes or implicitly changing matrix format is blocked.
+
+An isolated real-engine impulse probe measures per-output first-response and
+strongest-peak positions in an explicit window. It distinguishes no response,
+threshold, dry/wet branches and incomplete/infinite tails. Explicit compensation
+appends pure per-channel sample delays, then a second probe verifies alignment of
+that observed feature. CPU throughput, filter group delay, native output latency
+and clock synchronization are separate. See [delay semantics](latency.md).
+
+Local checks passed: 98 focused Rust tests, 23 Node tests, 17 contract-browser
+flows and nine actual browser/service/store flows, including operation output,
+rename/reference preservation, measured unequal paths, compensation/re-measure,
+measurement export and a 390 px layout. Screenshots were inspected. Independent
+reviews and hosted checks remain merge gates. This is offline chain alignment;
+live source/mix/output attachment and physical delivery remain unqualified.
+
+Separate network timing work measures authenticated application RTT and queue
+sample occupancy. Its review/CI and service/dashboard integration remain separate;
+one-way delay, consumer prebuffer, device clocks and physical end-to-end latency
+must not be inferred from RTT or queue capacity.
+
 ## DSP processing workbench (2026-10-28)
 
 The browser Processing workspace edits ordered Float64 chains with gain/polarity,

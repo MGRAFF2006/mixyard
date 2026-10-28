@@ -4,7 +4,7 @@ import type { Raw } from './model.ts'
 import type { Api } from './api.ts'
 
 export const filters = ['low-pass', 'high-pass', 'band-pass', 'notch', 'peaking', 'low-shelf', 'high-shelf', 'all-pass'] as const
-export const effectKinds = ['gain', 'biquad', 'delay', 'compressor', 'expander', 'fir'] as const
+export const effectKinds = ['gain', 'biquad', 'delay', 'compressor', 'expander', 'fir', 'channel-matrix'] as const
 export type Filter = typeof filters[number]
 export type EffectKind = typeof effectKinds[number]
 export type Dynamics = Raw & { thresholdDb: number; ratio: number; kneeDb: number; attackMs: number; releaseMs: number; makeupDb: number; rangeDb: number }
@@ -12,8 +12,10 @@ export type Effect = (Raw & { kind: 'gain'; gain: number; invertPolarity: boolea
   (Raw & { kind: 'biquad'; filter: Filter; frequencyHz: number; q: number; gainDb: number }) |
   (Raw & { kind: 'delay'; frames: number; wet: number; dry: number; feedback: number }) |
   (Raw & { kind: 'compressor' | 'expander'; parameters: Dynamics }) |
-  (Raw & { kind: 'fir'; coefficients: number[] })
-export type EffectConfig = Raw & { name: string; enabled: boolean; effect: Effect }
+  (Raw & { kind: 'fir'; coefficients: number[] }) |
+  (Raw & { kind: 'channel-matrix'; routes: MatrixRoute[] })
+export type MatrixRoute = Raw & { output: string; inputs: (Raw & { channel: string; gain: number })[] }
+export type EffectConfig = Raw & { name: string; enabled: boolean; channels?: string[] | null; effect: Effect }
 export type ChainConfig = Raw & { name: string; format: Raw & { sampleRateHz: number; channels: string[] }; effects: EffectConfig[] }
 export type Signal = { kind: 'impulse' | 'constant'; amplitude: number } | { kind: 'sine'; amplitude: number; frequencyHz: number } | { kind: 'samples'; samples: number[] }
 export type PreviewRequest = { config: ChainConfig; frames: number; iterations: number; bypassed: boolean; signal: Signal }
@@ -54,7 +56,24 @@ export function readChain(value: unknown): ChainConfig {
   for (const value of list(c.effects)) {
     const e = object(value), p = object(e.effect)
     label(e.name); bool(e.enabled)
+    if (p.kind === 'channel-matrix') {
+      if (e.channels != null) fail('Channel matrices use explicit routes; remove their channels selector.')
+    } else if (e.channels != null) {
+      const selected = list(e.channels).map(label)
+      if (!selected.length || new Set(selected).size !== selected.length || selected.some(id => !channels.includes(id))) fail(`Effect "${e.name}" needs nonempty, unique, known channel IDs. Correct its selection or format IDs.`)
+    }
     switch (p.kind) {
+      case 'channel-matrix': {
+        const outputs: string[] = []
+        for (const value of list(p.routes)) {
+          const route = object(value), output = label(route.output)
+          outputs.push(output)
+          const inputs = list(route.inputs).map(value => { const input = object(value); finite(input.gain); return label(input.channel) })
+          if (new Set(inputs).size !== inputs.length || inputs.some(id => !channels.includes(id))) fail('Matrix inputs must be unique, known channel IDs. Correct the route before importing.')
+        }
+        if (outputs.length !== channels.length || new Set(outputs).size !== outputs.length || channels.some(id => !outputs.includes(id))) fail('Matrix must include every current output ID exactly once. Correct routes before changing the format.')
+        break
+      }
       case 'gain': finite(p.gain); bool(p.invertPolarity); break
       case 'biquad':
         if (!filters.includes(p.filter as Filter)) fail('Unsupported biquad filter.')
@@ -72,7 +91,7 @@ export function readChain(value: unknown): ChainConfig {
   }
   return c as ChainConfig
 }
-export function newEffect(kind: EffectKind): EffectConfig {
+export function newEffect(kind: EffectKind, channels: string[] = ['FL', 'FR']): EffectConfig {
   let effect: Effect
   switch (kind) {
     case 'gain': effect = { kind, gain: 1, invertPolarity: false }; break
@@ -80,6 +99,7 @@ export function newEffect(kind: EffectKind): EffectConfig {
     case 'delay': effect = { kind, frames: 960, wet: 0.2, dry: 0.8, feedback: 0 }; break
     case 'compressor': case 'expander': effect = { kind, parameters: { thresholdDb: kind === 'compressor' ? -18 : -40, ratio: 3, kneeDb: 6, attackMs: 5, releaseMs: 100, makeupDb: 0, rangeDb: 80 } }; break
     case 'fir': effect = { kind, coefficients: [1] }; break
+    case 'channel-matrix': effect = { kind, routes: channels.map(id => ({ output: id, inputs: [{ channel: id, gain: 1 }] })) }; break
   }
   return { name: kind, enabled: true, effect }
 }

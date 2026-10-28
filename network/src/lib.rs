@@ -3,6 +3,7 @@
 extern crate self as mixyard_network;
 pub mod pcm;
 pub mod protocol;
+pub mod timing;
 pub mod transport;
 
 pub use pcm::{Counters, Receiver};

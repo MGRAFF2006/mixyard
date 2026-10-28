@@ -83,6 +83,68 @@ pub(super) fn validate(bytes: &[u8]) -> Reply {
     result().unwrap_or_else(|e| e)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DelayRequest {
+    config: ChainConfig,
+    probe: mixyard::latency::Probe,
+    alignment: Option<AlignmentRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AlignmentRequest {
+    channels: Vec<String>,
+    feature: mixyard::latency::Feature,
+}
+
+pub(super) fn delay(bytes: &[u8]) -> Reply {
+    let result = || -> Result<Reply, Reply> {
+        let body: DelayRequest = parse(bytes)?;
+        if body
+            .alignment
+            .as_ref()
+            .is_some_and(|a| a.channels.len() > body.config.format.channels.len())
+        {
+            return Err(invalid("dsp-alignment-selection", "Alignment must select unique existing output channels, not more than the configured channel count."));
+        }
+        if !(1..=65_536).contains(&body.probe.observation_frames) {
+            return Err(invalid("dsp-delay-budget", "Choose 1–65536 observation frames. This is an explicit measurement window, not a truncated impulse response export."));
+        }
+        let chain = compile(body.config, body.probe.block_frames)?;
+        let report = mixyard::latency::measure(
+            chain,
+            body.probe,
+            mixyard::latency::Limits {
+                max_observation_frames: 65_536,
+                max_work_units: MAX_WORK,
+                max_buffer_bytes: 2 * 1024 * 1024,
+            },
+        )
+        .map_err(|e| {
+            invalid(
+                "dsp-delay-rejected",
+                &format!(
+                    "Delay probe rejected: {e}. No measurement or partial alignment was applied."
+                ),
+            )
+        })?;
+        let (alignment, alignment_error) = match body.alignment {
+            Some(request) => {
+                match mixyard::latency::align(&report, &request.channels, request.feature, 65_536) {
+                    Ok(plan) => (Some(plan), None),
+                    Err(error) => (None, Some(error.to_string())),
+                }
+            }
+            None => (None, None),
+        };
+        Ok(json(
+            &serde_json::json!({"measurement":report,"alignment":alignment,"alignmentError":alignment_error}),
+        ))
+    };
+    result().unwrap_or_else(|e| e)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Timing {
