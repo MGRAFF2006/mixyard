@@ -1,10 +1,14 @@
 //! Pure, bounded situation decisions. Observations are supplied, never discovered.
 //! A selection is a proposal; profile conflict checks, consent and the planner remain authoritative.
+mod controller;
 mod evaluate;
 mod model;
 mod proposal;
 mod validate;
 
+pub use controller::{
+    Controller, ControllerDecision, ManualOverride, TransitionCandidate, TransitionPolicy,
+};
 pub use evaluate::evaluate;
 pub use model::*;
 pub use proposal::{preview_proposal, Proposal};
