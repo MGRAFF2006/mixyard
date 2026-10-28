@@ -140,6 +140,22 @@ impl Drop for Listener {
     }
 }
 pub fn connect(endpoint: &str) -> io::Result<Stream> {
+    connect_cancellable(
+        endpoint,
+        &std::sync::atomic::AtomicBool::new(false),
+        super::CLIENT_TIMEOUT,
+    )
+}
+
+pub fn connect_cancellable(
+    endpoint: &str,
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Duration,
+) -> io::Result<Stream> {
+    use std::sync::atomic::Ordering;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(io::ErrorKind::Interrupted.into());
+    }
     let path = std::path::Path::new(endpoint);
     directory(path.parent().unwrap(), false)?;
     socket(path)?;
@@ -187,12 +203,24 @@ pub fn connect(endpoint: &str) -> io::Result<Stream> {
             events: libc::POLLOUT,
             revents: 0,
         };
-        let result = unsafe { libc::poll(&mut poll, 1, super::CLIENT_TIMEOUT.as_millis() as i32) };
-        if result < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if result == 0 {
-            return Err(io::ErrorKind::TimedOut.into());
+        let started = std::time::Instant::now();
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            if started.elapsed() >= deadline {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let result = unsafe { libc::poll(&mut poll, 1, 10) };
+            if result > 0 {
+                break;
+            }
+            if result < 0 {
+                let e = io::Error::last_os_error();
+                if e.kind() != io::ErrorKind::Interrupted {
+                    return Err(e);
+                }
+            }
         }
         if let Some(error) = stream.take_error()? {
             return Err(error);

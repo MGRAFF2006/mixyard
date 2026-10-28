@@ -47,7 +47,7 @@ connections are closed; excess operations return JSON 503 `service-busy`.
 Each connection has a 15-second overall deadline, including incomplete headers
 and response writes. Headers use at most a 16 KiB parser buffer and 64 fields.
 A body deadline returns JSON 408 after three seconds; the operation deadline
-returns JSON 504 after six seconds. The runtime client also enforces its own
+returns JSON 504 after nine seconds. The runtime client also enforces its own
 five-second connection/snapshot deadline. Invalid JSON returns 400, policy
 rejection 422, missing profile 404, and store conflicts/busy/recovery 409.
 
@@ -107,7 +107,7 @@ global application absence. The editor copies such sets as partial because the
 format-1 Request cannot encode a restricted domain. Imports, simulations and live
 context collection do not grant automatic application authority. Server-owned live
 reevaluation, profile preview/expected-store-revision writes and the armed
-transition controller remain separate integration work under issue #40.
+transition controller are integrated by the [automatic stored-profile service](automation-service.md). Native audio remains unavailable.
 
 Real HTTP tests execute all three fixture decisions, manual override/stale paths,
 strict body rejection, bounded oversized predicates and repeated actual collector

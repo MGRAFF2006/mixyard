@@ -4,7 +4,6 @@ use super::{error, json, Reply, State};
 use hyper::StatusCode;
 use mixyard::automation as core;
 use serde::Deserialize;
-use std::sync::atomic::AtomicBool;
 
 fn rejected(e: core::Error) -> Reply {
     let status = if e.code == "invalid-json" {
@@ -70,24 +69,5 @@ pub(super) fn context(bytes: &[u8], state: &State) -> Reply {
     if let Err(e) = serde_json::from_slice::<Empty>(bytes) {
         return error(StatusCode::BAD_REQUEST, "invalid-json", &e.to_string());
     }
-    // A single bounded collector owns this clock/revision. Never queue several
-    // potentially four-second subprocess captures behind a blocking mutex.
-    let Ok(mut collector) = state.context.try_lock() else {
-        return error(StatusCode::SERVICE_UNAVAILABLE, "context-busy", "Context collector is busy or unavailable. Try again; editing and simulation remain available.");
-    };
-    let Some(collector) = collector.as_mut() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "context-unavailable",
-            "Context collector could not start. Editing and simulation remain available.",
-        );
-    };
-    match collector.capture(&AtomicBool::new(false)) {
-        Ok(capture) => json(&serde_json::json!({
-            "mode":"read-only-live-context", "snapshot":capture.snapshot,
-            "nowMs":capture.now_ms, "providers":capture.providers,
-            "applicationScope":capture.application_scope, "catalog":core::standard_catalog(),
-        })),
-        Err(e) => error(StatusCode::SERVICE_UNAVAILABLE, "context-unavailable", &format!("Context collection failed: {e}. No unavailable fact was treated as disconnected or false.")),
-    }
+    state.activation.context()
 }
