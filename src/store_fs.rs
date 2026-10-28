@@ -19,6 +19,9 @@ impl Error {
             exit_code,
         }
     }
+    pub(crate) fn io_at(operation: &str, path: &Path, error: io::Error) -> Self {
+        Self::io(format!("{operation} {}: {error}", path.display()))
+    }
     pub(crate) fn io(error: impl std::fmt::Display) -> Self {
         Self::new("io-error", error.to_string(), 4)
     }
@@ -35,7 +38,7 @@ pub(crate) fn check_directory(directory: &Path, names: &[&str]) -> Result<bool, 
     let meta = match fs::symlink_metadata(directory) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(Error::io(e)),
+        Err(e) => return Err(Error::io_at("inspect directory", directory, e)),
     };
     if !meta.is_dir() {
         return Err(unsafe_path(directory));
@@ -47,8 +50,10 @@ pub(crate) fn check_directory(directory: &Path, names: &[&str]) -> Result<bool, 
             return Err(unsafe_path(directory));
         }
     }
-    for entry in fs::read_dir(directory).map_err(Error::io)? {
-        let entry = entry.map_err(Error::io)?;
+    for entry in
+        fs::read_dir(directory).map_err(|e| Error::io_at("list directory", directory, e))?
+    {
+        let entry = entry.map_err(|e| Error::io_at("read directory entry", directory, e))?;
         if !names.iter().any(|name| entry.file_name() == *name) {
             return Err(Error::new(
                 "foreign-store-path",
@@ -72,7 +77,7 @@ pub(crate) fn check_ancestors(path: &Path) -> Result<(), Error> {
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(Error::io(e)),
+            Err(e) => return Err(Error::io_at("inspect ancestor", ancestor, e)),
         }
     }
     Ok(())
@@ -91,7 +96,7 @@ pub(crate) fn check_file(path: &Path) -> Result<bool, Error> {
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(Error::io(e)),
+        Err(e) => return Err(Error::io_at("inspect file", path, e)),
     };
     if is_link(&meta) || !meta.is_file() {
         return Err(unsafe_path(path));
@@ -123,5 +128,7 @@ pub(crate) fn create_directory(path: &Path) -> Result<(), Error> {
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
     }
-    builder.create(path).map_err(Error::io)
+    builder
+        .create(path)
+        .map_err(|e| Error::io_at("create directory", path, e))
 }
