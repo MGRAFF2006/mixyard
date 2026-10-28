@@ -390,6 +390,42 @@ fn dsp_preview_uses_real_float64_processing_without_store_or_audio_mutation() {
 }
 
 #[test]
+fn dsp_http_retains_float64_sample_and_parameter_bits() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let mut config = json!({"name":"Exact JSON", "format":{"sampleRateHz":48000,"channels":["mono"]},
+        "effects":[{"name":"Gain","enabled":true,"effect":{"kind":"gain","gain":1,"invertPolarity":false}}]});
+    let samples = [
+        0.9554529902278269_f64,
+        0.9932393975813079,
+        -0.0,
+        f64::from_bits(1),
+        1e-300,
+        1.0000000000000002,
+    ];
+    let result = service.ok(
+        "/api/dsp/preview",
+        json!({"config":config,"frames":samples.len(),
+        "iterations":1,"bypassed":true,"signal":{"kind":"samples","samples":samples}}),
+    );
+    for (actual, expected) in result["output"].as_array().unwrap().iter().zip(samples) {
+        assert_eq!(actual.as_f64().unwrap().to_bits(), expected.to_bits());
+    }
+    for gain in &samples[..2] {
+        config["effects"][0]["effect"]["gain"] = json!(gain);
+        let result = service.ok(
+            "/api/dsp/preview",
+            json!({"config":config,"frames":1,
+            "iterations":1,"bypassed":false,"signal":{"kind":"constant","amplitude":1}}),
+        );
+        assert_eq!(
+            result["output"][0].as_f64().unwrap().to_bits(),
+            gain.to_bits()
+        );
+    }
+}
+
+#[test]
 fn dsp_measurement_resets_state_and_preserves_slow_full_output() {
     let fixture = Fixture::new();
     let service = fixture.start();

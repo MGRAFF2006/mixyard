@@ -23,6 +23,10 @@ all implemented effect/filter parameters. Signals are `impulse` or `constant`
 with `amplitude`, `sine` with `amplitude` and `frequencyHz`, or `samples` with
 explicit interleaved `samples: number[]`. All scalar samples/parameters must be
 finite. Preview is explicit; a normal editor action never triggers rendering.
+Browser serialization retains signed zero and the round-trippable Float64
+decimal representation. Rust JSON parsing enables correctly rounded Float64
+round trips for samples and effect parameters, so this boundary does not narrow
+an exact bypass or change a configured coefficient's low bits.
 
 Import validation uses `POST /api/dsp/validate` with `{config,frames:1}`. It
 compiles without processing samples and returns `{valid:true,precision:"float64",
