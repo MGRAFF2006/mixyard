@@ -252,3 +252,27 @@ footer { display: flex; justify-content: space-between; color: #50657a; font-siz
 .situation-member { display: flex; gap: 10px; align-items: end; }
 .situation-member > label { flex: 1; }
 .situation-member > button { margin-bottom: 10px; }
+
+/* Saved automatic selection shares the console's restrained control surfaces. */
+.situation-activation { border-top: 3px solid var(--teal); border-bottom: 1px solid var(--line); padding: 8px 0 26px; margin: 22px 0; min-width: 0; overflow-wrap: anywhere; }
+.situation-activation .section-heading { padding-bottom: 10px; }
+.situation-ownership { display: flex; justify-content: space-between; gap: 18px; align-items: start; margin: 20px 0; }
+.situation-ownership h4 { font-size: 1.15rem; color: var(--teal); margin: 0 0 8px; }
+.situation-disarm { border: 2px solid var(--caution); font-weight: 650; flex: 0 0 auto; }
+.situation-pause { max-width: 640px; margin: 12px 0; }
+.situation-pause button { margin-bottom: 10px; }
+.situation-review { margin: 20px 0; border-left: 4px solid var(--teal); padding-left: 18px; }
+.situation-review article { border-bottom: 1px solid var(--line); padding: 10px 0 22px; }
+.situation-candidate { min-width: 0; }
+.situation-candidate h5 { font-size: .95rem; margin: 18px 0 6px; }
+.situation-paths { padding-left: 20px; }
+.situation-paths li { padding: 8px 0; }
+.situation-activation details { min-width: 0; margin: 12px 0; }
+.situation-activation summary { cursor: pointer; overflow-wrap: anywhere; }
+.situation-activation pre { max-width: 100%; }
+@media (max-width: 750px) {
+  .situation-ownership { flex-direction: column; }
+  .situation-review { padding-left: 10px; }
+  .situation-activation .actions { align-items: stretch; }
+  .situation-activation button { white-space: normal; overflow-wrap: anywhere; }
+}

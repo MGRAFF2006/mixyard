@@ -6,12 +6,13 @@ import type { Config, Inventory, Profile } from './model.ts'
 import { copyDsp, dspJson } from './dsp-json.ts'
 import { SituationSession } from './situation-session.ts'
 import { actionSummary, branches, buildPreset, defaultCondition, deleteNode, graphIssues, metadataIntegerLiteral, LIMITS, MAX_AUTOMATION_BYTES, nextNodeId, references, renameNode } from './situations.ts'
-import type { Condition, Node, Preset, SituationRequest } from './situations.ts'
+import type { Condition, Definition, Graph, Node, Preset, SituationRequest } from './situations.ts'
 import SituationAction from './SituationAction.vue'
 import SituationCondition from './SituationCondition.vue'
 import SituationFacts from './SituationFacts.vue'
 import SituationGraph from './SituationGraph.vue'
 import SituationPreset from './SituationPreset.vue'
+import SituationActivation from './SituationActivation.vue'
 const props = defineProps<{
   api: Pick<Api, 'post'>
   ready: boolean
@@ -19,6 +20,7 @@ const props = defineProps<{
   config: Config | null
   storeRevision: number
   inventory: Inventory | null
+  visible?: boolean
 }>()
 const s = reactive(new SituationSession(props.api))
 const selectedId = ref(s.request.graph.root), nodeId = ref(selectedId.value), jsonText = ref(''), editor = ref<HTMLFormElement | null>(null)
@@ -71,7 +73,7 @@ function add(kind: 'decision' | 'terminal') {
   })
   selectedId.value = id
 }
-const editorRevision = ref(0)
+const editorRevision = ref(0), policyRevision = ref(0)
 async function replaceEditor() {
   editorRevision.value++
   await nextTick()
@@ -98,6 +100,24 @@ function formReady() {
     return false
   }
   return true
+}
+function builderReady() {
+  const invalid = editor.value?.querySelector<HTMLInputElement>('input:invalid:not(.situation-inputs input), select:invalid:not(.situation-inputs select), textarea:invalid:not(.situation-inputs textarea)')
+  if (invalid) {
+    invalid.reportValidity()
+    s.fail('Correct the highlighted builder field before saving the graph. Simulation inputs are separate.')
+    return false
+  }
+  return true
+}
+function loadSavedGraph(graph: Graph, catalog: Definition[]) {
+  // Replacement keeps the saved revision exact and never refreshes facts,
+  // native evidence, clock or consent. Ordinary edits still advance revisions.
+  s.invalidate()
+  s.request = { ...s.request, graph: copyDsp(graph), catalog: copyDsp(catalog) }
+  selectedId.value = graph.root
+  s.notice = 'Saved graph and catalog loaded into the builder. Simulation inputs remain supplied claims; no capture or authority was granted.'
+  policyRevision.value++
 }
 function evaluate() {
   if (formReady())
@@ -160,10 +180,11 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
 <template>
   <section class="situations" aria-labelledby="situations-title">
     <div class="section-heading"><div><h2 id="situations-title">Situations</h2><p>Describe when a profile fits. Follow true, false and unknown branches to see what would be selected.</p></div><button type="button" @click="exportConfig">Export full configuration</button></div>
-    <p class="message warning">Simulation workspace. No audio is applied and no profiles are written. Activation and automatic profile selection are separate integration work. The manual-override input below only affects this simulation.</p>
+    <p class="message warning">The builder and supplied context below are a simulation workspace. Simulation applies no audio and writes no profiles. Automatic selection uses separately saved settings and explicit review. The manual-override simulation input does not control automatic selection.</p>
     <p class="situation-hint">Browser draft only. Export to keep your work. Format 1 / Graph revision {{ s.request.graph.revision }}.</p>
     <p v-if="!ready" class="message warning">Service session unavailable. Local editing and export remain available. Use Refresh in the console, then retry validation or context collection.</p>
     <p v-if="s.error" class="message error" role="alert">{{ s.error }}</p><p v-if="s.notice" class="message success" role="status">{{ s.notice }}</p>
+    <SituationActivation :api="api" :ready="ready" :visible="visible ?? true" :graph="s.request.graph" :catalog="s.request.catalog" :builder-generation="s.generation" :builder-ready="builderReady" @load-saved-graph="loadSavedGraph" />
     <SituationPreset :profiles="profiles" :config="config" @build="preset" />
     <form :key="editorRevision" ref="editor" @submit.prevent="evaluate">
       <div class="situation-fields situation-identity">
@@ -178,7 +199,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
       <div class="situation-workspace">
         <div class="situation-map"><SituationGraph :graph="s.request.graph" :selected="selectedId" :evaluation="s.evaluation" @select="select" /></div>
         <div class="situation-node-editor">
-          <fieldset v-if="selected" :key="selected.id"><legend>Edit node {{ selected.id }}</legend>
+          <fieldset v-if="selected" :key="`${policyRevision}:${selected.id}`"><legend>Edit node {{ selected.id }}</legend>
             <div class="situation-fields"><label class="situation-field">Node ID<input v-model="nodeId" @input="s.invalidate()" /></label><button type="button" @click="rename">Rename and relink references</button></div>
             <p class="situation-hint">Exact IDs are case-sensitive; spaces are preserved. Referenced by {{ refs.join('; ') || 'no nodes' }}.</p>
             <template v-if="selected.kind === 'decision'">

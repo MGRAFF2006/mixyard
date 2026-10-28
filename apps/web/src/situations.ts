@@ -461,7 +461,7 @@ export function readRequest(v: unknown): SituationRequest {
 export function metadataIntegerLiteral(value: string): boolean {
   return /^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value))
 }
-const integerFields = new Set(['schemaVersion', 'revision', 'nowMs', 'configRevision', 'storeRevision', 'inventoryRevision', 'manualRevision', 'maxAgeMs', 'observedAtMs', 'validForMs'])
+const integerFields = new Set(['schemaVersion', 'revision', 'nowMs', 'configRevision', 'storeRevision', 'inventoryRevision', 'manualRevision', 'maxAgeMs', 'observedAtMs', 'validForMs', 'settingsRevision', 'expectedSettingsRevision', 'expiresAtMs', 'lastAppliedAtMs', 'untilMs', 'durationMs', 'settleMs', 'minimumHoldMs', 'cooldownMs', 'settleRemainingMs', 'holdRemainingMs', 'cooldownRemainingMs', 'evaluatedAtMs', 'graphRevision', 'snapshotRevision'])
 function checkIntegerLiterals(source: string) {
   let at = 0
   function whitespace() { while (/\s/.test(source[at] ?? '') && at < source.length) at++ }
@@ -532,10 +532,16 @@ function rejectDuplicateFields(text: string) {
 export function parseSituation(text: string): SituationRequest {
   if (new TextEncoder().encode(text).length > MAX_AUTOMATION_BYTES)
     throw new Error('Automation import exceeds 1 MiB.')
+  return readRequest(parseAutomationJson(text))
+}
+// Shared by protected automation responses and local settings imports. Preserve
+// Float64 parameters while refusing rounded metadata or duplicate object keys.
+export function parseAutomationJson(text: string): unknown {
   const value: unknown = JSON.parse(text)
   rejectDuplicateFields(text)
   checkIntegerLiterals(text)
-  return readRequest(value)
+  checkRaw(value)
+  return value
 }
 
 export function readLiveContext(v: unknown): LiveContext {

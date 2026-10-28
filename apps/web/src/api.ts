@@ -1,5 +1,6 @@
 import { dspJson } from './dsp-json.ts'
 import { object, string } from './model.ts'
+import { parseAutomationJson } from './situations.ts'
 
 export class ApiError extends Error {
   status: number
@@ -31,7 +32,7 @@ export class Api {
       const text = await response.text()
       if (text.length > 2_097_152) throw new Error('Service response exceeds the supported size.')
       let value: unknown
-      try { value = JSON.parse(text) } catch { throw new Error(`Service returned unreadable JSON (HTTP ${response.status}). Refresh to reconnect.`) }
+      try { value = path.startsWith('/api/automation/') ? parseAutomationJson(text) : JSON.parse(text) } catch (error) { throw new Error(`Service returned unreadable JSON (HTTP ${response.status}): ${error instanceof Error ? error.message : String(error)} Refresh to reconnect.`) }
       if (!response.ok) {
         const e = object(object(value).error)
         throw new ApiError(response.status, string(e.code), string(e.message))
