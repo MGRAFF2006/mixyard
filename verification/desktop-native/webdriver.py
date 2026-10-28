@@ -83,7 +83,11 @@ def window():
 
 def exited(pid):
     path = Path(f'/proc/{pid}/stat')
-    return not path.exists() or path.read_text().split(') ')[1].startswith('Z')
+    try:
+        status = path.read_text()
+    except FileNotFoundError:
+        return True
+    return status.split(') ')[1].startswith('Z')
 
 
 def stop(process):
