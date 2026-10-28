@@ -1,4 +1,4 @@
-use mixyard::audio::{Limits, Pcm, Processor};
+use mixyard::audio::{Limits, Pcm, Sample, TypedProcessor};
 use mixyard::{AudioFormat, Config, Inventory};
 
 pub fn example() -> (Config, Inventory) {
@@ -29,7 +29,7 @@ pub fn pcm(channels: u16, samples: &[f32]) -> Option<Pcm<'_>> {
     })
 }
 
-pub fn source(p: &Processor, id: &str) -> usize {
+pub fn source<S: Sample>(p: &TypedProcessor<S>, id: &str) -> usize {
     p.plan()
         .sources
         .iter()
@@ -37,25 +37,65 @@ pub fn source(p: &Processor, id: &str) -> usize {
         .unwrap()
 }
 
-pub fn mix<'a>(p: &'a Processor, id: &str) -> &'a [f32] {
+pub fn mix<'a, S: Sample>(p: &'a TypedProcessor<S>, id: &str) -> &'a [S] {
     p.mix_samples(p.plan().mixes.iter().position(|m| m.id == id).unwrap())
         .unwrap()
 }
 
-pub fn output<'a>(p: &'a Processor, id: &str) -> &'a [f32] {
+pub fn output<'a, S: Sample>(p: &'a TypedProcessor<S>, id: &str) -> &'a [S] {
     p.output_samples(p.plan().outputs.iter().position(|o| o.id == id).unwrap())
         .unwrap()
 }
 
-pub fn silent(p: &Processor) {
+pub fn silent<S: Sample>(p: &TypedProcessor<S>) {
     for i in 0..p.plan().mixes.len() {
-        assert!(p.mix_samples(i).unwrap().iter().all(|s| s.to_bits() == 0));
+        assert!(p
+            .mix_samples(i)
+            .unwrap()
+            .iter()
+            .all(|s| s.widen().to_bits() == 0));
     }
     for i in 0..p.plan().outputs.len() {
         assert!(p
             .output_samples(i)
             .unwrap()
             .iter()
-            .all(|s| s.to_bits() == 0));
+            .all(|s| s.widen().to_bits() == 0));
     }
+}
+
+/// A policy-admitted extreme block that can overflow Float64 accumulation.
+#[allow(dead_code)]
+pub fn overflow_example() -> (Config, Inventory) {
+    use mixyard::{Observation, Origin, Selector, Send, Source};
+    let (mut config, mut inventory) = example();
+    // Seventeen 1/17 sends pass the planner's headroom check, but rounding their
+    // maximum-finite contributions can overflow f64. No infinity may escape.
+    config.sends.retain(|s| s.mix != "desk-a");
+    for i in 0..17 {
+        let id = format!("overflow-{i:02}");
+        let selector = Selector::App {
+            application_id: id.clone(),
+        };
+        config.sources.push(Source {
+            id: id.clone(),
+            selector: selector.clone(),
+        });
+        inventory.sources.push(Observation {
+            observed_id: id.clone(),
+            selector,
+            origin: Origin::External,
+            format: Some(AudioFormat {
+                channels: 2,
+                sample_rate_hz: 48_000,
+            }),
+        });
+        config.sends.push(Send {
+            source: id,
+            mix: "desk-a".into(),
+            gain: 1.0 / 17.0,
+            mute: false,
+        });
+    }
+    (config, inventory)
 }
