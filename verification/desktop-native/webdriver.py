@@ -196,7 +196,9 @@ def native_button(driver, selector):
         }, {once: true});
     """)
     xdotool('key', '--clearmodifiers', 'Return')
-    assert driver.script('return window.nativeActivation') is True, 'Activation must be a trusted native key'
+    # XTest command completion does not mean WebKit consumed its queued events.
+    wait_for(lambda: driver.script('return window.nativeActivation') is True,
+             'trusted native key activation', seconds=2)
 
 
 def submit_connect(driver, instance):
@@ -206,12 +208,14 @@ def submit_connect(driver, instance):
     driver.input_attempts.append(attempt)
     xdotool('key', '--clearmodifiers', 'ctrl+a')
     xdotool('type', '--clearmodifiers', '--delay', 10, instance)
-    attempt['after'] = input_state(driver)
+    def entered():
+        attempt['after'] = input_state(driver)
+        return attempt['after']['input']['value'] == instance
+    wait_for(entered, f'native runtime instance entry {instance!r}', seconds=2)
     attempt['active_window_after'] = xdotool('getactivewindow')
-    actual = attempt['after']['input']['value']
-    assert actual == instance, f'Native runtime instance entry: expected {instance!r}, actual {actual!r}; focus={attempt!r}'
     xdotool('key', 'Tab')
-    assert driver.script("return document.activeElement.id") == 'runtime-connect'
+    wait_for(lambda: driver.script("return document.activeElement.id") == 'runtime-connect',
+             'native Tab to runtime connect', seconds=2)
     native_button(driver, '#runtime-connect')
 
 
