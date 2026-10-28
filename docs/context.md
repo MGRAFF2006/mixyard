@@ -53,10 +53,10 @@ profile state and durable declaration storage belong to the service adapter.
 
 | Provider | Actual observation and limits |
 | --- | --- |
-| `linux.proc` | `application.running`: enumerate at most 8192 `/proc` entries, consume only UID fields to filter real/effective current-user processes, then exact `/proc/PID/exe` identities. Up to 32 explicitly configured absolute executable paths map to application IDs. The set covers **these mapped applications**, not every desktop application. Other-user executable links, arguments, environment, process names and window titles are never collected. No mapping means unknown. Inaccessible/malformed/disappearing processes or enumeration overflow mean unknown with no set, including any negative result. Basenames are never desktop IDs. Mapping a shared interpreter cannot distinguish scripts and should not be used to identify a particular script/app. |
+| `linux.proc` | `application.running`: enumerate at most 8192 `/proc` entries, consume only UID fields to filter real/effective current-user processes, then exact executable identities read relative to the same open process directory. UID fields are rechecked after lookup; a replaced directory, owner change or disappearing process makes the result unknown. Up to 32 explicitly configured absolute executable paths map to application IDs. The set covers **these mapped applications**, not every desktop application. Other-user executable links, arguments, environment, process names and window titles are never collected. No mapping means unknown. Inaccessible/malformed/disappearing processes or enumeration overflow mean unknown with no set, including any negative result. Basenames are never desktop IDs. Mapping a shared interpreter cannot distinguish scripts and should not be used to identify a particular script/app. |
 | `linux.sysfs` | At most 64 `/sys/class/power_supply` entries and 4096 bytes per consumed file. `power.source` is `external` if an external supply reports online, or `battery` when present batteries explicitly report discharging. A battery merely existing proves neither. Battery percent is reported only for one present battery with integer capacity 0–100. Missing batteries yield unknown percent; multiple batteries require a future weighted-total provider. Missing, denied, malformed or unrecognized supply data never becomes a negative observation. |
 | `civil.zoneinfo` | `civil.timezone`, `date`, ISO `weekday` 1–7 and `minute-of-day` 0–1439 are derived coherently from one timezone-aware instant, default `Europe/Berlin`. Python stdlib zoneinfo applies actual DST rules. Invalid timezone/missing tzdata is an error. Repeated autumn minutes have the same civil value at both actual instants; the spring gap is skipped. These observations do not define a once-per-day scheduler or distinguish repeated-hour scheduling; the controller must supply that policy. |
-| `linux.pipewire` | Read-only `pw-dump`, using the existing adapter's strict observation and semantic identity validation. At most 1 MiB combined stdout/stderr, two seconds, 8192 objects and 64 endpoints. Malformed JSON/duplicate fields, failed tools, permissions, missing tools, duplicate identities and missing endpoint identity never become a known empty set. |
+| `linux.pipewire` | Read-only `pw-dump`, using the existing adapter's strict observation and semantic identity validation. At most 1 MiB combined stdout/stderr, two seconds, 8192 objects and 64 endpoints. Malformed JSON/duplicate fields, failed tools, permissions, missing tools, duplicate identities and missing endpoint identity or unclassifiable Node metadata never become a known empty set. Any discovery stderr, even with exit status zero, makes the observation unavailable; its contents remain private. |
 | `local.declaration` | `host.identity` only from the configured nonblank stable local label. It is `user-declared`, never guessed from hostnames or used to choose a profile. Omitted label is unknown. |
 | `unimplemented` | Explicit unsupported global facts: defaults, selected devices, foreground, streams, peers, network/SSID, current profile. Mapped application fullscreen/playback/capture/call state is explicitly unsupported. Other entity facts are unavailable until a legitimate provider or explicit declaration exists. |
 
@@ -93,7 +93,7 @@ never request parameters. The helper runs with Python isolated mode and bytecode
 writes disabled. The Rust owner bounds total output to 1 MiB, configuration to
 16 KiB, and elapsed helper time to four seconds. Both pipes are drained without
 blocking; timeout, excess output, cancellation and success all clean up the owned
-process group and reap the direct child. Helper stderr/private metadata is discarded.
+process group and reap the direct child. Helper stderr/private metadata is discarded. Discovery diagnostics retain only a bounded failure signal, never their text.
 Only Linux spawns this helper; other OSes have no child observation path.
 
 ```sh
@@ -109,5 +109,5 @@ mutation commands. Its output can contain private local identities; do not save 
 captures in Git or PR evidence. It returns JSON even when providers are unavailable;
 exits 2 for usage, 4 for collector/serialization errors. It is not a daemon and does
 not add a service route or automatic profile controller. CI uses deterministic
-fixtures for actual provider behavior and child lifecycles, including unsupported
+fixtures for actual provider behavior and child lifecycles, including process-directory replacement between UID and executable reads, incomplete Node metadata, successful tool exits with diagnostics, and unsupported
 platforms; native hardware discovery on CI is not qualification evidence.

@@ -68,6 +68,25 @@ class Applications(unittest.TestCase):
             with patch.object(observer, "MAX_ENTRIES", 0):
                 self.assertIsNone(observer.applications(root, 101, {"/app": "id"})[0]["value"])
 
+    def test_pid_directory_replacement_cannot_change_admitted_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.process(root, 1, 101, "/allowed")
+            original = observer.read_text
+            replaced = False
+            def replace_after_owner(path, *args, **kwargs):
+                nonlocal replaced
+                result = original(path, *args, **kwargs)
+                if Path(path).name == "status" and not replaced:
+                    replaced = True
+                    (root / "1").rename(root / "old")
+                    self.process(root, 1, 102, "/other")
+                return result
+            with patch.object(observer, "read_text", side_effect=replace_after_owner):
+                observed = observer.applications(root, 101, {"/allowed":"mine", "/other":"not-mine"})[0]
+            self.assertEqual(observed["status"], "unknown")
+            self.assertIsNone(observed["value"])
+
 
 class Power(unittest.TestCase):
     def supply(self, root, name, **fields):
@@ -186,9 +205,25 @@ class Audio(unittest.TestCase):
         with patch.object(observer, "bounded_command", side_effect=ValueError("output-limit")):
             self.assertEqual(observer.audio(ADAPTER)[0]["status"], "error")
 
+    def test_unclassifiable_nodes_do_not_prove_empty_endpoint_inventory(self):
+        partial = node()
+        del partial["info"]["props"]["media.class"]
+        for objects in [[{"id":1,"type":"PipeWire:Interface:Node"}], [partial]]:
+            with patch.object(observer, "bounded_command", return_value=json.dumps(objects).encode()):
+                observed = observer.audio(ADAPTER)[0]
+            self.assertNotEqual(observed["status"], "known")
+            self.assertIsNone(observed["value"])
+        unrelated = node()
+        unrelated["info"]["props"]["media.class"] = "Video/Source"
+        self.assertEqual(observer.audio_objects([unrelated], self.adapter)[0]["value"], observer.value("text-set", []))
+
 
 @unittest.skipUnless(sys.platform == "linux", "Linux selectors/pipe behavior")
 class Commands(unittest.TestCase):
+    def test_zero_exit_diagnostics_do_not_certify_complete_discovery(self):
+        with self.assertRaises(OSError):
+            observer.bounded_command([sys.executable, "-c", "import sys; print('[]'); sys.stderr.write('fixture bind failure')"])
+
     def test_success_exit_stderr_size_and_timeout_are_bounded(self):
         run = observer.bounded_command
         self.assertEqual(run([sys.executable, "-c", "print('fixture')"]), b"fixture\n")

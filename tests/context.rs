@@ -126,6 +126,58 @@ mod linux {
         }
         facts
     }
+    #[test]
+    fn real_collector_does_not_turn_partial_or_diagnostic_discovery_into_absence() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+        let fixture = Helper::new("");
+        let tool = fixture.0.join("pw-dump");
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let path = std::env::join_paths(
+            std::iter::once(fixture.0.clone()).chain(std::env::split_paths(&inherited)),
+        )
+        .unwrap();
+        for (payload, diagnostics, complete) in [
+            (
+                r#"[{"id":1,"type":"PipeWire:Interface:Node"}]"#,
+                false,
+                false,
+            ),
+            ("[]", true, false),
+            ("[]", false, true),
+        ] {
+            fs::write(
+                &tool,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' '{payload}'\n{}\n",
+                    if diagnostics {
+                        "printf 'private fixture bind error' >&2"
+                    } else {
+                        ":"
+                    }
+                ),
+            )
+            .unwrap();
+            fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
+            let output = Command::new(env!("CARGO_BIN_EXE_mixyard-context"))
+                .env("PATH", &path)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            let capture: mixyard::context::Capture =
+                serde_json::from_slice(&output.stdout).unwrap();
+            let observed = fact(&capture, "device.connected");
+            if complete {
+                assert_eq!(observed.status, FactStatus::Known);
+                assert_eq!(observed.value, Some(Value::TextSet(vec![])));
+            } else {
+                assert_ne!(observed.status, FactStatus::Known);
+                assert_eq!(observed.completeness, Completeness::Partial);
+                assert_eq!(observed.value, None);
+            }
+            assert!(!String::from_utf8_lossy(&output.stdout).contains("private fixture bind error"));
+        }
+    }
     fn known_helper() -> Helper {
         let facts = helper_facts();
         // These are trusted *test helper* outputs; imports use the separate fixture path.
