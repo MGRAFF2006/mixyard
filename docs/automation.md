@@ -22,6 +22,9 @@ The CLI reads at most 1 MiB, prints JSON, and exits 0 for a completed evaluation
 (including unknown/no-change), 2 for usage, 3 for invalid input/policy, 4 for I/O.
 It has no write/apply/observe command.
 
+The separate [durable settings store](automation-settings.md) persists policy,
+explicit declarations and observer configuration without arming automation.
+
 ## Public Rust API
 
 All the following types/functions are exported from `mixyard::automation`:

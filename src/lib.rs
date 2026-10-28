@@ -46,6 +46,7 @@ pub mod diagnostics;
 pub mod dsp;
 pub mod latency;
 pub mod profiles;
+mod store_fs;
 
 use serde::{Deserialize, Serialize};
 pub mod runtime;
