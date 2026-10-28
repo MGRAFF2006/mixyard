@@ -292,10 +292,16 @@ requests never grant PCM admission. The application nonce is connection-local
 correlation; QUIC/TLS supplies authentication and replay protection.
 
 Only one local probe may be in flight, and attempts start no faster than once per
-second. Concurrent/rate-exceeded calls fail immediately without spawning tasks or
-waiting on a local admission queue. The deadline is the lesser of one second and
-`control_timeout`, including stream opening. Cancellation releases the probe slot
-and its QUIC streams without invalidating negotiated audio permissions. Probes
+second. Concurrent/rate-exceeded probe calls fail immediately without spawning
+tasks. Probes and outbound PCM negotiation share the reliable-control gate, so
+they cannot reset one another as simultaneous inbound requests. The probe's
+deadline is the lesser of one second and `control_timeout`, including the bounded
+wait for that gate and stream opening. RTT starts after obtaining the gate;
+local admission waiting is not counted as network round-trip time. Cancellation
+releases the probe slot and its QUIC streams without invalidating negotiated
+audio permissions. Failure to deliver an echo for a fully validated probe
+(including a caller that stopped receiving after cancellation/timeout) is local
+to that optional stream; malformed requests still fail closed. Probes
 share the single inbound reliable control worker, polled directly in the receive
 loop so reply FIN and worker availability complete together (avoiding a spawned
 task-completion race on successive requests). A busy worker resets
@@ -310,6 +316,9 @@ shared with a peer or protect application polling by an unbounded local caller.
 Tests cover actual encrypted matching echoes, a delayed peer, no initial sample,
 stale/disconnected states, an injected local monotonic observation time, invalid
 nonce/version/kind/length/trailing data, slow peers, cancellation and flooding.
+Production-worker regressions pause peer turnaround until after probe cancellation
+or timeout and then verify exact audio delivery; another overlaps probing and
+negotiation. All three reproduced connection teardown before the repair.
 The mixed-rate queue test distinguishes holes and partial packets from occupancy,
 checks restart/sibling isolation, and preserves the existing raw precision oracles.
 These results establish local application RTT and worker queue semantics only.

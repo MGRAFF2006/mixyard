@@ -4,6 +4,76 @@ mod support;
 use support::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reviewer_cancel_or_timeout_before_peer_turnaround_preserves_audio() -> Result<()> {
+    reviewer_abandon_probe_before_peer_turnaround(true).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reviewer_timeout_before_peer_turnaround_preserves_audio() -> Result<()> {
+    reviewer_abandon_probe_before_peer_turnaround(false).await
+}
+
+async fn reviewer_abandon_probe_before_peer_turnaround(cancel: bool) -> Result<()> {
+    let s = spec(1, "a", Codec::RawS16Le, 48_000, &["FL"], 48);
+    let (a, b, _ea, _eb) = pair(std::slice::from_ref(&s), &[]).await?;
+    // Keep the actual receive worker alive but pause its polling after admission.
+    let mut worker = Box::pin(b.clone().run());
+    tokio::select! {
+        result = a.negotiate(offer(s.clone(), 1)) => result?,
+        result = &mut worker => panic!("unexpected worker exit: {result:?}"),
+    }
+    let caller = a.clone();
+    let task = tokio::spawn(async move { caller.probe_rtt().await });
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    if cancel {
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    } else {
+        assert!(task.await?.is_err());
+    }
+    // Allow QUIC to deliver STOP_SENDING, then resume the production worker.
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    tokio::select! {
+        result = &mut worker => panic!("cancel={cancel}: optional probe closed audio worker: {result:?}"),
+        _ = tokio::time::sleep(Duration::from_millis(100)) => {},
+    }
+    a.enqueue(1, sample_bytes(&s, 0)).await?;
+    a.flush_round().await?;
+    tokio::select! {
+        result = wait_queued(&b, 1, 1) => result?,
+        result = &mut worker => panic!("unexpected worker exit: {result:?}"),
+    }
+    assert_eq!(b.pull(1)?, sample_bytes(&s, 0));
+    a.close();
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reviewer_concurrent_probe_and_negotiation_preserve_connection() -> Result<()> {
+    for attempt in 0..20 {
+        let s = spec(1, "a", Codec::RawS16Le, 48_000, &["FL"], 48);
+        let (a, b, _ea, _eb) = pair(std::slice::from_ref(&s), &[]).await?;
+        let caller = a.clone();
+        let probe = tokio::spawn(async move { caller.probe_rtt().await });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let sender = a.clone();
+        let negotiation = tokio::spawn(async move { sender.negotiate(offer(s, 1)).await });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let run_b = tokio::spawn(b.clone().run());
+        let measured = probe.await?;
+        let admitted = negotiation.await?;
+        assert!(
+            admitted.is_ok(),
+            "attempt {attempt}: probe={measured:?}, admission={admitted:?}"
+        );
+        assert!(a.connection.close_reason().is_none());
+        a.close();
+        let _ = run_b.await?;
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn encrypted_loss_reorder_stale_packets_and_flooded_stream_leave_sibling_usable() -> Result<()>
 {
     let first = spec(1, "a", Codec::RawS24Le, 96_000, &["FL", "FR"], 48);

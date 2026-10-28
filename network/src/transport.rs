@@ -269,7 +269,12 @@ impl Session {
                                     receive.read_exact(&mut prefix).await?;
                                     if prefix == PROBE_TAG {
                                         let nonce = read_probe_body(&mut receive, PROBE_PING).await?;
-                                        write_probe(&mut send, PROBE_ECHO, nonce).await?;
+                                        // A valid optional probe changes no admission state.
+                                        // Its caller may stop receiving after timeout/cancel;
+                                        // failure to deliver the echo must not stop PCM.
+                                        let _ = write_probe(&mut send, PROBE_ECHO, nonce).await;
+                                        let _ = send.finish();
+                                        return Ok(());
                                     } else {
                                         let offer: Offer = read_control_body(&mut receive, prefix).await?;
                                         let admission = session.receiver.lock().expect("receiver poisoned").admit(offer);
@@ -342,6 +347,11 @@ impl Session {
         }
         let mut guard = CancelProbe(&self.probe, false);
         let result = timeout(self.limits.control_timeout.min(PROBE_TIMEOUT), async {
+            // The peer admits one reliable control exchange at a time. Share
+            // this gate with negotiation, without making cancelled probes an
+            // uncertain PCM admission. Waiting is bounded but excluded from RTT.
+            let _control = self.admission.lock().await;
+            let exchange_started = Instant::now();
             let (mut send, mut receive) = self.connection.open_bi().await?;
             write_probe(&mut send, PROBE_PING, nonce).await?;
             send.finish()?;
@@ -353,15 +363,14 @@ impl Session {
                 "probe nonce mismatch"
             );
             ensure!(self.connection.close_reason().is_none(), "disconnected");
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, anyhow::Error>(exchange_started.elapsed())
         })
         .await;
         let completed = Instant::now();
         let mut state = self.probe.lock().expect("probe poisoned");
         guard.1 = true;
         match result {
-            Ok(Ok(())) => {
-                let elapsed = completed.duration_since(started);
+            Ok(Ok(elapsed)) => {
                 state.sample = Some((completed, elapsed));
                 state.status = ProbeStatus::Succeeded;
                 Ok(elapsed)
