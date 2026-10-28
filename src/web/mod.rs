@@ -1,6 +1,7 @@
 //! Bounded loopback HTTP transport for the existing core APIs.
 mod api;
 mod assets;
+mod automation;
 mod processing;
 
 use http_body_util::{BodyExt, Full, Limited};
@@ -28,6 +29,7 @@ struct State {
     instance: String,
     store: profiles::Store,
     assets: assets::Assets,
+    context: std::sync::Mutex<Option<mixyard::context::Collector>>,
     operations: Arc<Semaphore>,
 }
 
@@ -81,6 +83,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 instance,
                 store,
                 assets,
+                context: std::sync::Mutex::new(
+                    mixyard::context::Collector::new(Default::default()).ok(),
+                ),
                 operations: Arc::new(Semaphore::new(4)),
             });
             let connections = Arc::new(Semaphore::new(32));

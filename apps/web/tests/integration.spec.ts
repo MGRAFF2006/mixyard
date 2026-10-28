@@ -8,6 +8,8 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { test as base, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { dspJson } from '../src/dsp-json.ts'
+import { buildPreset, emptyPreset, emptyRequest } from '../src/situations.ts'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const suffix = process.platform === 'win32' ? '.exe' : ''
@@ -355,4 +357,53 @@ test('valid extreme Float64 gains remain renderable and exportable through the d
   await expect(page.getByRole('alert')).toContainText('previous gain is kept')
   expect(Number(await page.getByLabel('Linear gain', { exact:true }).inputValue())).toBe(Number.MAX_VALUE)
   await expect(page.getByRole('heading', { name:'Float64 block output',exact:true })).toHaveCount(0)
+})
+
+
+test('real situation evaluator imports and explains explicit fixture decisions without writing profiles', async ({ page, service }) => {
+  await open(page, service)
+  await page.getByRole('button', { name: 'Situations', exact: true }).click()
+  await page.getByText('Expert JSON / import full configuration', { exact: true }).click()
+  const input = page.getByLabel('Full situation configuration JSON', { exact: true })
+  for (const [name, terminal] of [['headphone-priority', 'headphones'], ['interface-monitor', 'suppress'], ['application-schedule', 'call']]) {
+    const request = readFileSync(join(root, `examples/automation/${name}.json`), 'utf8')
+    await input.fill(request)
+    await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+    await expect(page.getByText('Full configuration imported after core validation', { exact: false })).toBeVisible()
+    await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+    await expect(page.locator('.situation-result .message.success')).toContainText(`Terminal: ${terminal}. Audio applied: no.`)
+  }
+  expect((await service.post('/api/profiles/read')).storeRevision).toBe(0)
+  await page.getByRole('button', { name: 'Read live context', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Copy read-only context into simulation', exact: true })).toBeVisible()
+  await expect(page.locator('.situation-providers')).toContainText('unimplemented: unsupported')
+  await page.screenshot({ path: 'test-results/integration-situations-desktop.png', fullPage: true })
+})
+
+test('scoped context fixture keeps unmapped negative application rules unknown through actual evaluator and export', async ({ page, service }) => {
+  await open(page, service)
+  await page.getByRole('button', { name: 'Situations', exact: true }).click()
+  const request = buildPreset({ ...emptyPreset(), kind: 'applications', apps: ['UNMAPPED'], profile: 'active', normalProfile: 'normal' }, emptyRequest())
+  const node = request.graph.nodes[0]!
+  if (node.kind !== 'decision') throw Error('fixture')
+  node.condition = { kind: 'not', condition: node.condition }
+  await page.getByText('Expert JSON / import full configuration', { exact: true }).click()
+  await page.getByLabel('Full situation configuration JSON', { exact: true }).fill(dspJson(request))
+  await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+  await expect(page.getByText('Full configuration imported after core validation', { exact: false })).toBeVisible()
+  // Only this observation is a fixture. Evaluation uses the production Rust API.
+  await page.route('**/api/automation/context', route => route.fulfill({ json: { mode: 'read-only-live-context', catalog: request.catalog, nowMs: 0, snapshot: { schemaVersion: 1, revision: 1, epoch: 'scoped-fixture', facts: [{ key: { name: 'application.running' }, status: 'known', value: { type: 'text-set', value: [] }, provider: 'scoped-test-fixture', evidence: 'fixture', observedAtMs: 0, validForMs: 5000, completeness: 'complete' }] }, applicationScope: ['MAPPED'], providers: [{ provider: 'scoped-test-fixture', status: 'complete', reason: 'Complete only over MAPPED' }] } }))
+  await page.getByRole('button', { name: 'Read live context', exact: true }).click()
+  await page.getByRole('button', { name: 'Copy read-only context into simulation', exact: true }).click()
+  await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+  await expect(page.locator('.situation-result .message.success')).toContainText('No change. Terminal: safe.')
+  await expect(page.locator('.situation-trace')).toContainText('unknown')
+  const downloaded = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export full configuration', exact: true }).first().click()
+  const exported = JSON.parse(readFileSync((await (await downloaded).path())!, 'utf8'))
+  expect(exported.snapshot.facts[0].completeness).toBe('partial')
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: 'test-results/integration-situations-mobile.png', fullPage: true })
+  expect((await service.post('/api/profiles/read')).storeRevision).toBe(0)
 })
