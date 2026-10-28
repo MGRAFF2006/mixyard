@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { useSituationRows } from './situation-rows.ts'
 import { vSituationNumber } from './situation-number.ts'
 import { metadataIntegerLiteral } from './situations.ts'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { copyDsp } from './dsp-json.ts'
 import { defaultCondition, defaultPredicate, defaultValue, operators } from './situations.ts'
 import type { Condition, Definition, Predicate, Value, ValueType } from './situations.ts'
@@ -24,11 +25,11 @@ const definition = computed(() => {
   const c = props.condition
   return c.kind === 'fact' ? props.catalog.find(d => d.name === c.key.name) : undefined
 })
-const rowRevision = ref(0)
+const rows = useSituationRows(() => props.condition.kind === 'all' || props.condition.kind === 'any' ? props.condition.conditions.length : props.condition.kind === 'fact' && props.condition.predicate.op === 'in' ? (props.condition.predicate.values as Value[]).length : 0)
 const numberOwner = computed(() => props.condition.kind === 'fact' ? JSON.stringify([props.condition.key.name, props.condition.predicate.op]) : props.condition.kind)
 function removeMember(index: number) {
   if (props.condition.kind !== 'fact') return
-  rowRevision.value++
+  rows.remove(index)
   predicate({ values: (props.condition.predicate.values as Value[]).filter((_, i) => index !== i) })
 }
 const valueType = computed<ValueType>(() => definition.value?.valueType ?? 'text')
@@ -69,7 +70,7 @@ function child(index: number, value?: Condition) {
   if (value)
     conditions[index] = value
   else {
-    rowRevision.value++
+    rows.remove(index)
     conditions.splice(index, 1)
   }
   emit('update', { ...props.condition, conditions })
@@ -103,11 +104,11 @@ function number(key: 'value' | 'min' | 'max', event: Event) {
         <label class="situation-field">Inclusive minimum<input v-situation-number="numberOwner" type="number" :step="condition.predicate.op === 'count' ? 1 : 'any'" :value="Object.is(condition.predicate.min, -0) ? '-0' : condition.predicate.min" required @input="number('min', $event)" /></label>
         <label class="situation-field">Inclusive maximum<input v-situation-number="numberOwner" type="number" :step="condition.predicate.op === 'count' ? 1 : 'any'" :value="condition.predicate.max" required @input="number('max', $event)" /></label>
       </div>
-      <fieldset v-else-if="condition.predicate.op === 'in'"><legend>Membership values</legend><div v-for="(value, i) in (condition.predicate.values as Value[])" :key="`${rowRevision}-${i}`"><SituationValue :value="value" :label="`Membership value ${i + 1}`" @update="predicate({ values: (condition.predicate.values as Value[]).map((v, index) => index === i ? $event : v) })" @invalid="emit('invalid')" /><button type="button" @click="removeMember(i)">Remove membership value {{ i + 1 }}</button></div><button type="button" :disabled="(condition.predicate.values as Value[]).length >= 256" @click="predicate({ values: [...(condition.predicate.values as Value[]), defaultValue(valueType)] })">Add membership value</button></fieldset>
+      <fieldset v-else-if="condition.predicate.op === 'in'"><legend>Membership values</legend><div v-for="(value, i) in (condition.predicate.values as Value[])" :key="rows.keys.value[i]"><SituationValue :value="value" :label="`Membership value ${i + 1}`" @update="predicate({ values: (condition.predicate.values as Value[]).map((v, index) => index === i ? $event : v) })" @invalid="emit('invalid')" /><button type="button" @click="removeMember(i)">Remove membership value {{ i + 1 }}</button></div><button type="button" :disabled="(condition.predicate.values as Value[]).length >= 256" @click="predicate({ values: [...(condition.predicate.values as Value[]), defaultValue(valueType)] })">Add membership value</button></fieldset>
       <SituationStrings v-else-if="condition.predicate.op === 'contains-all' || condition.predicate.op === 'contains-any'" :values="condition.predicate.values as string[]" label="Exact member ID" @update="predicate({ values: $event })" />
     </template>
     <template v-else-if="condition.kind === 'all' || condition.kind === 'any'">
-      <div v-for="(c, i) in condition.conditions" :key="`${rowRevision}-${i}`" class="condition-child">
+      <div v-for="(c, i) in condition.conditions" :key="rows.keys.value[i]" class="condition-child">
         <SituationCondition :condition="c" :catalog="catalog" :path="`${path}.${i + 1}`" :depth="(depth ?? 1) + 1" @update="child(i, $event)" @invalid="emit('invalid')" />
         <button type="button" :aria-label="`Remove ${path}.${i + 1}`" @click="child(i)">Remove condition</button>
       </div>

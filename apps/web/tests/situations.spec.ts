@@ -350,3 +350,42 @@ test('numeric validity follows replaced operands and surviving condition, fact, 
   await expect.poll(() => gain.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
   await simulate()
 })
+
+test('deleting another row preserves the surviving invalid draft in every numeric list', async ({ page }) => {
+  const api = await mockApi(page); await open(page); await expert(page)
+  for (const kind of ['conditions', 'membership', 'facts', 'reductions']) {
+    for (const removed of [0, 1]) {
+      const request = emptyRequest(), numeric = { kind: 'fact' as const, key: { name: 'civil.minute-of-day' }, predicate: { op: 'lt', value: 20 } }
+      request.graph.root = 'when'
+      request.graph.nodes.unshift({ id: 'when', kind: 'decision', condition: numeric, onTrue: 'safe', onFalse: 'safe', onUnknown: 'safe' })
+      const node = request.graph.nodes[0]!
+      if (node.kind !== 'decision') throw Error('fixture')
+      if (kind === 'conditions') node.condition = { kind: 'all', conditions: [copyDsp(numeric), copyDsp(numeric)] }
+      if (kind === 'membership') node.condition = { kind: 'fact', key: numeric.key, predicate: { op: 'in', values: [{ type: 'number', value: 20 }, { type: 'number', value: 20 }] } }
+      if (kind === 'facts') request.snapshot.facts = ['civil.minute-of-day', 'civil.weekday'].map(name => ({ key: { name }, status: 'unknown', provider: 'fixture', evidence: 'fixture', observedAtMs: 0, validForMs: 5000, completeness: 'partial' }))
+      if (kind === 'reductions') request.graph.nodes.push({ id: 'reductions', kind: 'terminal', action: { kind: 'select', overrides: [{ scope: 'output', output: 'one', gain: 0.2 }, { scope: 'output', output: 'two', gain: 0.2 }] } })
+      await page.getByLabel('Full situation configuration JSON', { exact: true }).fill(dspJson(request))
+      await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+      await expect(page.getByText('Full configuration imported after core validation', { exact: false })).toBeVisible()
+      if (kind === 'facts') await page.getByText('Simulation facts (2)', { exact: true }).click()
+      if (kind === 'reductions') await page.getByRole('button', { name: 'Edit reductions', exact: true }).click()
+      const controls = kind === 'conditions' ? page.getByLabel('Numeric comparison value', { exact: true })
+        : kind === 'membership' ? page.locator('.situation-node-editor input[type="number"]')
+          : kind === 'facts' ? page.getByLabel('Valid for (ms)', { exact: true })
+            : page.getByLabel('Attenuation gain (optional, 0–1)', { exact: true })
+      const invalid = kind === 'facts' ? '-1' : kind === 'reductions' ? '2' : ''
+      await controls.nth(1 - removed).fill(invalid)
+      const button = kind === 'conditions' ? `Remove Condition.${removed + 1}` : kind === 'membership' ? `Remove membership value ${removed + 1}` : kind === 'facts' ? `Remove fact ${removed + 1}` : `Remove reduction ${removed + 1}`
+      await page.getByRole('button', { name: button, exact: true }).click()
+      await expect(controls).toHaveCount(1)
+      await expect(controls).toHaveValue(invalid)
+      await expect.poll(() => controls.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(false)
+      const before = api.requests.filter(r => r.path.endsWith('/evaluate')).length
+      await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+      expect(api.requests.filter(r => r.path.endsWith('/evaluate')).length).toBe(before)
+      await controls.fill(kind === 'facts' ? '5000' : kind === 'reductions' ? '0.2' : '20')
+      await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+      await expect(page.locator('.situation-result .message.success')).toContainText('Terminal: safe.')
+    }
+  }
+})
