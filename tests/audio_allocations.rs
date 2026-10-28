@@ -79,3 +79,117 @@ fn render_success_silence_and_rejection_do_not_allocate_or_free_heap_storage() {
     assert_eq!(operations, 0, "heap operations during render");
     silent(&p);
 }
+
+#[test]
+fn float64_render_and_integer_codecs_do_not_allocate_or_free_heap_storage() {
+    use mixyard::audio::pcm::{decode, encode_exact, PcmError, SignedPcm};
+    use mixyard::audio::{Pcm, Processor64};
+    use mixyard::AudioFormat;
+    let (config, inventory) = example();
+    let mut p = Processor64::compile(&config, &inventory, 48_000, limits()).unwrap();
+    let slot = source(&p, "spotify");
+    let mut inputs = vec![None; p.plan().sources.len()];
+    let samples = [0.5 + 1.0 / 2147483648.0; 64];
+    let invalid = [f64::NAN; 64];
+    let format = AudioFormat {
+        channels: 2,
+        sample_rate_hz: 48_000,
+    };
+    let (overflow_config, overflow_inventory) = overflow_example();
+    let mut overflow =
+        Processor64::compile(&overflow_config, &overflow_inventory, 48_000, limits()).unwrap();
+    let mut overflow_inputs = vec![None; overflow.plan().sources.len()];
+    for i in 0..17 {
+        overflow_inputs[source(&overflow, &format!("overflow-{i:02}"))] = Some(Pcm {
+            format,
+            samples: &[f64::MAX; 2],
+        });
+    }
+    let mut bytes = [0u8; 256];
+    let mut decoded = [0.0; 64];
+    OPERATIONS.with(|count| count.set(Some(0)));
+    for _ in 0..512 {
+        inputs[slot] = Some(Pcm {
+            format,
+            samples: &samples,
+        });
+        assert_eq!(p.render(32, &inputs), Ok(()));
+        inputs[slot] = Some(Pcm {
+            format,
+            samples: &samples[..2],
+        });
+        assert_eq!(p.render(1, &inputs), Ok(()));
+        inputs.fill(None);
+        assert_eq!(p.render(32, &inputs), Ok(()));
+        inputs[slot] = Some(Pcm {
+            format,
+            samples: &invalid,
+        });
+        assert_eq!(
+            p.render(32, &inputs),
+            Err(RenderError::NonFinite {
+                source: slot,
+                sample: 0
+            })
+        );
+        inputs[slot] = Some(Pcm {
+            format,
+            samples: &samples[..1],
+        });
+        assert_eq!(
+            p.render(1, &inputs),
+            Err(RenderError::SampleCount { source: slot })
+        );
+        assert_eq!(p.render(33, &inputs), Err(RenderError::FrameCount));
+        assert_eq!(p.render(1, &[]), Err(RenderError::SourceCount));
+        assert_eq!(
+            overflow.render(1, &overflow_inputs),
+            Err(RenderError::NonFiniteResult)
+        );
+        for encoding in [
+            SignedPcm::S16Le,
+            SignedPcm::S16Be,
+            SignedPcm::S24Le,
+            SignedPcm::S24Be,
+            SignedPcm::S32Le,
+            SignedPcm::S32Be,
+        ] {
+            let size = encoding.bytes_per_sample() * 64;
+            assert_eq!(
+                encode_exact(encoding, &[0.5; 64], &mut bytes[..size]),
+                Ok(())
+            );
+            assert_eq!(decode(encoding, &bytes[..size], &mut decoded), Ok(()));
+            assert_eq!(
+                encode_exact(encoding, &invalid, &mut bytes[..size]),
+                Err(PcmError::NonFinite { sample: 0 })
+            );
+            assert_eq!(
+                encode_exact(encoding, &[1.0; 64], &mut bytes[..size]),
+                Err(PcmError::OutOfRange { sample: 0 })
+            );
+            assert_eq!(
+                encode_exact(
+                    encoding,
+                    &[1.0 / (1u64 << 40) as f64; 64],
+                    &mut bytes[..size]
+                ),
+                Err(PcmError::NotRepresentable { sample: 0 })
+            );
+            assert_eq!(
+                encode_exact(encoding, &samples[..1], &mut bytes[..size]),
+                Err(PcmError::Length)
+            );
+            assert_eq!(
+                decode(encoding, &bytes[..size - 1], &mut decoded),
+                Err(PcmError::Length)
+            );
+        }
+    }
+    let operations = OPERATIONS.with(|count| count.replace(None).unwrap());
+    assert_eq!(
+        operations, 0,
+        "heap operations during Float64 render/codecs"
+    );
+    silent(&p);
+}

@@ -1,9 +1,51 @@
-//! Bounded synchronous Float32 PCM processing, compiled from the policy planner.
+//! Bounded synchronous Float32/Float64 PCM processing, compiled from the policy planner.
 //!
 //! No device transport, clock adaptation, resampling, limiter or normalization.
 //! See `docs/audio-core.md` for the adapter contract and qualification boundary.
 
 use crate::{plan, AudioFormat, Config, Inventory, Plan, ResolutionStatus};
+
+pub mod pcm;
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
+}
+
+/// Explicit storage/processing precision. Native format negotiation is separate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Precision {
+    Float32,
+    Float64,
+}
+
+/// Sealed to the two supported IEEE754 storage types. Both mix in Float64.
+pub trait Sample: sealed::Sealed + Copy + std::fmt::Debug {
+    const PRECISION: Precision;
+    fn widen(self) -> f64;
+    fn from_f64(value: f64) -> Self;
+}
+
+impl Sample for f32 {
+    const PRECISION: Precision = Precision::Float32;
+    fn widen(self) -> f64 {
+        self as f64
+    }
+    fn from_f64(value: f64) -> Self {
+        value as f32
+    }
+}
+
+impl Sample for f64 {
+    const PRECISION: Precision = Precision::Float64;
+    fn widen(self) -> f64 {
+        self
+    }
+    fn from_f64(value: f64) -> Self {
+        value
+    }
+}
 
 /// Host-chosen ceilings, checked before allocating render storage. These are
 /// resource budgets, not product mix-count limits. There are no implicit defaults.
@@ -14,17 +56,17 @@ pub struct Limits {
     pub max_mixes: usize,
     pub max_sends: usize,
     pub max_outputs: usize,
-    /// Total scalar storage slots: Float64 accumulators + Float32 mix/output
+    /// Total scalar storage slots: Float64 accumulators + selected-precision mix/output
     /// buffers. Each slot costs at most eight bytes. Input PCM remains borrowed.
     pub max_buffer_samples: usize,
 }
 
-/// Interleaved IEEE754 Float32 PCM in one compiled source slot. Supplying None
-/// instead means silence for this block, never replay of the preceding block.
+/// Interleaved IEEE754 PCM in one compiled source slot: Float32 by default,
+/// or explicitly `Pcm<f64>`. Supplying None means fresh silence for this block.
 #[derive(Clone, Copy, Debug)]
-pub struct Pcm<'a> {
+pub struct Pcm<'a, S = f32> {
     pub format: AudioFormat,
-    pub samples: &'a [f32],
+    pub samples: &'a [S],
 }
 
 /// Render errors contain only bounded numeric metadata and never allocate.
@@ -32,10 +74,21 @@ pub struct Pcm<'a> {
 pub enum RenderError {
     FrameCount,
     SourceCount,
-    DisconnectedSource { source: usize },
-    FormatMismatch { source: usize },
-    SampleCount { source: usize },
-    NonFinite { source: usize, sample: usize },
+    DisconnectedSource {
+        source: usize,
+    },
+    FormatMismatch {
+        source: usize,
+    },
+    SampleCount {
+        source: usize,
+    },
+    NonFinite {
+        source: usize,
+        sample: usize,
+    },
+    /// Finite input overflowed processing or the selected output precision.
+    NonFiniteResult,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -59,12 +112,22 @@ impl Mapping {
         }
     }
 
-    fn sample(self, data: &[f32], frame: usize, channel: usize) -> f64 {
+    fn sample<S: Sample>(self, data: &[S], frame: usize, channel: usize) -> f64 {
         match self {
-            Self::Mono | Self::DuplicateMono => data[frame] as f64,
-            Self::Stereo => data[frame * 2 + channel] as f64,
-            // Widen before addition: finite full-scale Float32 must not overflow.
-            Self::AverageLeftRight => (data[frame * 2] as f64 + data[frame * 2 + 1] as f64) * 0.5,
+            Self::Mono | Self::DuplicateMono => data[frame].widen(),
+            Self::Stereo => data[frame * 2 + channel].widen(),
+            Self::AverageLeftRight => {
+                let left = data[frame * 2].widen();
+                let right = data[frame * 2 + 1].widen();
+                let sum = left + right;
+                // Keep ordinary/subnormal rounding, but avoid overflowing a
+                // representable average of two extreme finite Float64 values.
+                if sum.is_finite() {
+                    sum * 0.5
+                } else {
+                    left * 0.5 + right * 0.5
+                }
+            }
         }
     }
 }
@@ -85,29 +148,39 @@ struct Output {
 }
 
 #[derive(Debug)]
-struct Buffer {
+struct Buffer<S> {
     format: AudioFormat,
-    samples: Vec<f32>,
+    samples: Vec<S>,
 }
 
 /// An immutable policy snapshot plus exclusively owned, preallocated buffers.
 /// Compile and replace away from the audio callback. Render uses no I/O, locks,
 /// heap allocation or deallocation. All slices use the order of `plan()`.
 #[derive(Debug)]
-pub struct Processor {
+pub struct TypedProcessor<S: Sample> {
     plan: Plan,
     max_frames: usize,
     frames: usize,
     sources: Vec<Option<AudioFormat>>,
     sends: Vec<Send>,
     outputs: Vec<Output>,
-    mixes: Vec<Buffer>,
-    output_buffers: Vec<Buffer>,
+    mixes: Vec<Buffer<S>>,
+    output_buffers: Vec<Buffer<S>>,
     accumulators: Vec<Vec<f64>>,
     initialized: Vec<bool>,
 }
 
-impl Processor {
+/// Backwards-compatible Float32 input, mix and output storage.
+pub type Processor = TypedProcessor<f32>;
+/// Explicit Float64 input, mix and output storage; no Float32 intermediate.
+pub type Processor64 = TypedProcessor<f64>;
+
+impl<S: Sample> TypedProcessor<S> {
+    /// Input, mix and output sample precision, separate from policy rate/layout.
+    pub fn precision(&self) -> Precision {
+        S::PRECISION
+    }
+
     /// Validate through `crate::plan`, then compile its resolved edges and gains.
     /// All configured mixes and selected ports must share this positive nominal
     /// sample rate. Unknown selected formats and required conversion reject the
@@ -122,7 +195,7 @@ impl Processor {
             return Err("audio-core: positive max_frames and sample rate required".into());
         }
         if limits.max_frames > isize::MAX as usize / 8 {
-            return Err("audio-core: block size exceeds addressable stereo Float32 slice".into());
+            return Err("audio-core: block size exceeds addressable render slice".into());
         }
         for (name, count, limit) in [
             ("sources", config.sources.len(), limits.max_sources),
@@ -248,7 +321,7 @@ impl Processor {
         }
         let buffer = |format: AudioFormat| Buffer {
             format,
-            samples: vec![0.0; limits.max_frames * format.channels as usize],
+            samples: vec![S::from_f64(0.0); limits.max_frames * format.channels as usize],
         };
         let accumulators = mix_formats
             .iter()
@@ -281,6 +354,7 @@ impl Processor {
 
     /// Selected output buffer layout. Missing/ambiguous ports return None;
     /// their silence samples use the owning mix layout for inspection only.
+    /// Sample encoding is not in schema 2; see `precision()` for buffer precision.
     pub fn output_format(&self, output: usize) -> Option<AudioFormat> {
         self.outputs
             .get(output)?
@@ -288,13 +362,13 @@ impl Processor {
             .map(|_| self.output_buffers[output].format)
     }
 
-    pub fn mix_samples(&self, mix: usize) -> Option<&[f32]> {
+    pub fn mix_samples(&self, mix: usize) -> Option<&[S]> {
         self.mixes
             .get(mix)
             .map(|b| &b.samples[..self.frames * b.format.channels as usize])
     }
 
-    pub fn output_samples(&self, output: usize) -> Option<&[f32]> {
+    pub fn output_samples(&self, output: usize) -> Option<&[S]> {
         self.output_buffers
             .get(output)
             .map(|b| &b.samples[..self.frames * b.format.channels as usize])
@@ -307,18 +381,38 @@ impl Processor {
     /// Every call clears all storage, including unused tails. On Err, every mix
     /// and output is silence and frames() == min(requested, max_frames). Never
     /// submit a failed block as successful audio. No previous PCM is retained.
-    pub fn render(&mut self, frames: usize, inputs: &[Option<Pcm<'_>>]) -> Result<(), RenderError> {
+    pub fn render(
+        &mut self,
+        frames: usize,
+        inputs: &[Option<Pcm<'_, S>>],
+    ) -> Result<(), RenderError> {
         self.frames = frames.min(self.max_frames);
+        self.clear_storage();
+        let result = self.render_block(frames, inputs);
+        if result.is_err() {
+            self.clear_storage();
+        }
+        result
+    }
+
+    fn clear_storage(&mut self) {
         for mix in &mut self.mixes {
-            mix.samples.fill(0.0);
+            mix.samples.fill(S::from_f64(0.0));
         }
         for output in &mut self.output_buffers {
-            output.samples.fill(0.0);
+            output.samples.fill(S::from_f64(0.0));
         }
         for accumulator in &mut self.accumulators {
             accumulator.fill(0.0);
         }
         self.initialized.fill(false);
+    }
+
+    fn render_block(
+        &mut self,
+        frames: usize,
+        inputs: &[Option<Pcm<'_, S>>],
+    ) -> Result<(), RenderError> {
         if frames == 0 || frames > self.max_frames {
             return Err(RenderError::FrameCount);
         }
@@ -336,7 +430,7 @@ impl Processor {
             if input.samples.len() != frames * format.channels as usize {
                 return Err(RenderError::SampleCount { source });
             }
-            if let Some(sample) = input.samples.iter().position(|s| !s.is_finite()) {
+            if let Some(sample) = input.samples.iter().position(|s| !s.widen().is_finite()) {
                 return Err(RenderError::NonFinite { source, sample });
             }
         }
@@ -368,7 +462,10 @@ impl Processor {
                 .iter_mut()
                 .zip(accumulator)
             {
-                *dest = *sample as f32;
+                *dest = S::from_f64(*sample);
+                if !dest.widen().is_finite() {
+                    return Err(RenderError::NonFiniteResult);
+                }
             }
         }
         for (output, buffer) in self.outputs.iter().zip(&mut self.output_buffers) {
@@ -382,8 +479,11 @@ impl Processor {
             let input = &self.mixes[output.mix].samples;
             for frame in 0..frames {
                 for channel in 0..channels {
-                    buffer.samples[frame * channels + channel] =
-                        (mapping.sample(input, frame, channel) * output.gain) as f32;
+                    let sample = S::from_f64(mapping.sample(input, frame, channel) * output.gain);
+                    if !sample.widen().is_finite() {
+                        return Err(RenderError::NonFiniteResult);
+                    }
+                    buffer.samples[frame * channels + channel] = sample;
                 }
             }
         }
