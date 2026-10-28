@@ -1,5 +1,32 @@
 # Integrated development status
 
+## DSP processing workbench (2026-10-28)
+
+The browser Processing workspace edits ordered Float64 chains with gain/polarity,
+eight biquad variants, delay, compressor, expander and full direct-FIR coefficients.
+Import validation compiles without rendering. Explicit previews execute the actual
+DSP engine with independent channel state and return full requested block output,
+peak/RMS/over-full-scale counts and measured processing time versus block duration.
+Buffering latency, intentional delay/tails and unmeasured group/route latency are
+separate. Measured overruns warn and leave editing/rendering enabled; no effect is
+silently removed or quality reduced.
+
+Two additional real-service browser flows passed: signed-zero/low-bit Float64
+bypass plus repaired extreme dynamics, and compile-only imports/full FIR export,
+actual over-budget warning, 390 px layout and offline recovery. They run alongside
+the four existing routing/store/runtime flows. Three added HTTP checks cover real
+DSP output, reset/measurement independence, invalid/resource/overflow rejection
+and service recovery. Fifteen Node and twelve contract-browser checks pass. These
+are offline preview results; DSP does not attach to source/mix/output callbacks,
+play audio or qualify native scheduling. Independent reviews and hosted checks
+still govern merge readiness.
+
+The original PCM foundation #28, Float64/codecs #31, browser console #32 and secure
+raw network foundation #30 are merged. Wider native formats/layouts, actual
+consumer delivery, clocks, recovery/quality/endurance and compression remain
+required work. DSP #33 additionally tracks native insertion, automation, channel
+tools, calibrated loudness, advanced dynamics/convolution and plugin hosting.
+
 ## Web-first milestone (2026-10-28)
 
 The local Rust `mixyard-web` service and standalone browser console now work

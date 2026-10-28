@@ -348,6 +348,153 @@ fn repeated_observation_ids_are_bounded_under_concurrent_inspection() {
 }
 
 #[test]
+fn dsp_preview_uses_real_float64_processing_without_store_or_audio_mutation() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let config = json!({"name":"Offline DSP","format":{"sampleRateHz":12345,"channels":["R","L","aux"]},
+        "effects":[{"name":"Boost","enabled":true,"effect":{"kind":"gain","gain":2,"invertPolarity":false}}]});
+    let validated = service.ok("/api/dsp/validate", json!({"config":config,"frames":2}));
+    assert_eq!(validated["valid"], true);
+    assert_eq!(validated["precision"], "float64");
+    assert!(validated.get("timing").is_none());
+    let result = service.ok(
+        "/api/dsp/preview",
+        json!({"config":config,"frames":2,"iterations":3,"bypassed":false,
+        "signal":{"kind":"samples","samples":[0.125,-0.25,0.75,0.125,-0.5,0.001]}}),
+    );
+    assert_eq!(result["mode"], "offline-dsp-preview");
+    assert_eq!(result["precision"], "float64");
+    assert_eq!(result["sampleRateHz"], 12345);
+    assert_eq!(result["channels"], json!(["R", "L", "aux"]));
+    assert_eq!(
+        result["output"],
+        json!([0.25, -0.5, 1.5, 0.25, -1.0, 0.002])
+    );
+    assert_eq!(result["report"]["overFullScaleSamples"], 1);
+    assert_eq!(result["meters"][2]["peak"], 1.5);
+    assert_eq!(result["timing"]["iterations"], 3);
+    assert_eq!(
+        result["timing"]["overBudget"],
+        result["timing"]["deadlineMisses"].as_u64().unwrap() > 0
+    );
+    let bypass = service.ok(
+        "/api/dsp/preview",
+        json!({"config":config,"frames":1,"iterations":1,"bypassed":true,
+        "signal":{"kind":"samples","samples":[1.0000000000000002,-0.0,0.0]}}),
+    );
+    assert_eq!(bypass["output"][0].as_f64(), Some(1.0000000000000002));
+    assert!(bypass["output"][1].as_f64().unwrap().is_sign_negative());
+    assert_eq!(bypass["report"]["bypassed"], true);
+    assert!(!fixture.root.join("store").exists());
+    assert_eq!(service.ok("/api/status", json!({}))["connected"], false);
+}
+
+#[test]
+fn dsp_http_retains_float64_sample_and_parameter_bits() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let mut config = json!({"name":"Exact JSON", "format":{"sampleRateHz":48000,"channels":["mono"]},
+        "effects":[{"name":"Gain","enabled":true,"effect":{"kind":"gain","gain":1,"invertPolarity":false}}]});
+    let samples = [
+        0.9554529902278269_f64,
+        0.9932393975813079,
+        -0.0,
+        f64::from_bits(1),
+        1e-300,
+        1.0000000000000002,
+    ];
+    let result = service.ok(
+        "/api/dsp/preview",
+        json!({"config":config,"frames":samples.len(),
+        "iterations":1,"bypassed":true,"signal":{"kind":"samples","samples":samples}}),
+    );
+    for (actual, expected) in result["output"].as_array().unwrap().iter().zip(samples) {
+        assert_eq!(actual.as_f64().unwrap().to_bits(), expected.to_bits());
+    }
+    for gain in &samples[..2] {
+        config["effects"][0]["effect"]["gain"] = json!(gain);
+        let result = service.ok(
+            "/api/dsp/preview",
+            json!({"config":config,"frames":1,
+            "iterations":1,"bypassed":false,"signal":{"kind":"constant","amplitude":1}}),
+        );
+        assert_eq!(
+            result["output"][0].as_f64().unwrap().to_bits(),
+            gain.to_bits()
+        );
+    }
+}
+
+#[test]
+fn dsp_measurement_resets_state_and_preserves_slow_full_output() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let config = json!({"name":"Delay","format":{"sampleRateHz":48000,"channels":["mono"]},
+        "effects":[{"name":"tap","enabled":true,"effect":{"kind":"delay","frames":2,"wet":1,"dry":0,"feedback":0}}]});
+    let request = json!({"config":config,"frames":4,"iterations":4,"bypassed":false,"signal":{"kind":"impulse","amplitude":0.25}});
+    for _ in 0..2 {
+        let result = service.ok("/api/dsp/preview", request.clone());
+        assert_eq!(result["output"], json!([0.0, 0.0, 0.25, 0.0]));
+        assert_eq!(result["admission"]["explicitDelayFrames"], 2);
+        assert_eq!(result["admission"]["algorithmicLatencyFrames"], 0);
+    }
+    let slow = json!({"name":"High-rate FIR","format":{"sampleRateHz":4294967295u32,"channels":["mono"]},
+        "effects":[{"name":"IR","enabled":true,"effect":{"kind":"fir","coefficients":[0.5,0.25,0.125]}}]});
+    let result = service.ok("/api/dsp/preview", json!({"config":slow,"frames":3,"iterations":2,"bypassed":false,"signal":{"kind":"impulse","amplitude":1}}));
+    assert_eq!(result["output"], json!([0.5, 0.25, 0.125]));
+    if result["timing"]["measured"] == true {
+        assert_eq!(result["timing"]["overBudget"], true);
+        assert!(result["timing"]["deadlineMisses"].as_u64().unwrap() > 0);
+    } else {
+        assert_eq!(result["timing"]["meanMs"], Value::Null);
+        assert_eq!(result["timing"]["maxMs"], Value::Null);
+    }
+}
+
+#[test]
+fn dsp_invalid_and_oversized_jobs_reject_without_partial_results_or_service_loss() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let config =
+        json!({"name":"Empty","format":{"sampleRateHz":48000,"channels":["mono"]},"effects":[]});
+    let base = json!({"config":config,"frames":8,"iterations":1,"bypassed":false,"signal":{"kind":"constant","amplitude":0.25}});
+    for (field, value) in [
+        ("frames", json!(0)),
+        ("frames", json!(4097)),
+        ("iterations", json!(0)),
+        ("iterations", json!(65)),
+    ] {
+        let mut request = base.clone();
+        request[field] = value;
+        let reply = service.post("/api/dsp/preview", request);
+        assert_eq!(reply.status, 422);
+        assert!(reply.json().get("output").is_none());
+    }
+    let mut malformed = base.clone();
+    malformed["signal"] = json!({"kind":"samples","samples":[0.25]});
+    assert_eq!(service.post("/api/dsp/preview", malformed).status, 422);
+    let mut invalid = base.clone();
+    invalid["config"]["effects"] = json!([{"name":"bad","enabled":true,"effect":{"kind":"gain","gain":-1,"invertPolarity":false}}]);
+    assert_eq!(service.post("/api/dsp/preview", invalid).status, 422);
+    let mut budget = base.clone();
+    budget["config"]["effects"] = json!([{"name":"large delay","enabled":true,"effect":{"kind":"delay","frames":1000000000,"wet":1,"dry":0,"feedback":0}}]);
+    assert_eq!(service.post("/api/dsp/preview", budget).status, 422);
+    let mut overflow = base.clone();
+    overflow["signal"] = json!({"kind":"constant","amplitude":1.7976931348623157e308});
+    overflow["config"]["effects"] = json!([{"name":"overflow","enabled":true,"effect":{"kind":"gain","gain":2,"invertPolarity":false}}]);
+    let reply = service.post("/api/dsp/preview", overflow);
+    assert_eq!(reply.status, 422);
+    assert_eq!(reply.json()["error"]["code"], "dsp-processing-failed");
+    assert!(reply.json().get("output").is_none());
+    assert_eq!(
+        service.ok("/api/dsp/preview", base)["output"],
+        json!(vec![0.25; 8])
+    );
+    assert_eq!(service.request("GET", "/api/session", &[], "").status, 200);
+    assert!(!fixture.root.join("store").exists());
+}
+
+#[test]
 fn persistent_profiles_conflicts_and_all_edits_survive_restart() {
     let fixture = Fixture::new();
     let service = fixture.start();

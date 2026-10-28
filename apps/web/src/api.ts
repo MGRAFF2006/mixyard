@@ -1,3 +1,4 @@
+import { dspJson } from './dsp-json.ts'
 import { object, string } from './model.ts'
 
 export class ApiError extends Error {
@@ -25,7 +26,7 @@ export class Api {
       const response = await this.fetcher(path, {
         method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store',
         headers: body === undefined ? {} : { 'Content-Type': 'application/json', 'X-Mixyard-Token': this.token! },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: controller.signal,
+        ...(body === undefined ? {} : { body: path.startsWith('/api/dsp/') ? dspJson(body) : JSON.stringify(body) }), signal: controller.signal,
       })
       const text = await response.text()
       if (text.length > 2_097_152) throw new Error('Service response exceeds the supported size.')

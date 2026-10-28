@@ -42,6 +42,37 @@ persistence, validation and inspection.
   imported inventory to `/api/inspect`; it shows planner failures, reason codes
   and the full authoritative report. Edits invalidate prior results.
 
+## Offline processing workbench
+
+**Processing** is a separate in-browser Float64 chain draft, never part of routing
+profiles. Export chain to keep it; reload discards it. Set any positive u32 sample
+rate and explicit ordered unique channel IDs, then add, enable, reorder or remove
+gain/polarity, eight biquad variants, delay, compressor, expander and direct FIR.
+FIR coefficients are kept in full, without normalization or quality reduction.
+Starter presets explicitly replace the chain. Snapshot/reset/bypass transitions
+can click; no automation or smoothing is provided.
+
+Chain file/paste imports are shape-checked and compiled by `/api/dsp/validate`
+before replacement. Errors leave the edited chain intact. Raw fields and channel
+identities survive edits/export; Rust decides which fields and parameter domains
+are supported. DSP JSON uses finite Float64 semantics, including signed zero and
+large finite integers, independently of the safe-integer routing revisions.
+
+Only **Render and measure** calls `/api/dsp/preview`, using the shared same-origin
+session. Choose impulse, constant, sine or exact custom interleaved samples, block
+frames and timing repetitions. Every repetition starts reset; output is the first
+isolated block, not a complete tail render. All edits invalidate prior output and
+timing. No preview plays audio or attaches effects to a native route.
+
+The report separates observed peak/RMS/sample headroom, added buffering latency,
+explicit delay, tail bounds and measured processing time. Filter/IR group delay
+and route/device/network latency remain unmeasured. Abstract work/memory estimates
+are not speed. Slower-than-budget measurements warn about live delivery and keep
+all editing/render controls usable; a synthetic within-budget observation does
+not certify native realtime operation. Unmeasured timings stay unknown. Endpoint
+resource limits may reject large previews; full offline rendering remains
+available through the DSP engine/example without removing slow effects.
+
 ## Verification
 
 ```sh
@@ -56,6 +87,11 @@ API failures, draft reopening, unsaved edits and revision conflicts. Isolated
 Playwright tests exercise the actual Vue interface against an intercepted
 contract API: example opt-in, send/output independence, profile save/rename/load/
 undo, refresh/conflict recovery, import errors and narrow-screen keyboard use.
+The DSP Node tests cover channel/effect order, complete raw-field and Float64
+preservation, authoritative import failures, response validation and stale result
+suppression. Five mocked browser flows exercise all editor controls, exact request
+payloads, compile-only imports, slow/unknown timing, invalid input, offline recovery
+and narrow keyboard operation. Their fixture output/timing is not DSP evidence.
 These tests do not prove Rust integration or disk persistence; the parent web
 milestone verifies that combined path with the actual server.
 
@@ -83,7 +119,7 @@ PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/absolute/path/to/chrome-headless-shell \
 
 ## Actual limits
 
-The console edits routing intent only: it cannot apply audio, start/stop the
+The routing workspace edits routing intent only: it cannot apply audio, start/stop the
 runtime, discover hardware, capture sound or show live levels. Runtime status
 is the last read-only snapshot; Refresh updates it. Imported inventory claims,
 including native-discovery, remain unverified. Example identities and simulated
@@ -94,7 +130,7 @@ closing to keep them. Config/profile persistence goes through the service, not
 localStorage. The browser warns on navigation with unsaved config edits, but it
 cannot guarantee recovery after a crash. Inventory is not part of profiles.
 
-Imports are bounded to 128 KiB; API responses are bounded to 2 MiB and requests
+Routing config/inventory imports are bounded to 128 KiB; API responses are bounded to 2 MiB and requests
 time out after 12 seconds. Revisions must fit JavaScript's exact safe-integer
 range; unsupported schemas and malformed responses are rejected. Core policy
 validation decides route correctness, headroom and monitoring constraints.

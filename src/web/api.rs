@@ -113,6 +113,8 @@ pub(super) fn dispatch(path: &str, bytes: &[u8], state: &State) -> Reply {
     // Keep typed JSON extraction separate from the transport's protection checks.
     let result = || -> Result<Reply, Reply> {
         Ok(match path {
+            "/api/dsp/preview" => super::processing::preview(bytes),
+            "/api/dsp/validate" => super::processing::validate(bytes),
             "/api/status" => {
                 let _: Empty = parse(bytes)?;
                 match ReadOnlyClient::connect(&state.instance) {

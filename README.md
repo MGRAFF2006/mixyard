@@ -29,6 +29,11 @@ works without a lifecycle runtime and never starts or stops one. Use
 See [web console workflows and verification](apps/web/README.md) and the
 [local service contract](docs/web-service.md).
 
+The **Processing** workspace edits Float64 DSP chains and runs explicit offline
+previews with real meters and measured block-budget warnings. Slow effects remain
+available. See [the workbench](docs/dsp-web.md) and [DSP algorithms](docs/dsp.md).
+Effects are not attached to live native audio yet.
+
 Run from the repository root. These checks do not open audio devices or change routes/defaults/services. Rust and Python 3.10+ are sufficient for the headless checks; the root package has no GUI dependencies.
 
 ```sh
