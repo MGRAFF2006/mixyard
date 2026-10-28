@@ -81,3 +81,37 @@ cargo fmt --all --check
 uses disposable stores. CI runs these HTTP, persistence and security scenarios
 on Linux, Windows and macOS. These checks establish service behavior, not native
 audio functionality or browser-interface usability.
+
+
+## Situation graph API
+
+All three POST routes use the same loopback/token/origin/body/concurrency/deadline
+protections as profile operations. They never select or write profiles.
+
+- `/api/automation/validate` accepts `{graph,catalog}` and returns `{valid:true}`
+  after the actual bounded format-1 core validator. It invents no known facts.
+- `/api/automation/evaluate` accepts the complete format-1 Request and returns
+  `{mode:"simulation",evaluation}` from the real evaluator. Client evidence claims,
+  clock and revisions remain supplied simulation inputs, even if labeled native.
+- `/api/automation/context` accepts only `{}` and returns
+  `{mode:"read-only-live-context",snapshot,nowMs,catalog,providers,applicationScope}`.
+  The service owns one monotonic collector. Concurrent captures fail promptly with
+  `503 context-busy` rather than queuing subprocess work. Initialization/capture
+  failures are explicit unavailable responses; other console operations still work.
+  No helper paths, application mappings, facts or local declarations are accepted
+  over HTTP. Default native observer availability and limitations are described in
+  [context.md](context.md). Missing tools/permissions stay unknown.
+
+`applicationScope` is a restricted configured observation domain, never proof of
+global application absence. The editor copies such sets as partial because the
+format-1 Request cannot encode a restricted domain. Imports, simulations and live
+context collection do not grant automatic application authority. Server-owned live
+reevaluation, profile preview/expected-store-revision writes and the armed
+transition controller remain separate integration work under issue #40.
+
+Real HTTP tests execute all three fixture decisions, manual override/stale paths,
+strict body rejection, bounded oversized predicates and repeated actual collector
+captures without changing the profile store. Production-browser tests import and
+simulate literal fixtures, collect actual context, and combine a labeled scoped
+context fixture with the real evaluator to verify negative unmapped rules stay
+unknown. This is application protocol evidence, not native audio qualification.

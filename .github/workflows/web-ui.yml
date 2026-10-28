@@ -6,6 +6,8 @@ on:
     paths:
       - 'apps/web/**'
       - 'src/**'
+      - 'observers/**'
+      - 'adapters/linux/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/run-web.sh'
@@ -14,6 +16,8 @@ on:
     paths:
       - 'apps/web/**'
       - 'src/**'
+      - 'observers/**'
+      - 'adapters/linux/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/run-web.sh'

@@ -519,6 +519,124 @@ fn actual_delay_measurement_and_explicit_alignment_do_not_change_profiles() {
 }
 
 #[test]
+fn situation_validation_and_simulation_use_the_real_evaluator_without_profile_writes() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    for (source, terminal) in [
+        (
+            include_str!("../examples/automation/headphone-priority.json"),
+            "headphones",
+        ),
+        (
+            include_str!("../examples/automation/interface-monitor.json"),
+            "suppress",
+        ),
+        (
+            include_str!("../examples/automation/application-schedule.json"),
+            "call",
+        ),
+    ] {
+        let mut input: Value = serde_json::from_str(source).unwrap();
+        let validated = service.ok(
+            "/api/automation/validate",
+            json!({"graph":input["graph"],"catalog":input["catalog"]}),
+        );
+        assert_eq!(validated["valid"], true);
+        let result = service.ok("/api/automation/evaluate", input.clone());
+        assert_eq!(result["mode"], "simulation");
+        assert_eq!(result["evaluation"]["terminal"], terminal);
+        assert_eq!(result["evaluation"]["audioApplied"], false);
+        assert!(!result["evaluation"]["trace"].as_array().unwrap().is_empty());
+        input["manualOverride"] = json!(true);
+        let held = service.ok("/api/automation/evaluate", input);
+        assert_eq!(held["evaluation"]["action"]["kind"], "no-change");
+    }
+    let mut input: Value = serde_json::from_str(include_str!(
+        "../examples/automation/headphone-priority.json"
+    ))
+    .unwrap();
+    input["snapshot"]["facts"][0]["evidence"] = json!("platform-observed");
+    let claims = service.ok("/api/automation/evaluate", input.clone());
+    assert_eq!(
+        claims["mode"], "simulation",
+        "Client claims must not become live authority"
+    );
+    input["nowMs"] = json!(20_000);
+    let stale = service.ok("/api/automation/evaluate", input.clone());
+    assert_eq!(stale["evaluation"]["action"]["kind"], "no-change");
+    input["graph"]["nodes"][0]["onTrue"] = input["graph"]["root"].clone();
+    assert_eq!(
+        service
+            .post(
+                "/api/automation/validate",
+                json!({"graph":input["graph"],"catalog":input["catalog"]})
+            )
+            .status,
+        422
+    );
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+    assert!(!fixture.root.join("store").exists());
+}
+
+#[test]
+fn live_situation_context_is_server_owned_and_keeps_unknowns_distinct() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    assert_eq!(
+        service
+            .post(
+                "/api/automation/context",
+                json!({"helper":"client-program","facts":[]})
+            )
+            .status,
+        400
+    );
+    let first = service.ok("/api/automation/context", json!({}));
+    assert_eq!(first["mode"], "read-only-live-context");
+    assert_eq!(first["snapshot"]["schemaVersion"], 1);
+    assert!(!first["snapshot"]["epoch"].as_str().unwrap().is_empty());
+    assert!(!first["providers"].as_array().unwrap().is_empty());
+    assert_eq!(first["applicationScope"], json!([]));
+    let running = first["snapshot"]["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["key"]["name"] == "application.running")
+        .unwrap();
+    assert_ne!(
+        running["status"], "known",
+        "Unconfigured mapping is not a complete empty running set"
+    );
+    let second = service.ok("/api/automation/context", json!({}));
+    assert_eq!(second["snapshot"]["epoch"], first["snapshot"]["epoch"]);
+    assert!(second["snapshot"]["revision"].as_u64() > first["snapshot"]["revision"].as_u64());
+    assert!(second["nowMs"].as_u64() >= first["nowMs"].as_u64());
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+}
+
+#[test]
+fn oversized_situation_predicates_reject_before_evaluation_or_profile_changes() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let mut input: Value = serde_json::from_str(include_str!(
+        "../examples/automation/headphone-priority.json"
+    ))
+    .unwrap();
+    input["graph"]["nodes"][0]["condition"]["predicate"] = json!({"op":"contains-all","values":(0..50_000).map(|i|format!("unknown-{i}")).collect::<Vec<_>>()});
+    assert_eq!(service.post("/api/automation/evaluate", input).status, 422);
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+}
+
+#[test]
 fn dsp_measurement_resets_state_and_preserves_slow_full_output() {
     let fixture = Fixture::new();
     let service = fixture.start();

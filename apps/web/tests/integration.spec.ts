@@ -8,6 +8,9 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { test as base, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { copyDsp, dspJson } from '../src/dsp-json.ts'
+import { buildPreset, emptyPreset, emptyRequest } from '../src/situations.ts'
+import type { SituationRequest } from '../src/situations.ts'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const suffix = process.platform === 'win32' ? '.exe' : ''
@@ -355,4 +358,163 @@ test('valid extreme Float64 gains remain renderable and exportable through the d
   await expect(page.getByRole('alert')).toContainText('previous gain is kept')
   expect(Number(await page.getByLabel('Linear gain', { exact:true }).inputValue())).toBe(Number.MAX_VALUE)
   await expect(page.getByRole('heading', { name:'Float64 block output',exact:true })).toHaveCount(0)
+})
+
+
+test('real situation evaluator imports and explains explicit fixture decisions without writing profiles', async ({ page, service }) => {
+  await open(page, service)
+  await page.getByRole('button', { name: 'Situations', exact: true }).click()
+  await page.getByText('Expert JSON / import full configuration', { exact: true }).click()
+  const input = page.getByLabel('Full situation configuration JSON', { exact: true })
+  for (const [name, terminal] of [['headphone-priority', 'headphones'], ['interface-monitor', 'suppress'], ['application-schedule', 'call']]) {
+    const request = readFileSync(join(root, `examples/automation/${name}.json`), 'utf8')
+    await input.fill(request)
+    await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+    await expect(page.getByText('Full configuration imported after core validation', { exact: false })).toBeVisible()
+    await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+    await expect(page.locator('.situation-result .message.success')).toContainText(`Terminal: ${terminal}. Audio applied: no.`)
+  }
+  expect((await service.post('/api/profiles/read')).storeRevision).toBe(0)
+  await page.getByRole('button', { name: 'Read live context', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Copy read-only context into simulation', exact: true })).toBeVisible()
+  await expect(page.locator('.situation-providers')).toContainText('unimplemented: unsupported')
+  await page.screenshot({ path: 'test-results/integration-situations-desktop.png', fullPage: true })
+})
+
+test('scoped context fixture keeps unmapped negative application rules unknown through actual evaluator and export', async ({ page, service }) => {
+  await open(page, service)
+  await page.getByRole('button', { name: 'Situations', exact: true }).click()
+  const request = buildPreset({ ...emptyPreset(), kind: 'applications', apps: ['UNMAPPED'], profile: 'active', normalProfile: 'normal' }, emptyRequest())
+  const node = request.graph.nodes[0]!
+  if (node.kind !== 'decision') throw Error('fixture')
+  node.condition = { kind: 'not', condition: node.condition }
+  await page.getByText('Expert JSON / import full configuration', { exact: true }).click()
+  await page.getByLabel('Full situation configuration JSON', { exact: true }).fill(dspJson(request))
+  await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+  await expect(page.getByText('Full configuration imported after core validation', { exact: false })).toBeVisible()
+  // Only this observation is a fixture. Evaluation uses the production Rust API.
+  await page.route('**/api/automation/context', route => route.fulfill({ json: { mode: 'read-only-live-context', catalog: request.catalog, nowMs: 0, snapshot: { schemaVersion: 1, revision: 1, epoch: 'scoped-fixture', facts: [{ key: { name: 'application.running' }, status: 'known', value: { type: 'text-set', value: [] }, provider: 'scoped-test-fixture', evidence: 'fixture', observedAtMs: 0, validForMs: 5000, completeness: 'complete' }] }, applicationScope: ['MAPPED'], providers: [{ provider: 'scoped-test-fixture', status: 'complete', reason: 'Complete only over MAPPED' }] } }))
+  await page.getByRole('button', { name: 'Read live context', exact: true }).click()
+  await page.getByRole('button', { name: 'Copy read-only context into simulation', exact: true }).click()
+  await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+  await expect(page.locator('.situation-result .message.success')).toContainText('No change. Terminal: safe.')
+  await expect(page.locator('.situation-trace')).toContainText('unknown')
+  const downloaded = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export full configuration', exact: true }).first().click()
+  const exported = JSON.parse(readFileSync((await (await downloaded).path())!, 'utf8'))
+  expect(exported.snapshot.facts[0].completeness).toBe('partial')
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: 'test-results/integration-situations-mobile.png', fullPage: true })
+  expect((await service.post('/api/profiles/read')).storeRevision).toBe(0)
+})
+
+
+test('numeric validity follows replaced operands and surviving condition, fact, membership and reduction rows', async ({ page, service }) => {
+  await open(page, service)
+  await page.getByRole('button', { name: 'Situations', exact: true }).click()
+  await page.getByText('Expert JSON / import full configuration', { exact: true }).click()
+  const numericCondition = (value: number) => ({ kind: 'fact' as const, key: { name: 'civil.minute-of-day' }, predicate: { op: 'lt', value } })
+  async function load(request: SituationRequest) {
+    await page.getByLabel('Full situation configuration JSON', { exact: true }).fill(dspJson(request))
+    await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+    await expect(page.getByText('Full configuration imported after core validation', { exact: false })).toBeVisible()
+  }
+  async function simulate() {
+    await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+    await expect(page.locator('.situation-result .message.success')).toContainText('Terminal: safe.')
+  }
+  const request = emptyRequest()
+  request.graph.root = 'when'
+  request.graph.nodes.unshift({ id: 'when', kind: 'decision', condition: numericCondition(10), onTrue: 'safe', onFalse: 'safe', onUnknown: 'safe' })
+  await load(request)
+  const number = page.getByLabel('Numeric comparison value', { exact: true })
+  await number.fill('')
+  await page.getByLabel('Graph name', { exact: true }).fill('Keep invalid numeric draft')
+  await expect(number).toHaveValue('')
+  await expect.poll(() => number.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(false)
+  await page.getByLabel('Comparison', { exact: true }).selectOption('le')
+  await expect(number).toHaveValue('0')
+  await expect.poll(() => number.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+  const node = request.graph.nodes[0]!
+  if (node.kind !== 'decision') throw Error('fixture')
+  node.condition = { kind: 'all', conditions: [numericCondition(20), numericCondition(20)] }
+  await load(request)
+  await number.first().fill('')
+  await page.getByRole('button', { name: 'Remove Condition.1', exact: true }).click()
+  await expect(number).toHaveValue('20')
+  await expect.poll(() => number.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+  request.snapshot.facts = ['civil.minute-of-day', 'civil.weekday'].map(name => ({ key: { name }, status: 'unknown', provider: 'fixture', evidence: 'fixture', observedAtMs: 0, validForMs: 5000, completeness: 'partial' }))
+  await load(request)
+  await page.getByText('Simulation facts (2)', { exact: true }).click()
+  await page.getByLabel('Valid for (ms)', { exact: true }).first().fill('-1')
+  await page.getByRole('button', { name: 'Remove fact 1', exact: true }).click()
+  const duration = page.getByLabel('Valid for (ms)', { exact: true })
+  await expect(duration).toHaveValue('5000')
+  await expect.poll(() => duration.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+  request.snapshot.facts = []
+  node.condition = { kind: 'fact', key: { name: 'civil.minute-of-day' }, predicate: { op: 'in', values: [{ type: 'number', value: 10 }, { type: 'number', value: 20 }] } }
+  await load(request)
+  await page.getByLabel('Membership value 1', { exact: true }).fill('')
+  await page.getByRole('button', { name: 'Remove membership value 1', exact: true }).click()
+  const member = page.getByLabel('Membership value 1', { exact: true })
+  await expect(member).toHaveValue('20')
+  await expect.poll(() => member.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+  request.graph.nodes.push({ id: 'reductions', kind: 'terminal', action: { kind: 'select', overrides: [{ scope: 'output', output: 'one', gain: 0.1 }, { scope: 'output', output: 'two', gain: 0.2 }] } })
+  await load(request)
+  await page.getByRole('button', { name: 'Edit reductions', exact: true }).click()
+  await page.getByLabel('Attenuation gain (optional, 0–1)', { exact: true }).first().fill('2')
+  await page.getByRole('button', { name: 'Remove reduction 1', exact: true }).click()
+  const gain = page.getByLabel('Attenuation gain (optional, 0–1)', { exact: true })
+  await expect(gain).toHaveValue('0.2')
+  await expect.poll(() => gain.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+})
+
+
+test('deleting another row preserves the surviving invalid draft in every numeric list', async ({ page, service }) => {
+  const api = { requests: [] as { path: string }[] }
+  page.on('request', request => { api.requests.push({ path: new URL(request.url()).pathname }) })
+  await open(page, service)
+  await page.getByRole('button', { name: 'Situations', exact: true }).click()
+  await page.getByText('Expert JSON / import full configuration', { exact: true }).click()
+  for (const kind of ['conditions', 'membership', 'facts', 'reductions']) {
+    for (const removed of [0, 1]) {
+      const request = emptyRequest(), numeric = { kind: 'fact' as const, key: { name: 'civil.minute-of-day' }, predicate: { op: 'lt', value: 20 } }
+      request.graph.root = 'when'
+      request.graph.nodes.unshift({ id: 'when', kind: 'decision', condition: numeric, onTrue: 'safe', onFalse: 'safe', onUnknown: 'safe' })
+      const node = request.graph.nodes[0]!
+      if (node.kind !== 'decision') throw Error('fixture')
+      if (kind === 'conditions') node.condition = { kind: 'all', conditions: [copyDsp(numeric), copyDsp(numeric)] }
+      if (kind === 'membership') node.condition = { kind: 'fact', key: numeric.key, predicate: { op: 'in', values: [{ type: 'number', value: 20 }, { type: 'number', value: 30 }] } }
+      if (kind === 'facts') request.snapshot.facts = ['civil.minute-of-day', 'civil.weekday'].map(name => ({ key: { name }, status: 'unknown', provider: 'fixture', evidence: 'fixture', observedAtMs: 0, validForMs: 5000, completeness: 'partial' }))
+      if (kind === 'reductions') request.graph.nodes.push({ id: 'reductions', kind: 'terminal', action: { kind: 'select', overrides: [{ scope: 'output', output: 'one', gain: 0.2 }, { scope: 'output', output: 'two', gain: 0.2 }] } })
+      await page.getByLabel('Full situation configuration JSON', { exact: true }).fill(dspJson(request))
+      await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+      await expect(page.getByText('Full configuration imported after core validation', { exact: false })).toBeVisible()
+      if (kind === 'facts') await page.getByText('Simulation facts (2)', { exact: true }).click()
+      if (kind === 'reductions') await page.getByRole('button', { name: 'Edit reductions', exact: true }).click()
+      const controls = kind === 'conditions' ? page.getByLabel('Numeric comparison value', { exact: true })
+        : kind === 'membership' ? page.locator('.situation-node-editor input[type="number"]')
+          : kind === 'facts' ? page.getByLabel('Valid for (ms)', { exact: true })
+            : page.getByLabel('Attenuation gain (optional, 0–1)', { exact: true })
+      const invalid = kind === 'facts' ? '-1' : kind === 'reductions' ? '2' : ''
+      await controls.nth(1 - removed).fill(invalid)
+      const button = kind === 'conditions' ? `Remove Condition.${removed + 1}` : kind === 'membership' ? `Remove membership value ${removed + 1}` : kind === 'facts' ? `Remove fact ${removed + 1}` : `Remove reduction ${removed + 1}`
+      await page.getByRole('button', { name: button, exact: true }).click()
+      await expect(controls).toHaveCount(1)
+      await expect(controls).toHaveValue(invalid)
+      await expect.poll(() => controls.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(false)
+      const before = api.requests.filter(r => r.path.endsWith('/evaluate')).length
+      await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+      expect(api.requests.filter(r => r.path.endsWith('/evaluate')).length).toBe(before)
+      await controls.fill(kind === 'facts' ? '5000' : kind === 'reductions' ? '0.2' : '20')
+      await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+      await expect(page.locator('.situation-result .message.success')).toContainText('Terminal: safe.')
+    }
+  }
 })

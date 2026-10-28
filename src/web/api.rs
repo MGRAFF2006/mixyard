@@ -116,6 +116,9 @@ pub(super) fn dispatch(path: &str, bytes: &[u8], state: &State) -> Reply {
             "/api/dsp/preview" => super::processing::preview(bytes),
             "/api/dsp/validate" => super::processing::validate(bytes),
             "/api/dsp/delay" => super::processing::delay(bytes),
+            "/api/automation/validate" => super::automation::validate(bytes),
+            "/api/automation/evaluate" => super::automation::evaluate(bytes),
+            "/api/automation/context" => super::automation::context(bytes, state),
             "/api/status" => {
                 let _: Empty = parse(bytes)?;
                 match ReadOnlyClient::connect(&state.instance) {

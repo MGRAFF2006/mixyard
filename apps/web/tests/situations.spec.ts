@@ -361,7 +361,7 @@ test('deleting another row preserves the surviving invalid draft in every numeri
       const node = request.graph.nodes[0]!
       if (node.kind !== 'decision') throw Error('fixture')
       if (kind === 'conditions') node.condition = { kind: 'all', conditions: [copyDsp(numeric), copyDsp(numeric)] }
-      if (kind === 'membership') node.condition = { kind: 'fact', key: numeric.key, predicate: { op: 'in', values: [{ type: 'number', value: 20 }, { type: 'number', value: 20 }] } }
+      if (kind === 'membership') node.condition = { kind: 'fact', key: numeric.key, predicate: { op: 'in', values: [{ type: 'number', value: 20 }, { type: 'number', value: 30 }] } }
       if (kind === 'facts') request.snapshot.facts = ['civil.minute-of-day', 'civil.weekday'].map(name => ({ key: { name }, status: 'unknown', provider: 'fixture', evidence: 'fixture', observedAtMs: 0, validForMs: 5000, completeness: 'partial' }))
       if (kind === 'reductions') request.graph.nodes.push({ id: 'reductions', kind: 'terminal', action: { kind: 'select', overrides: [{ scope: 'output', output: 'one', gain: 0.2 }, { scope: 'output', output: 'two', gain: 0.2 }] } })
       await page.getByLabel('Full situation configuration JSON', { exact: true }).fill(dspJson(request))
