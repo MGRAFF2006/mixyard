@@ -106,3 +106,51 @@ footer { display: flex; justify-content: space-between; color: #50657a; font-siz
   footer { gap: 16px; }
   summary span { display: block; margin-left: 17px; }
 }
+
+/* The DSP sequence is the primary hierarchy; parameter grids belong to each stage. */
+.processing { min-width: 0; }
+.processing fieldset { margin: 0; border: 1px solid var(--line); border-radius: 6px; padding: 18px 20px 20px; min-width: 0; background: var(--panel); }
+.processing legend { font-weight: 650; padding: 0 7px; }
+.dsp-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 16px; align-items: start; }
+.dsp-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: .9rem; }
+.dsp-field input, .dsp-field select, .dsp-field textarea { width: 100%; }
+.dsp-field textarea { resize: vertical; }
+.dsp-check { display: flex; gap: 9px; align-items: center; min-height: 44px; align-self: end; }
+.dsp-check input { width: 18px; height: 18px; accent-color: var(--blue); }
+.dsp-editor h3 { margin-top: 22px; }
+.dsp-channels { display: flex; flex-wrap: wrap; padding: 0; gap: 14px; list-style: none; margin: 14px 0; }
+.dsp-channels li { display: grid; gap: 8px; min-width: 0; flex: 0 1 270px; }
+.dsp-starter { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 20px; }
+.processing .actions { align-items: end; }
+.dsp-effects { list-style: none; padding: 0; margin: 0; display: grid; gap: 18px; }
+.processing .dsp-effect { border-left: 4px solid var(--blue); }
+.dsp-effect-header { display: flex; gap: 18px; flex-wrap: wrap; align-items: end; padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.dsp-effect-header > .dsp-field { flex: 1 1 200px; }
+.dsp-wide { grid-column: 1 / -1; }
+.dsp-add { margin: 20px 0 28px; }
+.processing .dsp-signal { margin-top: 20px; }
+.dsp-signal > p { margin-top: 16px; }
+.dsp-render { margin-top: 18px; }
+.dsp-results { margin-top: 24px; }
+.dsp-results h3 { margin: 24px 0 12px; }
+.dsp-table-scroll { overflow: auto; max-width: 100%; border: 1px solid var(--line); background: #fff; border-radius: 5px; margin: 14px 0 24px; }
+.dsp-meters { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.dsp-meters caption { text-align: left; padding: 12px; color: #50657a; font-size: .85rem; }
+.dsp-meters th, .dsp-meters td { text-align: left; padding: 10px 14px; border-top: 1px solid var(--line); white-space: nowrap; }
+.dsp-meters th { background: #e9f0f8; }
+.dsp-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0 22px; }
+.dsp-facts > div { padding: 12px 0; border-top: 1px solid var(--line); min-width: 0; }
+.dsp-facts dt { color: #50657a; font-size: .85rem; }
+.dsp-facts dd { margin: 3px 0 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.dsp-import { display: grid; gap: 14px; margin-top: 14px; }
+.dsp-import > button { justify-self: start; }
+@media (max-width: 750px) {
+  nav { gap: 0; }
+  nav button { flex: 1; padding: 12px 8px; font-size: .9rem; }
+  .processing fieldset { padding: 14px 12px; }
+  .dsp-fields { grid-template-columns: minmax(0, 1fr); }
+  .dsp-channels li { flex-basis: 100%; }
+  .dsp-effect-header { gap: 12px; }
+  .dsp-effect-header > .dsp-field { flex-basis: 100%; }
+  .dsp-facts { grid-template-columns: minmax(0, 1fr); }
+}

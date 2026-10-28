@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import LevelControl from './LevelControl.vue'
+import ProcessingPanel from './ProcessingPanel.vue'
 import { ConsoleSession } from './session.ts'
 import { copy, MAX_INPUT_BYTES, object, parseImport, readConfig, readInventory, setLevel } from './model.ts'
 import type { Config, Level, Mix, Source } from './model.ts'
@@ -8,7 +9,7 @@ import exampleConfig from './example-config.json?raw'
 import exampleInventory from './example-inventory.json?raw'
 
 const s = reactive(new ConsoleSession())
-const page = ref<'Routing' | 'Profiles' | 'Inspect'>('Routing')
+const page = ref<'Routing' | 'Profiles' | 'Inspect' | 'Processing'>('Routing')
 const configText = ref(''), inventoryText = ref('')
 const profileId = ref(''), profileName = ref(''), newMixName = ref('')
 const selected = computed(() => s.snapshot?.profiles.find(p => p.id === profileId.value))
@@ -94,14 +95,14 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
     </header>
     <p class="scope-note">Configure and inspect routing intent. This console does not apply audio, capture sound, or control the runtime.</p>
     <nav aria-label="Workspace">
-      <button v-for="tab in (['Routing', 'Profiles', 'Inspect'] as const)" :key="tab" :aria-current="page === tab ? 'page' : undefined" @click="page = tab">{{ tab }}</button>
+      <button v-for="tab in (['Routing', 'Profiles', 'Inspect', 'Processing'] as const)" :key="tab" :aria-current="page === tab ? 'page' : undefined" @click="page = tab">{{ tab }}</button>
     </nav>
     <main id="workspace" tabindex="-1">
       <div v-if="s.error" class="message error" role="alert"><strong>Action failed.</strong> {{ s.error }} <span v-if="s.needsRefresh">Refresh before another store write.</span></div>
       <div v-if="s.statusError || s.status?.error" class="message warning"><p>Runtime is not connected. Draft editing is still available.</p><details><summary>Connection details</summary>{{ s.statusError || s.status?.error }}</details></div>
       <div v-if="s.needsRefresh && !s.busy" class="message warning">Store writes paused. Start the local service if needed, then <button @click="s.refresh()">Refresh and review</button>. Local edits are kept; no write is retried automatically.</div>
-      <p v-if="s.notice" class="message success" role="status">{{ s.notice }}</p>
-      <div class="draft-bar">
+      <p v-if="s.notice && page !== 'Processing'" class="message success" role="status">{{ s.notice }}</p>
+      <div v-show="page !== 'Processing'" class="draft-bar">
         <div><strong>{{ s.dirty ? 'Unsaved draft edits' : s.local ? 'Draft matches stored copy' : 'No draft loaded' }}</strong>
           <span v-if="s.snapshot" class="secondary">Store revision {{ s.snapshot.storeRevision }}<template v-if="s.local"> / Config revision {{ s.local.revision }}</template></span>
         </div>
@@ -112,8 +113,8 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
           <button :disabled="!s.local" @click="exportJson(s.local, 'mixyard-config.json')">Export config</button>
         </div>
       </div>
-      <p v-if="simulated" class="simulated">Simulated example / inventory. These identities and observations do not establish real devices or audio.</p>
-      <p v-if="s.validated" class="validation">Core validation passed for the current config. Audio remains unapplied.</p>
+      <p v-if="simulated && page !== 'Processing'" class="simulated">Simulated example / inventory. These identities and observations do not establish real devices or audio.</p>
+      <p v-if="s.validated && page !== 'Processing'" class="validation">Core validation passed for the current config. Audio remains unapplied.</p>
 
       <section v-show="page === 'Routing'" aria-labelledby="routing-title">
         <div class="section-heading"><div><h2 id="routing-title">Routing matrix</h2><p>Each cell owns one source-to-mix send. Gain and mute are independent.</p></div><button :disabled="s.busy" @click="example">Load simulated example</button></div>
@@ -178,7 +179,9 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         <details v-if="s.status"><summary>Last read-only runtime snapshot</summary><pre>{{ JSON.stringify(s.status, null, 2) }}</pre></details>
       </section>
 
-      <details class="imports"><summary>Import / export JSON <span>Config and inventory, schema 2</span></summary>
+      <ProcessingPanel v-show="page === 'Processing'" :api="s.api" :ready="!!s.api.token && !s.busy" />
+
+      <details v-show="page !== 'Processing'" class="imports"><summary>Import / export JSON <span>Config and inventory, schema 2</span></summary>
         <div class="import-grid"><div><h3>Configuration</h3><p>Imports are shape-checked and validated by the core before replacing local edits. Full JSON fields are kept.</p><label for="config-file">Import config file (up to 128 KiB)</label><input id="config-file" type="file" accept=".json,application/json" :disabled="s.busy" @change="importFile('config', $event)" /><label for="config-json">Or paste config JSON</label><textarea id="config-json" v-model="configText" rows="5" spellcheck="false" :disabled="s.busy"></textarea><button :disabled="s.busy || !configText.trim()" @click="importText('config', configText)">Import pasted config</button></div>
           <div><h3>Inventory</h3><p>Imported observations do not prove live state. Inventory is separate from the persisted config.</p><label for="inventory-file">Import inventory file (up to 128 KiB)</label><input id="inventory-file" type="file" accept=".json,application/json" :disabled="s.busy" @change="importFile('inventory', $event)" /><label for="inventory-json">Or paste inventory JSON</label><textarea id="inventory-json" v-model="inventoryText" rows="5" spellcheck="false" :disabled="s.busy"></textarea><div class="actions"><button :disabled="s.busy || !inventoryText.trim()" @click="importText('inventory', inventoryText)">Import pasted inventory</button><button :disabled="!s.inventory" @click="exportJson(s.inventory, 'mixyard-inventory.json')">Export inventory</button></div></div>
         </div>
