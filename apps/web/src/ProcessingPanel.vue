@@ -61,6 +61,14 @@ function renameChannel(id: string, event: Event) {
 }
 function appendOperation(item: EffectConfig) { d.config.effects.push(item); changed(); notice.value = `Added ${item.name} at stage ${d.config.effects.length}. Existing stages kept.` }
 function appendAlignment(items: EffectConfig[]) { d.config.effects.push(...items); changed(); notice.value = 'Measured alignment delays appended. Measure signal delay again to verify.' }
+const minimumGainDb = 20 * Math.log10(Number.MIN_VALUE)
+const maximumGainDb = 20 * Math.log10(Number.MAX_VALUE)
+function setGainDb(item: EffectConfig, db: number) {
+  changed()
+  const gain = 10 ** (db / 20)
+  if (!Number.isFinite(gain) || gain === 0) { error.value = 'That dB conversion is outside positive finite Float64 range. The previous gain is kept; use Linear gain for exact extreme values.'; return }
+  if (item.effect.kind === 'gain') item.effect.gain = gain
+}
 function selectMode(item: EffectConfig, event: Event) {
   if ((event.target as HTMLSelectElement).value === 'all') delete item.channels
   else item.channels = [d.config.format.channels[0]!]
@@ -150,7 +158,7 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
             <details class="effect-parameters" :open="view !== 'beginner'"><summary>{{ view === 'beginner' ? 'Edit parameters' : 'Effect parameters' }}</summary>
             <div class="dsp-fields">
               <template v-if="item.effect.kind === 'gain'">
-                <DspNumber label="Level (dB)" :value="item.effect.gain > 0 ? 20 * Math.log10(item.effect.gain) : 0" :min="-6000" :max="6000" @update="item.effect.gain = 10 ** ($event / 20)" />
+                <DspNumber label="Level (dB)" :value="item.effect.gain > 0 ? 20 * Math.log10(item.effect.gain) : 0" :min="minimumGainDb" :max="maximumGainDb" @input.stop @update="setGainDb(item, $event)" />
                 <p class="secondary" v-if="item.effect.gain === 0">Silent (linear gain 0). Entering a dB level explicitly restores gain.</p>
                 <DspNumber label="Linear gain" :value="item.effect.gain" :min="0" @update="item.effect.gain = $event" />
                 <label class="dsp-check"><input v-model="item.effect.invertPolarity" type="checkbox" /> Invert polarity</label>
@@ -163,7 +171,7 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
                 <p class="secondary dsp-wide">Frequency must be below Nyquist ({{ d.config.format.sampleRateHz / 2 }} Hz); Q must be positive. Gain must be zero except for peaking and shelves. Shelves use Q, not slope S. Rust checks stability.</p>
               </template>
               <template v-else-if="item.effect.kind === 'delay'">
-                <DelayTiming :frames="item.effect.frames" :rate="d.config.format.sampleRateHz" @update="item.effect.frames = $event" />
+                <DelayTiming :frames="item.effect.frames" :rate="d.config.format.sampleRateHz" @update="item.effect.frames = $event; changed()" />
                 <DspNumber label="Wet" :value="item.effect.wet" :min="0" :max="1" @update="item.effect.wet = $event" />
                 <DspNumber label="Dry" :value="item.effect.dry" :min="0" :max="1" @update="item.effect.dry = $event" />
                 <DspNumber label="Feedback" :value="item.effect.feedback" :min="-1" :max="1" @update="item.effect.feedback = $event" />

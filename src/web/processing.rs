@@ -101,6 +101,13 @@ struct AlignmentRequest {
 pub(super) fn delay(bytes: &[u8]) -> Reply {
     let result = || -> Result<Reply, Reply> {
         let body: DelayRequest = parse(bytes)?;
+        if body
+            .alignment
+            .as_ref()
+            .is_some_and(|a| a.channels.len() > body.config.format.channels.len())
+        {
+            return Err(invalid("dsp-alignment-selection", "Alignment must select unique existing output channels, not more than the configured channel count."));
+        }
         if !(1..=65_536).contains(&body.probe.observation_frames) {
             return Err(invalid("dsp-delay-budget", "Choose 1–65536 observation frames. This is an explicit measurement window, not a truncated impulse response export."));
         }

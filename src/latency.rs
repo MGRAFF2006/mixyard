@@ -202,6 +202,7 @@ pub fn align(
     max_delay_frames: usize,
 ) -> Result<AlignmentPlan, Error> {
     if channels.len() < 2
+        || channels.len() > report.channels.len()
         || channels
             .iter()
             .enumerate()

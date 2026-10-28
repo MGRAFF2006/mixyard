@@ -441,6 +441,46 @@ fn actual_delay_measurement_and_explicit_alignment_do_not_change_profiles() {
     assert_eq!(reply["alignment"]["delays"][0]["frames"], 4);
     assert_eq!(reply["alignment"]["delays"][1]["frames"], 0);
     assert!(reply["alignmentError"].is_null());
+    let mut excessive = request.clone();
+    excessive["alignment"]["channels"] = json!((0..50_000)
+        .map(|i| format!("unknown-{i}"))
+        .collect::<Vec<_>>());
+    let encoded = excessive.to_string();
+    let rejected = service.post("/api/dsp/delay", excessive);
+    assert_eq!(
+        rejected.status, 422,
+        "Selection must be rejected before any expensive probe/alignment work"
+    );
+    thread::scope(|scope| {
+        let tasks: Vec<_> = (0..4)
+            .map(|_| {
+                let (address, token, body) = (
+                    service.address.clone(),
+                    service.token.clone(),
+                    encoded.clone(),
+                );
+                scope.spawn(move || {
+                    crate::request(
+                        &address,
+                        "POST",
+                        "/api/dsp/delay",
+                        &[
+                            ("X-Mixyard-Token", token.as_str()),
+                            ("Content-Type", "application/json"),
+                        ],
+                        &body,
+                    )
+                })
+            })
+            .collect();
+        for task in tasks {
+            assert_eq!(task.join().unwrap().status, 422);
+        }
+    });
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
     request["config"]["effects"]
         .as_array_mut()
         .unwrap()
