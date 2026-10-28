@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vSituationNumber } from './situation-number.ts'
 import SituationStrings from './SituationStrings.vue'
 import type { Value } from './situations.ts'
 const props = defineProps<{
@@ -30,7 +31,7 @@ function number(event: Event) {
   <SituationStrings v-if="value.type === 'text-set'" :values="value.value as string[]" :label="label" @update="update" />
   <label v-else class="situation-field">{{ label }}
     <select :aria-label="label" v-if="value.type === 'bool'" :value="String(value.value)" @change="update(($event.target as HTMLSelectElement).value === 'true')"><option value="true">True</option><option value="false">False</option></select>
-    <input v-else-if="value.type === 'number'" type="number" step="any" :value="Object.is(value.value, -0) ? '-0' : value.value" required @input="number" />
+    <input v-else-if="value.type === 'number'" v-situation-number type="number" step="any" :value="Object.is(value.value, -0) ? '-0' : value.value" required @input="number" />
     <input v-else :value="value.value" @input="update(($event.target as HTMLInputElement).value)" />
   </label>
 </template>

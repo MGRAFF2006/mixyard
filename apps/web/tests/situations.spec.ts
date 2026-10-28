@@ -286,3 +286,67 @@ test('switching numeric decision owners discards stale validity and complete res
   await expect(page.getByRole('alert')).toContainText('Complete trace does not reach its declared result')
   await expect(page.locator('.situation-result .message.success')).toHaveCount(0)
 })
+
+
+test('numeric validity follows replaced operands and surviving condition, fact, membership and reduction rows', async ({ page }) => {
+  await mockApi(page); await open(page); await expert(page)
+  const numericCondition = (value: number) => ({ kind: 'fact' as const, key: { name: 'civil.minute-of-day' }, predicate: { op: 'lt', value } })
+  async function load(request: SituationRequest) {
+    await page.getByLabel('Full situation configuration JSON', { exact: true }).fill(dspJson(request))
+    await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+    await expect(page.getByText('Full configuration imported after core validation', { exact: false })).toBeVisible()
+  }
+  async function simulate() {
+    await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+    await expect(page.locator('.situation-result .message.success')).toContainText('Terminal: safe.')
+  }
+  const request = emptyRequest()
+  request.graph.root = 'when'
+  request.graph.nodes.unshift({ id: 'when', kind: 'decision', condition: numericCondition(10), onTrue: 'safe', onFalse: 'safe', onUnknown: 'safe' })
+  await load(request)
+  const number = page.getByLabel('Numeric comparison value', { exact: true })
+  await number.fill('')
+  await page.getByLabel('Graph name', { exact: true }).fill('Keep invalid numeric draft')
+  await expect(number).toHaveValue('')
+  await expect.poll(() => number.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(false)
+  await page.getByLabel('Comparison', { exact: true }).selectOption('le')
+  await expect(number).toHaveValue('0')
+  await expect.poll(() => number.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+  const node = request.graph.nodes[0]!
+  if (node.kind !== 'decision') throw Error('fixture')
+  node.condition = { kind: 'all', conditions: [numericCondition(20), numericCondition(20)] }
+  await load(request)
+  await number.first().fill('')
+  await page.getByRole('button', { name: 'Remove Condition.1', exact: true }).click()
+  await expect(number).toHaveValue('20')
+  await expect.poll(() => number.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+  request.snapshot.facts = ['civil.minute-of-day', 'civil.weekday'].map(name => ({ key: { name }, status: 'unknown', provider: 'fixture', evidence: 'fixture', observedAtMs: 0, validForMs: 5000, completeness: 'partial' }))
+  await load(request)
+  await page.getByText('Simulation facts (2)', { exact: true }).click()
+  await page.getByLabel('Valid for (ms)', { exact: true }).first().fill('-1')
+  await page.getByRole('button', { name: 'Remove fact 1', exact: true }).click()
+  const duration = page.getByLabel('Valid for (ms)', { exact: true })
+  await expect(duration).toHaveValue('5000')
+  await expect.poll(() => duration.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+  request.snapshot.facts = []
+  node.condition = { kind: 'fact', key: { name: 'civil.minute-of-day' }, predicate: { op: 'in', values: [{ type: 'number', value: 10 }, { type: 'number', value: 20 }] } }
+  await load(request)
+  await page.getByLabel('Membership value 1', { exact: true }).fill('')
+  await page.getByRole('button', { name: 'Remove membership value 1', exact: true }).click()
+  const member = page.getByLabel('Membership value 1', { exact: true })
+  await expect(member).toHaveValue('20')
+  await expect.poll(() => member.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+  request.graph.nodes.push({ id: 'reductions', kind: 'terminal', action: { kind: 'select', overrides: [{ scope: 'output', output: 'one', gain: 0.1 }, { scope: 'output', output: 'two', gain: 0.2 }] } })
+  await load(request)
+  await page.getByRole('button', { name: 'Edit reductions', exact: true }).click()
+  await page.getByLabel('Attenuation gain (optional, 0–1)', { exact: true }).first().fill('2')
+  await page.getByRole('button', { name: 'Remove reduction 1', exact: true }).click()
+  const gain = page.getByLabel('Attenuation gain (optional, 0–1)', { exact: true })
+  await expect(gain).toHaveValue('0.2')
+  await expect.poll(() => gain.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await simulate()
+})

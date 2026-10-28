@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { useId } from 'vue'
+import { vSituationNumber } from './situation-number.ts'
+import { ref, useId } from 'vue'
 import type { Action, Override } from './situations.ts'
 import type { Config, Profile } from './model.ts'
 const listId = useId()
+const rowRevision = ref(0)
 const props = defineProps<{
   action: Action
   profiles: Profile[]
@@ -39,6 +41,7 @@ function change(index: number, patch: Partial<Override>) {
     emit('update', { ...props.action, overrides: props.action.overrides.map((o, i) => i === index ? { ...o, ...patch } : o) })
 }
 function remove(index: number) {
+  rowRevision.value++
   if (props.action.kind === 'select')
     emit('update', { ...props.action, overrides: props.action.overrides.filter((_, i) => i !== index) })
 }
@@ -67,6 +70,10 @@ function gain(index: number, event: Event) {
     return
   const input = event.target as HTMLInputElement, next = { ...props.action.overrides[index]! }
   emit('invalid')
+  if (input.validity.badInput) {
+    input.setCustomValidity('Enter a finite attenuation, or leave blank.')
+    return
+  }
   if (input.value === '')
     delete next.gain
   else if (Number.isFinite(input.valueAsNumber) && input.valueAsNumber >= 0 && input.valueAsNumber <= 1)
@@ -86,13 +93,13 @@ function gain(index: number, event: Event) {
       <label class="situation-field">Profile ID (optional with reductions)<input :value="action.profileId ?? ''" :list="`${listId}-profiles`" @input="profile" /></label>
       <datalist :id="`${listId}-profiles`"><option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option></datalist>
       <p class="situation-hint">Saved IDs: {{ profiles.map(p => `${p.name} (${p.id})`).join('; ') || 'No saved profiles available. Supply an exact opaque ID, never a display name.' }}</p>
-      <fieldset v-for="(o, i) in action.overrides" :key="i" class="situation-reduction"><legend>Reduction {{ i + 1 }}</legend>
+      <fieldset v-for="(o, i) in action.overrides" :key="`${rowRevision}-${i}`" class="situation-reduction"><legend>Reduction {{ i + 1 }}</legend>
         <div class="situation-fields">
           <label class="situation-field">Reduction scope<select aria-label="Reduction scope" :value="o.scope" @change="scope(i, $event)"><option value="send">One source-to-mix send</option><option value="output">One output</option><option value="mix">One mix</option></select></label>
           <label v-if="o.scope === 'send'" class="situation-field">Exact source ID<input :value="o.source" :list="`${listId}-sources`" @input="change(i, { source: ($event.target as HTMLInputElement).value })" /></label>
           <label v-if="o.scope !== 'output'" class="situation-field">Exact mix ID<input :value="o.mix" :list="`${listId}-mixes`" @input="change(i, { mix: ($event.target as HTMLInputElement).value })" /></label>
           <label v-if="o.scope === 'output'" class="situation-field">Exact output ID<input :value="o.output" :list="`${listId}-outputs`" @input="change(i, { output: ($event.target as HTMLInputElement).value })" /></label>
-          <label class="situation-field">Attenuation gain (optional, 0–1)<input type="number" min="0" max="1" step="any" :value="Object.is(o.gain, -0) ? '-0' : o.gain ?? ''" @input="gain(i, $event)" /></label>
+          <label class="situation-field">Attenuation gain (optional, 0–1)<input v-situation-number="o.scope" type="number" min="0" max="1" step="any" :value="Object.is(o.gain, -0) ? '-0' : o.gain ?? ''" @input="gain(i, $event)" /></label>
         </div>
         <label class="situation-check"><input type="checkbox" :checked="o.mute === true" @change="mute(i, $event)" />Mute this {{ o.scope }} only</label>
         <button type="button" @click="remove(i)">Remove reduction {{ i + 1 }}</button>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vSituationNumber } from './situation-number.ts'
 import { computed, reactive } from 'vue'
 import { emptyPreset, metadataIntegerLiteral, presetProblems } from './situations.ts'
 import type { Preset } from './situations.ts'
@@ -58,7 +59,7 @@ function endpoints(event: Event) {
     </div>
     <label v-if="preset.kind === 'monitor'" class="situation-check"><input v-model="preset.declared" type="checkbox" />I explicitly declare the chosen endpoint has hardware monitoring (simulation claim)</label>
     <label class="situation-check"><input v-model="preset.useTime" type="checkbox" />Also require a civil-time window</label>
-    <div v-if="preset.useTime" class="situation-fields"><label class="situation-field">IANA timezone<input v-model="preset.timezone" placeholder="Europe/Berlin" /></label><label class="situation-field">Start minute of day<input  :value="preset.startMinute" @input="minute('startMinute', $event)" type="number" min="0" max="1439" step="1" /></label><label class="situation-field">End minute of day<input  :value="preset.endMinute" @input="minute('endMinute', $event)" type="number" min="0" max="1439" step="1" /></label><p class="situation-hint">Provider facts supply timezone and civil minutes, including DST. No timezone is assumed.</p></div>
+    <div v-if="preset.useTime" class="situation-fields"><label class="situation-field">IANA timezone<input v-model="preset.timezone" placeholder="Europe/Berlin" /></label><label class="situation-field">Start minute of day<input  :value="preset.startMinute" @input="minute('startMinute', $event)" v-situation-number type="number" min="0" max="1439" step="1" /></label><label class="situation-field">End minute of day<input  :value="preset.endMinute" @input="minute('endMinute', $event)" v-situation-number type="number" min="0" max="1439" step="1" /></label><p class="situation-hint">Provider facts supply timezone and civil minutes, including DST. No timezone is assumed.</p></div>
     <datalist id="preset-profiles"><option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option></datalist><datalist id="preset-devices"><option v-for="id in devices" :key="id" :value="id" /></datalist><datalist id="preset-outputs"><option v-for="o in config?.outputs ?? []" :key="o.id" :value="o.id" /></datalist><datalist id="preset-sources"><option v-for="s in config?.sources ?? []" :key="s.id" :value="s.id" /></datalist><datalist id="preset-mixes"><option v-for="m in config?.mixes ?? []" :key="m.id" :value="m.id" /></datalist>
     <p class="situation-hint">Available profiles: {{ profiles.map(p => `${p.name} (${p.id})`).join('; ') || 'None loaded. Refresh the console or supply exact saved profile IDs.' }} Device presence is separate from a hardware-monitor declaration.</p>
     <p v-if="problems.length" class="message warning">Preset incomplete. Supply: {{ problems.join('; ') }}.</p>
