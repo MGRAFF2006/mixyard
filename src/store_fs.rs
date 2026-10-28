@@ -61,7 +61,16 @@ pub(crate) fn check_directory(directory: &Path, names: &[&str]) -> Result<bool, 
                 4,
             ));
         }
-        check_file(&entry.path())?;
+        let path = entry.path();
+        // Windows supplies non-following metadata with the directory entry.
+        // Reopening a disappearing sentinel can return AccessDenied while it is
+        // pending deletion (even though directory enumeration succeeded).
+        let meta = match entry.metadata() {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(Error::io_at("inspect directory entry", &path, e)),
+        };
+        check_file_metadata(&path, &meta)?;
     }
     Ok(true)
 }
@@ -98,7 +107,11 @@ pub(crate) fn check_file(path: &Path) -> Result<bool, Error> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(Error::io_at("inspect file", path, e)),
     };
-    if is_link(&meta) || !meta.is_file() {
+    check_file_metadata(path, &meta)?;
+    Ok(true)
+}
+fn check_file_metadata(path: &Path, meta: &fs::Metadata) -> Result<(), Error> {
+    if is_link(meta) || !meta.is_file() {
         return Err(unsafe_path(path));
     }
     #[cfg(unix)]
@@ -108,7 +121,7 @@ pub(crate) fn check_file(path: &Path) -> Result<bool, Error> {
             return Err(unsafe_path(path));
         }
     }
-    Ok(true)
+    Ok(())
 }
 pub(crate) fn create_file(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
