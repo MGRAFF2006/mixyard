@@ -99,8 +99,9 @@ The control Offer is length-prefixed JSON (u32 big endian), one Offer per reliab
 bidirectional stream, followed by FIN; the response is a versioned accept/reject
 Reply followed by FIN. Unknown fields, trailing data, invalid JSON, empty or
 >8192-byte frames fail closed. A configured deadline bounds prefix/body/FIN/reply
-waiting. One inbound control task runs concurrently with datagram reception;
-extra simultaneous controls are reset. Outbound negotiation is serialized
+waiting. One inbound control exchange runs concurrently with datagram reception;
+Quinn limits inbound bidirectional streams to two, so one successor can wait in
+bounded transport storage until the active exchange finishes. Outbound negotiation is serialized
 separately from PCM queues. A failed/uncertain or cancelled negotiation closes the connection
 instead of assuming either side applied it. All raw descriptors must exactly
 match the preconfigured directional permission: selection never guesses a
@@ -304,9 +305,12 @@ audio permissions. Failure to deliver an echo for a fully validated probe
 to that optional stream; malformed requests still fail closed. Probes
 share the single inbound reliable control worker, polled directly in the receive
 loop so reply FIN and worker availability complete together (avoiding a spawned
-task-completion race on successive requests). A busy worker resets
-additional requests, while datagrams remain independently serviced. Every incoming
-bidirectional control stream, including rejected busy streams, counts toward a
+task-completion race on successive requests). The worker does not accept the next
+control until the active exchange completes; otherwise an abandoned probe could
+reset a subsequent valid negotiation after the local caller released its gate.
+At most one successor waits under Quinn's two-stream receive limit, rather than
+an unbounded application queue. Datagrams remain independently serviced. Each
+accepted bidirectional control counts toward a
 `max_streams + 16` per-one-second-window limit (a full configured admission
 burst plus telemetry headroom); exceeding it closes the paired session. A malformed
 or incomplete inbound frame fails closed at the existing control deadline. This
@@ -318,7 +322,10 @@ stale/disconnected states, an injected local monotonic observation time, invalid
 nonce/version/kind/length/trailing data, slow peers, cancellation and flooding.
 Production-worker regressions pause peer turnaround until after probe cancellation
 or timeout and then verify exact audio delivery; another overlaps probing and
-negotiation. All three reproduced connection teardown before the repair.
+negotiation. All three reproduced connection teardown before the repair. Two
+further regressions cancel or time out a probe and immediately negotiate a new
+generation before peer turnaround (20 attempts per variant); both reproduced
+busy resets before serializing inbound acceptance as well as outbound calls.
 The mixed-rate queue test distinguishes holes and partial packets from occupancy,
 checks restart/sibling isolation, and preserves the existing raw precision oracles.
 These results establish local application RTT and worker queue semantics only.

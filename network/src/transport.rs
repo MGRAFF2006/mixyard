@@ -244,10 +244,11 @@ impl Session {
         let control_budget = self.limits.max_streams.saturating_add(16);
         let result = loop {
             tokio::select! {
-                incoming = self.connection.accept_bi() => match incoming {
+                incoming = self.connection.accept_bi(), if control.is_none() => match incoming {
                     Ok((mut send, mut receive)) => {
-                        // Include reset/busy requests in admission accounting. A paired peer
-                        // cannot obtain unbounded parsing/echo work by opening short streams.
+                        // One active exchange; Quinn permits at most two concurrent
+                        // inbound streams, so a successor waits in bounded transport
+                        // storage instead of resetting valid admission after a probe.
                         let now = Instant::now();
                         if now.duration_since(control_window) >= Duration::from_secs(1) {
                             control_window = now;
@@ -258,34 +259,29 @@ impl Session {
                             self.close();
                             break Err(anyhow::anyhow!("control stream rate exceeded"));
                         }
-                        if control.is_some() {
-                            let _ = send.reset(2u32.into());
-                            let _ = receive.stop(2u32.into());
-                        } else {
-                            let session = self.clone();
-                            control = Some(Box::pin(async move {
-                                timeout(session.limits.control_timeout, async {
-                                    let mut prefix = [0; 4];
-                                    receive.read_exact(&mut prefix).await?;
-                                    if prefix == PROBE_TAG {
-                                        let nonce = read_probe_body(&mut receive, PROBE_PING).await?;
-                                        // A valid optional probe changes no admission state.
-                                        // Its caller may stop receiving after timeout/cancel;
-                                        // failure to deliver the echo must not stop PCM.
-                                        let _ = write_probe(&mut send, PROBE_ECHO, nonce).await;
-                                        let _ = send.finish();
-                                        return Ok(());
-                                    } else {
-                                        let offer: Offer = read_control_body(&mut receive, prefix).await?;
-                                        let admission = session.receiver.lock().expect("receiver poisoned").admit(offer);
-                                        let reply = Reply { version: VERSION, accepted: admission.is_ok(), reason: admission.err().map_or_else(String::new, |e| e.to_string()) };
-                                        write_control(&mut send, &reply).await?;
-                                    }
-                                    send.finish()?;
-                                    Ok::<_, anyhow::Error>(())
-                                }).await.context("control deadline expired")?
-                            }));
-                        }
+                        let session = self.clone();
+                        control = Some(Box::pin(async move {
+                            timeout(session.limits.control_timeout, async {
+                                let mut prefix = [0; 4];
+                                receive.read_exact(&mut prefix).await?;
+                                if prefix == PROBE_TAG {
+                                    let nonce = read_probe_body(&mut receive, PROBE_PING).await?;
+                                    // A valid optional probe changes no admission state.
+                                    // Its caller may stop receiving after timeout/cancel;
+                                    // failure to deliver the echo must not stop PCM.
+                                    let _ = write_probe(&mut send, PROBE_ECHO, nonce).await;
+                                    let _ = send.finish();
+                                    return Ok(());
+                                } else {
+                                    let offer: Offer = read_control_body(&mut receive, prefix).await?;
+                                    let admission = session.receiver.lock().expect("receiver poisoned").admit(offer);
+                                    let reply = Reply { version: VERSION, accepted: admission.is_ok(), reason: admission.err().map_or_else(String::new, |e| e.to_string()) };
+                                    write_control(&mut send, &reply).await?;
+                                }
+                                send.finish()?;
+                                Ok::<_, anyhow::Error>(())
+                            }).await.context("control deadline expired")?
+                        }));
                     },
                     Err(e) => break Err(e.into()),
                 },

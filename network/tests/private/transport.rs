@@ -483,3 +483,68 @@ async fn full_configured_admission_burst_leaves_headroom_for_telemetry() -> Resu
     let _ = run_b.await?;
     Ok(())
 }
+
+async fn abandoned_probe_then_negotiate(cancel: bool) -> Result<()> {
+    let mut failures = Vec::new();
+    for attempt in 0..20 {
+        let s = spec(1, "a", Codec::RawS16Le, 48_000, &["FL"], 48);
+        let (a, b, _ea, _eb) = pair(std::slice::from_ref(&s), &[]).await?;
+        let mut worker = Box::pin(b.clone().run());
+        tokio::select! {
+            r=a.negotiate(offer(s.clone(),1)) => r?,
+            r=&mut worker => panic!("worker exited: {r:?}"),
+        }
+        let caller = a.clone();
+        let probe = tokio::spawn(async move { caller.probe_rtt().await });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        if cancel {
+            probe.abort();
+            assert!(probe.await.unwrap_err().is_cancelled());
+        } else {
+            assert!(probe.await?.is_err());
+        }
+        assert!(a.connection.close_reason().is_none());
+        let caller = a.clone();
+        let next = s.clone();
+        let mut admission = tokio::spawn(async move { caller.negotiate(offer(next, 2)).await });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        let admitted = tokio::select! {
+            r=&mut admission => r?,
+            r=&mut worker => panic!("attempt={attempt}: worker exited: {r:?}"),
+        };
+        if let Err(error) = admitted {
+            timeout(Duration::from_secs(1), b.connection.closed()).await?;
+            let silence = b.pull(1)?.iter().all(|v| *v == 0);
+            let evidence = format!(
+                "cancel={cancel}, attempt={attempt}: admission={error:#}, local_close={:?}, peer_close={:?}, admitted_audio_silent={silence}",
+                a.connection.close_reason(),
+                b.connection.close_reason()
+            );
+            println!("{evidence}");
+            failures.push(evidence);
+        } else {
+            a.enqueue(1, sample_bytes(&s, 1)).await?;
+            a.flush_round().await?;
+            tokio::select! {
+                r=wait_queued(&b,1,1) => r?,
+                r=&mut worker => panic!("worker exited: {r:?}"),
+            }
+            assert_eq!(b.pull(1)?, sample_bytes(&s, 1));
+        }
+        a.close();
+    }
+    assert!(
+        failures.is_empty(),
+        "{} production lifecycle failures: {failures:#?}",
+        failures.len()
+    );
+    Ok(())
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_probe_then_immediate_negotiation_preserves_audio() -> Result<()> {
+    abandoned_probe_then_negotiate(true).await
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn timed_out_probe_then_immediate_negotiation_preserves_audio() -> Result<()> {
+    abandoned_probe_then_negotiate(false).await
+}
