@@ -241,3 +241,7 @@ Successful imports/context replacements rebuild form controls to discard obsolet
 DOM validation errors. Simulation responses must agree with graph terminals,
 actions, branches, manual override and shared observation identities; truncated
 trace prefixes remain valid.
+A non-truncated explanation must finish exactly once at its declared terminal or
+manual override; only explicitly truncated prefixes may omit completion. Node
+editors are keyed by their exact node identity, so invalid numeric controls do
+not transfer hidden validity errors when navigating to another node.

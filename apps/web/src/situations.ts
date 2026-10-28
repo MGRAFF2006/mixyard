@@ -577,9 +577,10 @@ export function readEvaluation(v: unknown, request: SituationRequest): Evaluatio
   const observations = list(e.observations, 512)
   // Reuse observation shape checks; trace evidence can be a subset of supplied facts.
   readSnapshot({ schemaVersion: 1, revision: 0, epoch: request.snapshot.epoch, facts: observations }, request.catalog)
-  let nextNode = request.graph.root
+  let nextNode = request.graph.root, completed = false
   if (request.manualOverride && observations.length) throw new Error('Manual override cannot include fact observations.')
   list(e.trace).forEach(v => {
+    if (completed) throw new Error('Trace has events after completion.')
     const t = object(v)
     if (request.manualOverride !== (t.kind === 'manual-override')) throw new Error('Trace contradicts manual override.')
     const node = t.kind === 'manual-override' ? null : nodes.get(text(t.node))
@@ -612,9 +613,14 @@ export function readEvaluation(v: unknown, request: SituationRequest): Evaluatio
           }
           break
         }
-      case 'terminal': if (!node || node.kind !== 'terminal' || node.id !== e.terminal) throw new Error('Trace terminal does not match the result.')
+      case 'terminal':
+        if (!node || node.kind !== 'terminal' || node.id !== e.terminal) throw new Error('Trace terminal does not match the result.')
+        completed = true
+        break
+      case 'manual-override': completed = true
     }
   })
+  if (!e.traceTruncated && !completed) throw new Error('Complete trace does not reach its declared result.')
   return e as Evaluation
 }
 export function renameNode(graph: Graph, oldId: string, newId: string): Graph {

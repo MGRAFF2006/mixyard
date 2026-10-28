@@ -257,3 +257,32 @@ test('valid imports and context replacements clear invalid DOM drafts, integer m
   await page.getByRole('button', { name: 'Copy read-only context into simulation', exact: true }).click()
   await expect.poll(() => clock.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
 })
+
+
+test('switching numeric decision owners discards stale validity and complete response contradictions are rejected', async ({ page }) => {
+  const api = await mockApi(page); await open(page); await expert(page)
+  const request = emptyRequest()
+  request.graph.root = 'first'
+  request.graph.nodes.unshift(...(['first', 'second'] as const).map((id, i) => ({ id, kind: 'decision' as const, condition: { kind: 'fact' as const, key: { name: 'civil.minute-of-day' }, predicate: { op: 'lt', value: (i + 1) * 10 } }, onTrue: 'safe', onFalse: 'safe', onUnknown: 'safe' })))
+  await page.getByLabel('Full situation configuration JSON', { exact: true }).fill(dspJson(request))
+  await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+  await expect(page.getByText('Full configuration imported after core validation', { exact: false })).toBeVisible()
+  const numeric = page.getByLabel('Numeric comparison value', { exact: true })
+  await numeric.fill('')
+  await expect.poll(() => numeric.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(false)
+  await page.getByRole('button', { name: 'Edit second', exact: true }).click()
+  await expect(numeric).toHaveValue('20')
+  await expect.poll(() => numeric.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+  await expect(page.locator('.situation-result .message.success')).toContainText('Terminal: safe.')
+  expect(api.requests.filter(r => r.path.endsWith('/evaluate')).length).toBeGreaterThan(1)
+  await page.route('**/api/automation/evaluate', route => {
+    const body = JSON.parse(route.request().postData()!) as SituationRequest, result = evaluation(body)
+    result.evaluation.trace = []
+    result.evaluation.traceTruncated = false
+    return route.fulfill({ json: result })
+  })
+  await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Complete trace does not reach its declared result')
+  await expect(page.locator('.situation-result .message.success')).toHaveCount(0)
+})
