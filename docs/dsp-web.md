@@ -24,6 +24,10 @@ with `amplitude`, `sine` with `amplitude` and `frequencyHz`, or `samples` with
 explicit interleaved `samples: number[]`. All scalar samples/parameters must be
 finite. Preview is explicit; a normal editor action never triggers rendering.
 
+Import validation uses `POST /api/dsp/validate` with `{config,frames:1}`. It
+compiles without processing samples and returns `{valid:true,precision:"float64",
+admission:Admission}`. Import validation creates no timing report.
+
 Response:
 
 ```json

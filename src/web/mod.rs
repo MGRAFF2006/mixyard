@@ -1,6 +1,7 @@
 //! Bounded loopback HTTP transport for the existing core APIs.
 mod api;
 mod assets;
+mod processing;
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
