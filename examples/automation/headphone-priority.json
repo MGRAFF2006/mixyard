@@ -1,0 +1,24 @@
+{
+  "graph": {
+    "schemaVersion": 1, "id": "desk-priority", "name": "Headphones before application rules", "revision": 4, "root": "headphones?",
+    "nodes": [
+      {"id": "headphones?", "kind": "decision", "condition": {"kind": "fact", "key": {"name": "device.connected"}, "predicate": {"op": "contains", "value": "example:wired-headphones"}}, "onTrue": "headphones", "onFalse": "call?", "onUnknown": "hold"},
+      {"id": "call?", "kind": "decision", "condition": {"kind": "fact", "key": {"name": "application.running"}, "predicate": {"op": "contains", "value": "example:call-app"}}, "onTrue": "call", "onFalse": "speakers", "onUnknown": "hold"},
+      {"id": "headphones", "kind": "terminal", "action": {"kind": "select", "profileId": "profile:headphones", "overrides": [{"scope": "output", "output": "speaker-a", "mute": true}]}},
+      {"id": "call", "kind": "terminal", "action": {"kind": "select", "profileId": "profile:call", "overrides": []}},
+      {"id": "speakers", "kind": "terminal", "action": {"kind": "select", "profileId": "profile:speakers", "overrides": []}},
+      {"id": "hold", "kind": "terminal", "action": {"kind": "no-change"}}
+    ]
+  },
+  "catalog": [
+    {"name": "device.connected", "valueType": "text-set", "scope": "global", "maxAgeMs": 5000, "evidencePolicy": "any"},
+    {"name": "application.running", "valueType": "text-set", "scope": "global", "maxAgeMs": 5000, "evidencePolicy": "any"}
+  ],
+  "snapshot": {"schemaVersion": 1, "revision": 7, "epoch": "fixture-boot-A", "facts": [
+    {"key": {"name": "device.connected"}, "status": "known", "value": {"type": "text-set", "value": ["example:wired-headphones", "example:device-a"]}, "provider": "fixture:devices", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": null},
+    {"key": {"name": "application.running"}, "status": "known", "value": {"type": "text-set", "value": ["example:call-app"]}, "provider": "fixture:applications", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": null}
+  ]},
+  "nowMs": 2000,
+  "context": {"configRevision": 1, "storeRevision": 0, "inventoryRevision": 1, "manualRevision": 2},
+  "manualOverride": false
+}

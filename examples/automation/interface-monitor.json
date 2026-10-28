@@ -1,0 +1,28 @@
+{
+  "graph": {
+    "schemaVersion": 1, "id": "interface-monitor", "name": "Suppress only software microphone loopback", "revision": 1, "root": "hardware-monitor?",
+    "nodes": [
+      {"id": "hardware-monitor?", "kind": "decision", "condition": {"kind": "all", "conditions": [
+        {"kind": "fact", "key": {"name": "device.connected"}, "predicate": {"op": "count", "min": 1, "max": 1}},
+        {"kind": "fact", "key": {"name": "device.connected"}, "predicate": {"op": "contains", "value": "example:usb-interface"}},
+        {"kind": "fact", "key": {"name": "device.kind", "subject": "example:usb-interface"}, "predicate": {"op": "eq", "value": {"type": "text", "value": "audio-interface"}}},
+        {"kind": "fact", "key": {"name": "device.hardware-monitor-declared", "subject": "example:usb-interface"}, "predicate": {"op": "eq", "value": {"type": "bool", "value": true}}}
+      ]}, "onTrue": "suppress", "onFalse": "hold", "onUnknown": "hold"},
+      {"id": "suppress", "kind": "terminal", "action": {"kind": "select", "overrides": [{"scope": "send", "source": "mic", "mix": "monitor", "mute": true}]}},
+      {"id": "hold", "kind": "terminal", "action": {"kind": "no-change"}}
+    ]
+  },
+  "catalog": [
+    {"name": "device.connected", "valueType": "text-set", "scope": "global", "maxAgeMs": 5000, "evidencePolicy": "any"},
+    {"name": "device.kind", "valueType": "text", "scope": "entity", "maxAgeMs": 5000, "evidencePolicy": "any"},
+    {"name": "device.hardware-monitor-declared", "valueType": "bool", "scope": "entity", "maxAgeMs": 5000, "evidencePolicy": "user-declaration"}
+  ],
+  "snapshot": {"schemaVersion": 1, "revision": 8, "epoch": "fixture-boot-A", "facts": [
+    {"key": {"name": "device.connected"}, "status": "known", "value": {"type": "text-set", "value": ["example:usb-interface"]}, "provider": "fixture:devices", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": null},
+    {"key": {"name": "device.kind", "subject": "example:usb-interface"}, "status": "known", "value": {"type": "text", "value": "audio-interface"}, "provider": "fixture:devices", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": null},
+    {"key": {"name": "device.hardware-monitor-declared", "subject": "example:usb-interface"}, "status": "known", "value": {"type": "bool", "value": true}, "provider": "fixture:user-declaration", "evidence": "user-declared", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": "Literal example declaration; never inferred from connected USB"}
+  ]},
+  "nowMs": 2000,
+  "context": {"configRevision": 1, "storeRevision": 0, "inventoryRevision": 1, "manualRevision": 2},
+  "manualOverride": false
+}
