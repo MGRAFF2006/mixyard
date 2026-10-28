@@ -9,6 +9,7 @@ import DspArray from './DspArray.vue'
 import ChannelOperations from './ChannelOperations.vue'
 import ChannelMatrix from './ChannelMatrix.vue'
 import DelayTiming from './DelayTiming.vue'
+import DelayMeter from './DelayMeter.vue'
 import { addChannel as addLane, removeChannel as removeLane, renameChannel as renameLane } from './channels.ts'
 
 const props = defineProps<{ api: Pick<Api, 'post'>; ready: boolean }>()
@@ -59,6 +60,7 @@ function renameChannel(id: string, event: Event) {
   finally { renameDrafts.delete(id) }
 }
 function appendOperation(item: EffectConfig) { d.config.effects.push(item); changed(); notice.value = `Added ${item.name} at stage ${d.config.effects.length}. Existing stages kept.` }
+function appendAlignment(items: EffectConfig[]) { d.config.effects.push(...items); changed(); notice.value = 'Measured alignment delays appended. Measure signal delay again to verify.' }
 function selectMode(item: EffectConfig, event: Event) {
   if ((event.target as HTMLSelectElement).value === 'all') delete item.channels
   else item.channels = [d.config.format.channels[0]!]
@@ -196,6 +198,7 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
         <button class="primary dsp-render" type="button" :disabled="busy || !ready" @click="render">{{ busy ? 'Working…' : 'Render and measure' }}</button>
       </fieldset>
     </form>
+    <DelayMeter :api="api" :ready="ready" :config="d.config" :bypassed="d.bypassed" @append="appendAlignment" @export="download($event, 'mixyard-delay.json')" />
     <div class="dsp-results" aria-live="polite" aria-atomic="false">
       <p v-if="!result" class="empty">Speed unknown. No current preview or timing. Render and measure explicitly after editing.</p>
       <template v-else>

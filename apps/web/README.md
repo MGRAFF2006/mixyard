@@ -47,7 +47,8 @@ persistence, validation and inspection.
 **Processing** is a separate in-browser Float64 chain draft, never part of routing
 profiles. Export chain to keep it; reload discards it. Set any positive u32 sample
 rate and explicit ordered unique channel IDs, then add, enable, reorder or remove
-gain/polarity, eight biquad variants, delay, compressor, expander and direct FIR.
+gain/polarity, eight biquad variants, delay, compressor, expander, direct FIR and
+explicit channel matrices. Every non-matrix effect can target selected channel IDs.
 FIR coefficients are kept in full, without normalization or quality reduction.
 Starter presets explicitly replace the chain. Snapshot/reset/bypass transitions
 can click; no automation or smoothing is provided.
@@ -73,6 +74,24 @@ not certify native realtime operation. Unmeasured timings stay unknown. Endpoint
 resource limits may reject large previews; full offline rendering remains
 available through the DSP engine/example without removing slow effects.
 
+Beginner shortcuts append level/polarity, explicit-pair balance, swap/copy and
+independent delay stages. Everyday controls expose per-effect channel selection
+and all existing parameters; expert detail exposes matrix contributions and raw
+JSON. Switching views preserves the complete chain, including custom matrices.
+Renames update same-identity references; referenced removal and incomplete matrix
+format edits are blocked. Millisecond delays require exact whole samples or an
+explicit quantization choice; fractional delay is not implemented.
+
+**Measure signal delay** runs an actual isolated impulse-response probe through
+`/api/dsp/delay`. It shows per-output onset and peak positions, threshold/amplitude
+and window context. No response is unknown, not zero delay. Explicitly append a
+common-reference alignment plan, then measure again; no native output changes.
+Incomplete windows cannot authorize strongest-peak alignment. Existing settings
+are kept, stale work is discarded, and errors/offline states keep the chain.
+Export the measurement with its exact request for reproducibility. See
+[the full delay contract](../../docs/latency.md). Network/device timing and live
+clock synchronization remain separate, unqualified boundaries.
+
 ## Verification
 
 ```sh
@@ -89,7 +108,7 @@ contract API: example opt-in, send/output independence, profile save/rename/load
 undo, refresh/conflict recovery, import errors and narrow-screen keyboard use.
 The DSP Node tests cover channel/effect order, complete raw-field and Float64
 preservation, authoritative import failures, response validation and stale result
-suppression. Five mocked browser flows exercise all editor controls, exact request
+suppression. Mocked browser flows exercise all editor controls, exact request
 payloads, compile-only imports, slow/unknown timing, invalid input, offline recovery
 and narrow keyboard operation. Their fixture output/timing is not DSP evidence.
 These tests do not prove Rust integration or disk persistence; the parent web

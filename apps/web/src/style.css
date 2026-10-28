@@ -178,3 +178,10 @@ footer { display: flex; justify-content: space-between; color: #50657a; font-siz
   .matrix-routes { grid-template-columns: minmax(0, 1fr); }
   .dsp-view > .secondary { flex-basis: 100%; }
 }
+
+.delay-meter { margin-top: 28px; padding-top: 22px; border-top: 2px solid var(--teal); display: grid; gap: 16px; min-width: 0; }
+.delay-meter > form { display: grid; gap: 16px; }
+.delay-meter > form > .dsp-field { max-width: 600px; }
+.delay-meter > form > button { justify-self: start; }
+.delay-meter .dsp-table-scroll { margin: 0; }
+.delay-meter .message { margin-bottom: 0; }

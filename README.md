@@ -31,7 +31,11 @@ See [web console workflows and verification](apps/web/README.md) and the
 
 The **Processing** workspace edits Float64 DSP chains and runs explicit offline
 previews with real meters and measured block-budget warnings. Slow effects remain
-available. See [the workbench](docs/dsp-web.md) and [DSP algorithms](docs/dsp.md).
+available. Channel shortcuts, per-effect lane selection and full matrices share
+one editable chain. An actual impulse-response probe measures onset/peak delay
+and proposes explicit per-channel compensation; re-measure after applying it.
+See [the workbench](docs/dsp-web.md), [DSP algorithms](docs/dsp.md) and
+[delay metering and alignment](docs/latency.md).
 Effects are not attached to live native audio yet.
 
 Run from the repository root. These checks do not open audio devices or change routes/defaults/services. Rust and Python 3.10+ are sufficient for the headless checks; the root package has no GUI dependencies.
