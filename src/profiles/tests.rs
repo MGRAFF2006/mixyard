@@ -255,14 +255,68 @@ fn concurrent_writers_and_stale_revisions_never_silently_overwrite() {
         .collect();
     barrier.wait();
     let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
-    assert!(results
-        .iter()
-        .filter_map(|r| r.as_ref().err())
-        .all(|e| matches!(e.code, "store-busy" | "store-conflict")));
+    assert_eq!(
+        results.iter().filter(|r| r.is_ok()).count(),
+        1,
+        "{results:?}"
+    );
+    assert!(
+        results
+            .iter()
+            .filter_map(|r| r.as_ref().err())
+            .all(|e| matches!(e.code, "store-busy" | "store-conflict")),
+        "{results:?}"
+    );
     let snapshot = store.read().unwrap();
     assert_eq!(snapshot.store_revision, 2);
     assert_eq!(snapshot.profiles.len(), 2);
+}
+
+#[test]
+fn readers_observe_complete_snapshots_while_writer_replaces_store() {
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    store.edit(0, save("revision-1", config())).unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            let barrier = barrier.clone();
+            let store = &store;
+            scope.spawn(move || {
+                barrier.wait();
+                for read in 0..1024 {
+                    let snapshot = if read % 2 == 0 {
+                        store.read()
+                    } else {
+                        store.read_bounded(1024 * 1024)
+                    }
+                    .unwrap_or_else(|error| panic!("concurrent read {read}: {error:?}"));
+                    assert!((1..=33).contains(&snapshot.store_revision), "{snapshot:?}");
+                    assert_eq!(snapshot.profiles.len(), 1, "{snapshot:?}");
+                    assert_eq!(
+                        snapshot.profiles[0].name,
+                        format!("revision-{}", snapshot.store_revision),
+                        "{snapshot:?}"
+                    );
+                }
+            });
+        }
+        barrier.wait();
+        for revision in 1..33 {
+            store
+                .edit(
+                    revision,
+                    Edit::Rename {
+                        id: "profile-1".into(),
+                        name: format!("revision-{}", revision + 1),
+                    },
+                )
+                .unwrap_or_else(|error| panic!("concurrent write {revision}: {error:?}"));
+        }
+    });
+    assert_eq!(store.read().unwrap().store_revision, 33);
+    assert!(!store.directory.join(LOCK).exists());
+    assert!(!store.directory.join(PENDING).exists());
 }
 
 #[test]

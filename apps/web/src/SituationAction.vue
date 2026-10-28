@@ -1,10 +1,10 @@
 <script setup lang="ts">
+import { useSituationRows } from './situation-rows.ts'
 import { vSituationNumber } from './situation-number.ts'
-import { ref, useId } from 'vue'
+import { useId } from 'vue'
 import type { Action, Override } from './situations.ts'
 import type { Config, Profile } from './model.ts'
 const listId = useId()
-const rowRevision = ref(0)
 const props = defineProps<{
   action: Action
   profiles: Profile[]
@@ -18,6 +18,7 @@ const emit = defineEmits<{
   invalid: [
   ]
 }>()
+const rows = useSituationRows(() => props.action.kind === 'select' ? props.action.overrides.length : 0)
 function kind(event: Event) {
   const kind = (event.target as HTMLSelectElement).value
   const extra: Record<string, unknown> = { ...props.action }
@@ -41,7 +42,7 @@ function change(index: number, patch: Partial<Override>) {
     emit('update', { ...props.action, overrides: props.action.overrides.map((o, i) => i === index ? { ...o, ...patch } : o) })
 }
 function remove(index: number) {
-  rowRevision.value++
+  rows.remove(index)
   if (props.action.kind === 'select')
     emit('update', { ...props.action, overrides: props.action.overrides.filter((_, i) => i !== index) })
 }
@@ -93,7 +94,7 @@ function gain(index: number, event: Event) {
       <label class="situation-field">Profile ID (optional with reductions)<input :value="action.profileId ?? ''" :list="`${listId}-profiles`" @input="profile" /></label>
       <datalist :id="`${listId}-profiles`"><option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option></datalist>
       <p class="situation-hint">Saved IDs: {{ profiles.map(p => `${p.name} (${p.id})`).join('; ') || 'No saved profiles available. Supply an exact opaque ID, never a display name.' }}</p>
-      <fieldset v-for="(o, i) in action.overrides" :key="`${rowRevision}-${i}`" class="situation-reduction"><legend>Reduction {{ i + 1 }}</legend>
+      <fieldset v-for="(o, i) in action.overrides" :key="rows.keys.value[i]" class="situation-reduction"><legend>Reduction {{ i + 1 }}</legend>
         <div class="situation-fields">
           <label class="situation-field">Reduction scope<select aria-label="Reduction scope" :value="o.scope" @change="scope(i, $event)"><option value="send">One source-to-mix send</option><option value="output">One output</option><option value="mix">One mix</option></select></label>
           <label v-if="o.scope === 'send'" class="situation-field">Exact source ID<input :value="o.source" :list="`${listId}-sources`" @input="change(i, { source: ($event.target as HTMLInputElement).value })" /></label>

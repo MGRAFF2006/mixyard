@@ -122,7 +122,13 @@ pub struct Reply {
 }
 impl Reply {
     pub fn json(&self) -> Value {
-        serde_json::from_slice(&self.body).unwrap()
+        serde_json::from_slice(&self.body).unwrap_or_else(|error| {
+            panic!(
+                "JSON response: {error}\n{}\n{}",
+                self.headers,
+                String::from_utf8_lossy(&self.body)
+            )
+        })
     }
 }
 impl Service {
