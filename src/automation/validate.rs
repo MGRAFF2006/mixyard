@@ -114,20 +114,20 @@ pub(crate) fn admit_action(a: &Action) -> Result<(), Error> {
 }
 // Full structural admission precedes duplicate scans, catalog lookup and graph traversal.
 // A 50,000-item set is rejected by len(), even when supplied directly by a Rust caller.
-fn admit(request: &Request) -> Result<(), Error> {
-    length(request.graph.nodes.len(), MAX_NODES)?;
-    length(request.catalog.len(), MAX_FACTS)?;
-    length(request.snapshot.facts.len(), MAX_FACTS)?;
-    text(&request.graph.id)?;
-    text(&request.graph.name)?;
-    text(&request.graph.root)?;
-    text(&request.snapshot.epoch)?;
+fn admit(graph: &Graph, catalog: &[FactDefinition], snapshot: &Snapshot) -> Result<(), Error> {
+    length(graph.nodes.len(), MAX_NODES)?;
+    length(catalog.len(), MAX_FACTS)?;
+    length(snapshot.facts.len(), MAX_FACTS)?;
+    text(&graph.id)?;
+    text(&graph.name)?;
+    text(&graph.root)?;
+    text(&snapshot.epoch)?;
     let mut budget = Budget(0);
-    for d in &request.catalog {
+    for d in catalog {
         budget.spend(1)?;
         text(&d.name)?;
     }
-    for f in &request.snapshot.facts {
+    for f in &snapshot.facts {
         budget.spend(1)?;
         admit_key(&f.key)?;
         text(&f.provider)?;
@@ -138,7 +138,7 @@ fn admit(request: &Request) -> Result<(), Error> {
             admit_value(value, &mut budget)?;
         }
     }
-    for n in &request.graph.nodes {
+    for n in &graph.nodes {
         budget.spend(1)?;
         text(n.id())?;
         match n {
@@ -342,22 +342,41 @@ pub(crate) fn action(action: &Action) -> Result<(), Error> {
 
 /// Validate the entire graph, including unreachable nodes, before inspecting a condition.
 pub fn validate(request: &Request) -> Result<(), Error> {
-    admit(request)?;
-    if request.graph.schema_version != 1 || request.snapshot.schema_version != 1 {
+    validate_parts(&request.graph, &request.catalog, &request.snapshot)
+}
+
+/// Borrowed bounded policy validation, without copying an unadmitted graph.
+/// Used by durable settings; no observation is fabricated or evaluated.
+pub fn validate_policy(graph: &Graph, catalog: &[FactDefinition]) -> Result<(), Error> {
+    let snapshot = Snapshot {
+        schema_version: 1,
+        revision: 0,
+        epoch: "policy-validation".into(),
+        facts: vec![],
+    };
+    validate_parts(graph, catalog, &snapshot)
+}
+fn validate_parts(
+    graph: &Graph,
+    catalog: &[FactDefinition],
+    snapshot: &Snapshot,
+) -> Result<(), Error> {
+    admit(graph, catalog, snapshot)?;
+    if graph.schema_version != 1 || snapshot.schema_version != 1 {
         return Err(Error::new(
             "unsupported-version",
             "expected graph and observation schemaVersion 1",
         ));
     }
     let mut budget = Budget(0);
-    text(&request.graph.id)?;
-    text(&request.graph.name)?;
-    text(&request.graph.root)?;
-    text(&request.snapshot.epoch)?;
-    if request.graph.nodes.is_empty()
-        || request.graph.nodes.len() > MAX_NODES
-        || request.catalog.len() > MAX_FACTS
-        || request.snapshot.facts.len() > MAX_FACTS
+    text(&graph.id)?;
+    text(&graph.name)?;
+    text(&graph.root)?;
+    text(&snapshot.epoch)?;
+    if graph.nodes.is_empty()
+        || graph.nodes.len() > MAX_NODES
+        || catalog.len() > MAX_FACTS
+        || snapshot.facts.len() > MAX_FACTS
     {
         return Err(Error::new(
             "resource-limit",
@@ -365,11 +384,11 @@ pub fn validate(request: &Request) -> Result<(), Error> {
         ));
     }
     let standard = standard_catalog();
-    let mut catalog = BTreeMap::new();
-    for definition in &request.catalog {
+    let mut definitions = BTreeMap::new();
+    for definition in catalog {
         budget.spend(1)?;
         text(&definition.name)?;
-        if catalog
+        if definitions
             .insert(definition.name.as_str(), definition)
             .is_some()
         {
@@ -387,9 +406,9 @@ pub fn validate(request: &Request) -> Result<(), Error> {
         }
     }
     let mut facts = BTreeSet::new();
-    for fact in &request.snapshot.facts {
+    for fact in &snapshot.facts {
         budget.spend(1)?;
-        let definition = key(&fact.key, &catalog)?;
+        let definition = key(&fact.key, &definitions)?;
         if !facts.insert(&fact.key) {
             return Err(invalid(
                 "duplicate observation identity; consolidate ambiguity explicitly",
@@ -412,14 +431,14 @@ pub fn validate(request: &Request) -> Result<(), Error> {
         }
     }
     let mut nodes = BTreeMap::new();
-    for (index, node) in request.graph.nodes.iter().enumerate() {
+    for (index, node) in graph.nodes.iter().enumerate() {
         budget.spend(1)?;
         text(node.id())?;
         if nodes.insert(node.id(), index).is_some() {
             return Err(invalid("duplicate node identity"));
         }
         match node {
-            Node::Decision { condition: c, .. } => condition(c, 1, &catalog, &mut budget)?,
+            Node::Decision { condition: c, .. } => condition(c, 1, &definitions, &mut budget)?,
             Node::Terminal { action: a, .. } => {
                 action(a)?;
                 if let Action::Select { overrides, .. } = a {
@@ -428,12 +447,12 @@ pub fn validate(request: &Request) -> Result<(), Error> {
             }
         }
     }
-    if !nodes.contains_key(request.graph.root.as_str()) {
+    if !nodes.contains_key(graph.root.as_str()) {
         return Err(invalid("missing explicit root node"));
     }
     let mut edges = vec![Vec::new(); nodes.len()];
     let mut incoming = vec![0; nodes.len()];
-    for (index, node) in request.graph.nodes.iter().enumerate() {
+    for (index, node) in graph.nodes.iter().enumerate() {
         if let Node::Decision {
             on_true,
             on_false,
