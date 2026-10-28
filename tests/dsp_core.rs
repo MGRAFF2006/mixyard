@@ -1,3 +1,5 @@
+#[path = "dsp/channels.rs"]
+mod channels;
 #[path = "dsp/support.rs"]
 mod support;
 use mixyard::dsp::*;

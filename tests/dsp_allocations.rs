@@ -7,6 +7,14 @@ use std::cell::Cell;
 use support::*;
 
 struct Tracked;
+thread_local! { static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) }; }
+fn record_allocation() {
+    let _ = ALLOCATIONS.try_with(|n| {
+        if let Some(count) = n.get() {
+            n.set(Some(count + 1));
+        }
+    });
+}
 thread_local! { static OPERATIONS: Cell<Option<usize>> = const { Cell::new(None) }; }
 fn record() {
     let _ = OPERATIONS.try_with(|n| {
@@ -18,14 +26,17 @@ fn record() {
 unsafe impl GlobalAlloc for Tracked {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         record();
+        record_allocation();
         System.alloc(layout)
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         record();
+        record_allocation();
         System.alloc_zeroed(layout)
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         record();
+        record_allocation();
         System.realloc(ptr, layout, size)
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -60,7 +71,46 @@ fn actual_effects_errors_metering_resets_and_bypass_have_zero_heap_operations() 
             coefficients: vec![1.0, 0.5, 0.25, -0.1],
         },
     ];
-    let mut c = chain(effects, 8, 96000, 64);
+    let mut cfg = config(effects, 8, 96000);
+    for e in &mut cfg.effects {
+        e.channels = Some(vec![
+            "opaque-6".into(),
+            "opaque-2".into(),
+            "opaque-0".into(),
+        ]);
+    }
+    cfg.effects.push(EffectConfig {
+        name: "matrix".into(),
+        enabled: true,
+        channels: None,
+        effect: Effect::ChannelMatrix {
+            routes: (0..8)
+                .map(|i| MatrixRoute {
+                    output: format!("opaque-{i}"),
+                    inputs: vec![
+                        MatrixInput {
+                            channel: format!("opaque-{}", (i + 1) % 8),
+                            gain: 0.5,
+                        },
+                        MatrixInput {
+                            channel: format!("opaque-{i}"),
+                            gain: -0.25,
+                        },
+                    ],
+                })
+                .collect(),
+        },
+    });
+    let mut c = Chain::compile(cfg, limits(64)).unwrap();
+    let mut matrix_error = chain(
+        vec![matrix(&[
+            ("opaque-0", &[("opaque-0", 2.0), ("opaque-1", -2.0)]),
+            ("opaque-1", &[]),
+        ])],
+        2,
+        48000,
+        2,
+    );
     let mut overflow = chain(
         vec![Effect::Fir {
             coefficients: vec![2.0, 0.5],
@@ -94,6 +144,16 @@ fn actual_effects_errors_metering_resets_and_bypass_have_zero_heap_operations() 
             overflow.process(2, &[1.0, f64::MAX]),
             Err(ProcessError::NonFiniteResult { effect: 0 })
         );
+        assert_eq!(
+            matrix_error.process(2, &[0.25, 0.5, f64::MAX, f64::MAX]),
+            Err(ProcessError::NonFiniteResult { effect: 0 })
+        );
+        assert!(matrix_error.output().is_empty());
+        matrix_error.reset();
+        matrix_error.set_bypassed(true);
+        matrix_error.process(1, &[-0.0, f64::from_bits(1)]).unwrap();
+        matrix_error.set_bypassed(false);
+        matrix_error.process(2, &[0.0; 4]).unwrap();
         c.set_bypassed(true);
         c.process(64, &input).unwrap();
         c.set_bypassed(false);
@@ -106,4 +166,58 @@ fn actual_effects_errors_metering_resets_and_bypass_have_zero_heap_operations() 
         operations, 0,
         "allocation/reallocation/deallocation during actual processing"
     );
+}
+
+#[test]
+fn matrix_and_selector_budgets_reject_before_any_compile_allocation() {
+    for resource in ["memoryBytes", "workUnitsPerBlock"] {
+        let mut cfg = config(
+            vec![
+                Effect::Delay {
+                    frames: 10,
+                    wet: 1.0,
+                    dry: 0.0,
+                    feedback: 0.5,
+                },
+                matrix(&[
+                    ("opaque-0", &[("opaque-1", 1.0)]),
+                    ("opaque-1", &[("opaque-0", -1.0)]),
+                ]),
+            ],
+            2,
+            48000,
+        );
+        cfg.effects[0].channels = Some(vec!["opaque-1".into()]);
+        let admission = Chain::compile(cfg.clone(), limits(8)).unwrap().admission();
+        let mut l = limits(8);
+        if resource == "memoryBytes" {
+            l.max_memory_bytes = admission.memory_bytes - 1;
+        } else {
+            l.max_work_units_per_block = admission.work_units_per_block - 1;
+        }
+        ALLOCATIONS.with(|n| n.set(Some(0)));
+        let result = Chain::compile(cfg, l);
+        let allocations = ALLOCATIONS.with(|n| n.replace(None).unwrap());
+        assert!(matches!(result,Err(CompileError::Budget{resource:r,..}) if r==resource));
+        assert_eq!(
+            allocations, 0,
+            "budget rejection allocated prepared storage"
+        );
+    }
+    let mut cfg = config(
+        vec![Effect::Delay {
+            frames: usize::MAX,
+            wet: 1.0,
+            dry: 0.0,
+            feedback: 0.0,
+        }],
+        2,
+        48000,
+    );
+    cfg.effects[0].channels = Some(vec!["opaque-1".into()]);
+    ALLOCATIONS.with(|n| n.set(Some(0)));
+    let result = Chain::compile(cfg, limits(1));
+    let allocations = ALLOCATIONS.with(|n| n.replace(None).unwrap());
+    assert!(matches!(result, Err(CompileError::ResourceOverflow)));
+    assert_eq!(allocations, 0);
 }

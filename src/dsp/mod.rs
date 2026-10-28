@@ -29,6 +29,9 @@ pub struct ChainConfig {
 pub struct EffectConfig {
     pub name: String,
     pub enabled: bool,
+    /// None selects every format lane. Explicit IDs are nonempty and unique.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<Vec<String>>,
     pub effect: Effect,
 }
 
@@ -66,6 +69,24 @@ pub enum Effect {
     Fir {
         coefficients: Vec<f64>,
     },
+    /// Explicit mapping within the existing format; never changes its identities.
+    ChannelMatrix {
+        routes: Vec<MatrixRoute>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MatrixRoute {
+    pub output: String,
+    pub inputs: Vec<MatrixInput>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MatrixInput {
+    pub channel: String,
+    pub gain: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,7 +179,8 @@ pub struct Admission {
     pub work_units_per_block: usize,
     /// No built-in buffers a block or uses look-ahead. Filter group delay is not 0.
     pub algorithmic_latency_frames: usize,
-    /// Sum of explicit delay taps. Dry paths may also pass immediately.
+    /// Conservative sum of explicit taps, including delays on independent lanes.
+    /// Dry paths may also pass immediately; this is not per-channel group delay.
     pub explicit_delay_frames: usize,
     pub tail: Tail,
 }
@@ -179,8 +201,21 @@ pub struct BlockReport {
     pub bypassed: bool,
 }
 
+struct Prepared {
+    lanes: Box<[usize]>,
+    state: State,
+}
+struct CompiledRoute {
+    output: usize,
+    inputs: Box<[(usize, f64)]>,
+}
+
 enum State {
     Stateless,
+    Matrix {
+        routes: Box<[CompiledRoute]>,
+        scratch: Box<[f64]>,
+    },
     Biquad {
         coefficients: [f64; 5],
         history: Box<[f64]>,
@@ -203,6 +238,7 @@ impl State {
     fn reset(&mut self) {
         match self {
             Self::Stateless => {}
+            Self::Matrix { scratch, .. } => scratch.fill(0.0),
             Self::Biquad { history, .. } => history.fill(0.0),
             Self::Delay { history, position } | Self::Fir { history, position } => {
                 history.fill(0.0);
@@ -215,7 +251,7 @@ impl State {
 
 pub struct Chain {
     config: ChainConfig,
-    states: Box<[State]>,
+    states: Box<[Prepared]>,
     output: Box<[f64]>,
     meters: Box<[Meter]>,
     max_block_frames: usize,
@@ -287,14 +323,45 @@ impl Chain {
             memory,
             mul(config.effects.capacity(), size_of::<EffectConfig>())?,
         )?;
-        memory = add(memory, mul(config.effects.len(), size_of::<State>())?)?;
+        memory = add(memory, mul(config.effects.len(), size_of::<Prepared>())?)?;
         // Baseline accounts for buffer clearing, input checks, copy and metering.
-        let mut per_sample_work = 16;
+        let mut per_frame_work = mul(channels, 16)?;
         let mut reset_samples = 0;
         let mut explicit_delay_frames = 0;
         let mut tail = Tail::Finite { frames: 0 };
         for (index, effect) in config.effects.iter().enumerate() {
             memory = add(memory, effect.name.capacity())?;
+            validate_channels(effect, &config.format.channels, index)?;
+            let selected = effect.channels.as_ref().map_or(channels, Vec::len);
+            if let Some(ids) = &effect.channels {
+                memory = add(memory, mul(ids.capacity(), size_of::<String>())?)?;
+                for id in ids {
+                    memory = add(memory, id.capacity())?;
+                }
+            }
+            if let Effect::ChannelMatrix { routes } = &effect.effect {
+                memory = add(memory, mul(routes.capacity(), size_of::<MatrixRoute>())?)?;
+                for route in routes {
+                    memory = add(memory, route.output.capacity())?;
+                    memory = add(
+                        memory,
+                        mul(route.inputs.capacity(), size_of::<MatrixInput>())?,
+                    )?;
+                    for input in &route.inputs {
+                        memory = add(memory, input.channel.capacity())?;
+                    }
+                }
+                if effect.enabled {
+                    memory = add(memory, mul(routes.len(), size_of::<CompiledRoute>())?)?;
+                    memory = add(memory, mul(channels, size_of::<f64>())?)?;
+                    reset_samples = add(reset_samples, channels)?;
+                    for route in routes {
+                        memory = add(memory, mul(route.inputs.len(), size_of::<(usize, f64)>())?)?;
+                    }
+                }
+            } else if effect.enabled {
+                memory = add(memory, mul(selected, size_of::<usize>())?)?;
+            }
             let (state_samples, work, effect_tail) =
                 validate(&effect.effect, index, config.format.sample_rate_hz)?;
             if let Effect::Fir { coefficients } = &effect.effect {
@@ -303,10 +370,15 @@ impl Chain {
             if effect.enabled {
                 memory = add(
                     memory,
-                    mul(mul(state_samples, channels)?, size_of::<f64>())?,
+                    mul(mul(state_samples, selected)?, size_of::<f64>())?,
                 )?;
-                per_sample_work = add(per_sample_work, work)?;
-                reset_samples = add(reset_samples, mul(state_samples, channels)?)?;
+                let effect_work = if matches!(effect.effect, Effect::ChannelMatrix { .. }) {
+                    add(channels, work)?
+                } else {
+                    mul(selected, work)?
+                };
+                per_frame_work = add(per_frame_work, effect_work)?;
+                reset_samples = add(reset_samples, mul(state_samples, selected)?)?;
                 if let Effect::Delay { frames, .. } = effect.effect {
                     explicit_delay_frames = add(explicit_delay_frames, frames)?;
                 }
@@ -319,7 +391,7 @@ impl Chain {
             }
         }
         let work = add(
-            add(mul(samples, per_sample_work)?, reset_samples)?,
+            add(mul(limits.max_block_frames, per_frame_work)?, reset_samples)?,
             config.effects.len(),
         )?;
         budget("memoryBytes", memory, limits.max_memory_bytes)?;
@@ -329,11 +401,69 @@ impl Chain {
             .try_reserve_exact(config.effects.len())
             .map_err(|_| CompileError::Allocation)?;
         for e in &config.effects {
+            let mut lanes = Vec::new();
+            if e.enabled && !matches!(e.effect, Effect::ChannelMatrix { .. }) {
+                let count = e.channels.as_ref().map_or(channels, Vec::len);
+                lanes
+                    .try_reserve_exact(count)
+                    .map_err(|_| CompileError::Allocation)?;
+                if let Some(ids) = &e.channels {
+                    for id in ids {
+                        lanes.push(
+                            config
+                                .format
+                                .channels
+                                .iter()
+                                .position(|c| c == id)
+                                .expect("validated channel"),
+                        );
+                    }
+                } else {
+                    lanes.extend(0..channels);
+                }
+            }
+            let selected = lanes.len();
             let state = if !e.enabled {
                 State::Stateless
             } else {
                 match &e.effect {
                     Effect::Gain { .. } => State::Stateless,
+                    Effect::ChannelMatrix { routes } => {
+                        let mut compiled = Vec::new();
+                        compiled
+                            .try_reserve_exact(routes.len())
+                            .map_err(|_| CompileError::Allocation)?;
+                        for route in routes {
+                            let mut inputs = Vec::new();
+                            inputs
+                                .try_reserve_exact(route.inputs.len())
+                                .map_err(|_| CompileError::Allocation)?;
+                            for input in &route.inputs {
+                                inputs.push((
+                                    config
+                                        .format
+                                        .channels
+                                        .iter()
+                                        .position(|c| c == &input.channel)
+                                        .expect("validated input"),
+                                    input.gain,
+                                ));
+                            }
+                            compiled.push(CompiledRoute {
+                                output: config
+                                    .format
+                                    .channels
+                                    .iter()
+                                    .position(|c| c == &route.output)
+                                    .expect("validated output"),
+                                inputs: inputs.into_boxed_slice(),
+                            });
+                        }
+                        State::Matrix {
+                            routes: compiled.into_boxed_slice(),
+                            scratch: storage(channels, 0.0)?,
+                        }
+                    }
                     Effect::Biquad {
                         filter,
                         frequency_hz,
@@ -348,19 +478,19 @@ impl Chain {
                             config.format.sample_rate_hz,
                         )
                         .expect("validated coefficients"),
-                        history: storage(mul(channels, 4)?, 0.0)?,
+                        history: storage(mul(selected, 4)?, 0.0)?,
                     },
                     Effect::Delay { frames, .. } => State::Delay {
-                        history: storage(mul(channels, *frames)?, 0.0)?,
+                        history: storage(mul(selected, *frames)?, 0.0)?,
                         position: 0,
                     },
                     Effect::Fir { coefficients } => State::Fir {
-                        history: storage(mul(channels, coefficients.len())?, 0.0)?,
+                        history: storage(mul(selected, coefficients.len())?, 0.0)?,
                         position: 0,
                     },
                     Effect::Compressor { parameters } | Effect::Expander { parameters } => {
                         State::Dynamics {
-                            envelope: storage(channels, 0.0)?,
+                            envelope: storage(selected, 0.0)?,
                             attack: time_coefficient(
                                 parameters.attack_ms,
                                 config.format.sample_rate_hz,
@@ -373,7 +503,10 @@ impl Chain {
                     }
                 }
             };
-            states.push(state);
+            states.push(Prepared {
+                lanes: lanes.into_boxed_slice(),
+                state,
+            });
         }
         Ok(Self {
             config,
@@ -414,7 +547,7 @@ impl Chain {
     /// Privacy/loss reset: discard all tails and previously published samples.
     pub fn reset(&mut self) {
         for s in &mut self.states {
-            s.reset();
+            s.state.reset();
         }
         self.output.fill(0.0);
         self.meters.fill(Meter::default());
@@ -466,7 +599,13 @@ impl Chain {
                 .enumerate()
             {
                 if effect.enabled
-                    && !run(&effect.effect, state, channels, &mut self.output[..samples])
+                    && !run(
+                        &effect.effect,
+                        &mut state.state,
+                        &state.lanes,
+                        channels,
+                        &mut self.output[..samples],
+                    )
                 {
                     return Err(ProcessError::NonFiniteResult { effect: index });
                 }
@@ -503,6 +642,48 @@ impl Chain {
     }
 }
 
+fn validate_channels(
+    effect: &EffectConfig,
+    format: &[String],
+    index: usize,
+) -> Result<(), CompileError> {
+    if let Effect::ChannelMatrix { routes } = &effect.effect {
+        if effect.channels.is_some() {
+            return Err(parameter(index, "channels"));
+        }
+        if routes.len() != format.len() {
+            return Err(parameter(index, "routes"));
+        }
+        for (i, route) in routes.iter().enumerate() {
+            if !format.contains(&route.output)
+                || routes[..i].iter().any(|r| r.output == route.output)
+            {
+                return Err(parameter(index, "routes.output"));
+            }
+            for (j, input) in route.inputs.iter().enumerate() {
+                if !format.contains(&input.channel)
+                    || route.inputs[..j].iter().any(|v| v.channel == input.channel)
+                {
+                    return Err(parameter(index, "routes.inputs.channel"));
+                }
+                if !input.gain.is_finite() {
+                    return Err(parameter(index, "routes.inputs.gain"));
+                }
+            }
+        }
+    } else if let Some(ids) = &effect.channels {
+        if ids.is_empty()
+            || ids
+                .iter()
+                .enumerate()
+                .any(|(i, id)| !format.contains(id) || ids[..i].contains(id))
+        {
+            return Err(parameter(index, "channels"));
+        }
+    }
+    Ok(())
+}
+
 fn validate(
     effect: &Effect,
     index: usize,
@@ -510,6 +691,13 @@ fn validate(
 ) -> Result<(usize, usize, Tail), CompileError> {
     let finite_tail = |frames| Tail::Finite { frames };
     match effect {
+        Effect::ChannelMatrix { routes } => {
+            let mut work = routes.len();
+            for route in routes {
+                work = add(work, mul(route.inputs.len(), 3)?)?;
+            }
+            Ok((0, add(work, routes.len())?, finite_tail(0)))
+        }
         Effect::Gain { gain, .. } => {
             if !gain.is_finite() || *gain < 0.0 {
                 return Err(parameter(index, "gain"));
@@ -645,8 +833,43 @@ fn apply_db_gain(sample: f64, gain_db: f64) -> f64 {
         .copysign(sample)
 }
 
-fn run(effect: &Effect, state: &mut State, channels: usize, block: &mut [f64]) -> bool {
+fn run(
+    effect: &Effect,
+    state: &mut State,
+    lanes: &[usize],
+    channels: usize,
+    block: &mut [f64],
+) -> bool {
     match (effect, state) {
+        (Effect::ChannelMatrix { .. }, State::Matrix { routes, scratch }) => {
+            for frame in block.chunks_exact_mut(channels) {
+                scratch.copy_from_slice(frame);
+                for route in routes.iter() {
+                    let y = if let [(input, gain)] = &*route.inputs {
+                        if *gain == 1.0 {
+                            scratch[*input]
+                        } else {
+                            scratch[*input] * *gain
+                        }
+                    } else {
+                        let mut sum = 0.0;
+                        for (input, gain) in &route.inputs {
+                            let term = scratch[*input] * *gain;
+                            sum += term;
+                            if !term.is_finite() || !sum.is_finite() {
+                                return false;
+                            }
+                        }
+                        sum
+                    };
+                    if !y.is_finite() {
+                        return false;
+                    }
+                    frame[route.output] = y;
+                }
+            }
+        }
+
         (
             Effect::Gain {
                 gain,
@@ -659,10 +882,12 @@ fn run(effect: &Effect, state: &mut State, channels: usize, block: &mut [f64]) -
                 return true;
             }
             let gain = if *invert_polarity { -*gain } else { *gain };
-            for x in block {
-                *x *= gain;
-                if !x.is_finite() {
-                    return false;
+            for frame in block.chunks_exact_mut(channels) {
+                for &lane in lanes {
+                    frame[lane] *= gain;
+                    if !frame[lane].is_finite() {
+                        return false;
+                    }
                 }
             }
         }
@@ -674,7 +899,8 @@ fn run(effect: &Effect, state: &mut State, channels: usize, block: &mut [f64]) -
             },
         ) => {
             for frame in block.chunks_exact_mut(channels) {
-                for (ch, x) in frame.iter_mut().enumerate() {
+                for (ch, &lane) in lanes.iter().enumerate() {
+                    let x = &mut frame[lane];
                     let h = &mut history[ch * 4..ch * 4 + 4];
                     let y = c[0] * *x + c[1] * h[0] + c[2] * h[1] - c[3] * h[2] - c[4] * h[3];
                     if !y.is_finite() {
@@ -694,30 +920,35 @@ fn run(effect: &Effect, state: &mut State, channels: usize, block: &mut [f64]) -
             },
             State::Delay { history, position },
         ) => {
-            for x in block {
-                let delayed = history[*position];
-                let retained = *x + *feedback * delayed;
-                let y = *dry * *x + *wet * delayed;
-                if !retained.is_finite() || !y.is_finite() {
-                    return false;
-                }
-                history[*position] = retained;
-                *x = y;
-                *position += 1;
-                if *position == history.len() {
-                    *position = 0;
+            for frame in block.chunks_exact_mut(channels) {
+                for &lane in lanes {
+                    let x = &mut frame[lane];
+                    let delayed = history[*position];
+                    let retained = *x + *feedback * delayed;
+                    let y = *dry * *x + *wet * delayed;
+                    if !retained.is_finite() || !y.is_finite() {
+                        return false;
+                    }
+                    history[*position] = retained;
+                    *x = y;
+                    *position += 1;
+                    if *position == history.len() {
+                        *position = 0;
+                    }
                 }
             }
         }
+
         (Effect::Fir { coefficients }, State::Fir { history, position }) => {
             let taps = coefficients.len();
             for frame in block.chunks_exact_mut(channels) {
-                for (ch, x) in frame.iter_mut().enumerate() {
-                    history[*position * channels + ch] = *x;
+                for (ch, &lane) in lanes.iter().enumerate() {
+                    let x = &mut frame[lane];
+                    history[*position * lanes.len() + ch] = *x;
                     let mut y = 0.0;
                     let mut slot = *position;
                     for coefficient in coefficients {
-                        y += *coefficient * history[slot * channels + ch];
+                        y += *coefficient * history[slot * lanes.len() + ch];
                         slot = if slot == 0 { taps - 1 } else { slot - 1 };
                     }
                     if !y.is_finite() {
@@ -741,7 +972,8 @@ fn run(effect: &Effect, state: &mut State, channels: usize, block: &mut [f64]) -
         ) => {
             let compressor = matches!(effect, Effect::Compressor { .. });
             for frame in block.chunks_exact_mut(channels) {
-                for (ch, x) in frame.iter_mut().enumerate() {
+                for (ch, &lane) in lanes.iter().enumerate() {
+                    let x = &mut frame[lane];
                     let magnitude = x.abs();
                     let coefficient = if magnitude > envelope[ch] {
                         *attack

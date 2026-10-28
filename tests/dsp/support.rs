@@ -20,6 +20,7 @@ pub fn config(effects: Vec<Effect>, channels: usize, rate: u32) -> ChainConfig {
             .into_iter()
             .enumerate()
             .map(|(i, effect)| EffectConfig {
+                channels: None,
                 name: format!("effect-{i}"),
                 enabled: true,
                 effect,
@@ -63,4 +64,22 @@ pub fn render(chain: &mut Chain, input: &[f64], block: usize) -> Vec<f64> {
         output.extend_from_slice(chain.output());
     }
     output
+}
+
+pub fn matrix(routes: &[(&str, &[(&str, f64)])]) -> Effect {
+    Effect::ChannelMatrix {
+        routes: routes
+            .iter()
+            .map(|(output, inputs)| MatrixRoute {
+                output: (*output).into(),
+                inputs: inputs
+                    .iter()
+                    .map(|(channel, gain)| MatrixInput {
+                        channel: (*channel).into(),
+                        gain: *gain,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
 }
