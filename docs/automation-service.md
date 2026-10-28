@@ -192,9 +192,10 @@ profile commit rather than a cross-store transaction.
 `evaluate_scoped(request, applicationScope)` preserves mapped membership's
 positive and negative evidence, unknown unmapped membership (including NOT),
 and decisive All/Any results. Global equality/count/presence cannot turn a
-complete **mapped** set into complete global absence. Known nonempty presence,
-known members disproving equality, and known members exceeding a count maximum
-remain decisive. Unsupported, missing, partial, ambiguous and stale facts stay
+complete **mapped** set into complete global absence. Known nonempty presence, known-present unexpected members, mapped known-absent
+expected members, and known members exceeding a count maximum remain decisive.
+Both directions of a known contradiction disprove equality; matching mapped
+sets alone never prove global completeness. Unsupported, missing, partial, ambiguous and stale facts stay
 unknown. The legacy pure evaluator and simulation JSON are unchanged.
 
 ## Verification

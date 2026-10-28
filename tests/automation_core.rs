@@ -961,3 +961,83 @@ fn scoped_live_membership_preserves_decisive_evidence_without_global_absence() {
     assert!(evaluate_scoped(&r, &["same".into(), "same".into()]).is_err());
     assert!(evaluate_scoped(&r, &vec!["x".into(); 33]).is_err());
 }
+
+#[test]
+fn scoped_equality_uses_known_mapped_absence_without_inventing_unmapped_absence() {
+    let scope = vec!["mapped-present".into(), "mapped-absent".into()];
+    for (observed, operand, expected) in [
+        (vec![], vec!["mapped-absent"], Truth::False),
+        (
+            vec!["mapped-present"],
+            vec!["mapped-present", "mapped-absent"],
+            Truth::False,
+        ),
+        (
+            vec!["mapped-present"],
+            vec!["mapped-present", "unmapped"],
+            Truth::Unknown,
+        ),
+        (vec![], vec!["unmapped"], Truth::Unknown),
+        (vec!["mapped-present"], vec![], Truth::False),
+        (vec![], vec![], Truth::Unknown),
+    ] {
+        let mut request = fixture(APPLICATION);
+        request
+            .snapshot
+            .facts
+            .iter_mut()
+            .find(|f| f.key.name == "application.running")
+            .unwrap()
+            .value = Some(Value::TextSet(
+            observed.iter().map(|s| (*s).into()).collect(),
+        ));
+        let opposite = |truth| match truth {
+            Truth::True => Truth::False,
+            Truth::False => Truth::True,
+            Truth::Unknown => Truth::Unknown,
+        };
+        for negate in [false, true] {
+            for not in [false, true] {
+                let value = Value::TextSet(operand.iter().map(|s| (*s).into()).collect());
+                let condition = fact(
+                    "application.running",
+                    if negate {
+                        Predicate::Ne { value }
+                    } else {
+                        Predicate::Eq { value }
+                    },
+                );
+                set_condition(
+                    &mut request,
+                    if not {
+                        Condition::Not {
+                            condition: Box::new(condition),
+                        }
+                    } else {
+                        condition
+                    },
+                );
+                let result = evaluate_scoped(&request, &scope)
+                    .unwrap()
+                    .trace
+                    .into_iter()
+                    .find_map(|trace| match trace {
+                        Trace::Decision { node, result, .. } if node == request.graph.root => {
+                            Some(result)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                let wanted = if negate ^ not {
+                    opposite(expected)
+                } else {
+                    expected
+                };
+                assert_eq!(
+                    result, wanted,
+                    "observed={observed:?}, operand={operand:?}, ne={negate}, not={not}"
+                );
+            }
+        }
+    }
+}
