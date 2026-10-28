@@ -3,12 +3,13 @@
 mod evaluate;
 mod model;
 mod proposal;
+pub mod settings;
 mod validate;
 
 pub use evaluate::evaluate;
 pub use model::*;
 pub use proposal::{preview_proposal, Proposal};
-pub use validate::validate;
+pub use validate::{validate, validate_policy};
 
 /// Fixed format-v1 limits also apply to Rust callers (not only JSON inputs).
 pub const MAX_NODES: usize = 256;

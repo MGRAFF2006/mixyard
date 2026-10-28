@@ -405,7 +405,7 @@ fn windows_destination_without_delete_sharing_blocks_atomic_replace() {
     let store = fixture.store();
     store.edit(0, save("prior", config())).unwrap();
     let before = bytes(&store);
-    let held = OpenOptions::new()
+    let held = std::fs::OpenOptions::new()
         .read(true)
         .share_mode(1)
         .open(store.directory.join(DATA))
