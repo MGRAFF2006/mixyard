@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    fs::{File, OpenOptions},
+    fs::File,
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
 };
@@ -15,33 +15,15 @@ const DATA: &str = "profiles.json";
 const LOCK: &str = "write.lock";
 const PENDING: &str = "pending.json";
 
-#[derive(Debug)]
-pub struct Error {
-    pub code: &'static str,
-    pub message: String,
-    pub exit_code: u8,
-}
+pub use crate::store_fs::Error;
+use crate::store_fs::{
+    check_ancestors, check_directory, check_file, create_directory, create_file,
+};
 impl Error {
-    fn new(code: &'static str, message: impl Into<String>, exit_code: u8) -> Self {
-        Self {
-            code,
-            message: message.into(),
-            exit_code,
-        }
-    }
-    fn io(error: impl std::fmt::Display) -> Self {
-        Self::new("io-error", error.to_string(), 4)
-    }
     fn policy(error: impl Into<String>) -> Self {
         Self::new("invalid-policy", error, 3)
     }
 }
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)
-    }
-}
-impl std::error::Error for Error {}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -358,39 +340,10 @@ impl Store {
         snapshot.validate()
     }
     fn check_directory(&self) -> Result<bool, Error> {
-        check_ancestors(&self.directory)?;
-        let meta = match fs::symlink_metadata(&self.directory) {
-            Ok(meta) => meta,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-            Err(e) => return Err(Error::io(e)),
-        };
-        if !meta.is_dir() {
-            return Err(unsafe_path(&self.directory));
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if meta.permissions().mode() & 0o077 != 0 {
-                return Err(unsafe_path(&self.directory));
-            }
-        }
-        for entry in fs::read_dir(&self.directory).map_err(Error::io)? {
-            let entry = entry.map_err(Error::io)?;
-            if ![DATA, LOCK, PENDING]
-                .iter()
-                .any(|name| entry.file_name() == *name)
-            {
-                return Err(Error::new(
-                    "foreign-store-path",
-                    "Store directory contains unrelated files; use a dedicated empty directory",
-                    4,
-                ));
-            }
-            check_file(&entry.path())?;
-        }
-        Ok(true)
+        check_directory(&self.directory, &[DATA, LOCK, PENDING])
     }
 }
+
 fn validate_name(name: &str) -> Result<(), Error> {
     if name.trim().is_empty() {
         return Err(Error::new(
@@ -401,72 +354,6 @@ fn validate_name(name: &str) -> Result<(), Error> {
     }
     Ok(())
 }
-fn unsafe_path(path: &Path) -> Error {
-    Error::new("unsafe-store-path", format!("{}: expected a private directory or regular single-link file, without symlinks/reparse points", path.display()), 4)
-}
-fn check_ancestors(path: &Path) -> Result<(), Error> {
-    for ancestor in path.ancestors() {
-        match fs::symlink_metadata(ancestor) {
-            Ok(meta) => {
-                if is_link(&meta) || !meta.is_dir() {
-                    return Err(unsafe_path(ancestor));
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(Error::io(e)),
-        }
-    }
-    Ok(())
-}
-fn is_link(meta: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if meta.file_attributes() & 0x400 != 0 {
-            return true;
-        } // FILE_ATTRIBUTE_REPARSE_POINT
-    }
-    meta.file_type().is_symlink()
-}
-fn check_file(path: &Path) -> Result<bool, Error> {
-    let meta = match fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(Error::io(e)),
-    };
-    if is_link(&meta) || !meta.is_file() {
-        return Err(unsafe_path(path));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        if meta.nlink() != 1 || meta.permissions().mode() & 0o077 != 0 {
-            return Err(unsafe_path(path));
-        }
-    }
-    Ok(true)
-}
-fn create_file(path: &Path) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)
-}
-fn create_directory(path: &Path) -> Result<(), Error> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(path).map_err(Error::io)
-}
-
 /// Resolve without touching disk. An unset/nonabsolute base is an error.
 pub fn default_directory() -> Result<PathBuf, Error> {
     let base = if cfg!(windows) {
