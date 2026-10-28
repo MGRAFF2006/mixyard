@@ -1,0 +1,41 @@
+{
+  "graph": {
+    "schemaVersion": 1, "id": "work-call", "name": "Declared work-hours call profile", "revision": 1, "root": "work-call?",
+    "nodes": [
+      {"id": "work-call?", "kind": "decision", "condition": {"kind": "all", "conditions": [
+        {"kind": "fact", "key": {"name": "application.running"}, "predicate": {"op": "contains-any", "values": ["example:call-app", "example:meeting-app"]}},
+        {"kind": "any", "conditions": [
+          {"kind": "fact", "key": {"name": "application.foreground"}, "predicate": {"op": "in", "values": [{"type": "text", "value": "example:call-app"}, {"type": "text", "value": "example:meeting-app"}]}},
+          {"kind": "fact", "key": {"name": "application.call-active", "subject": "example:call-app"}, "predicate": {"op": "eq", "value": {"type": "bool", "value": true}}}
+        ]},
+        {"kind": "not", "condition": {"kind": "fact", "key": {"name": "manual.flag", "subject": "quiet"}, "predicate": {"op": "eq", "value": {"type": "bool", "value": true}}}},
+        {"kind": "fact", "key": {"name": "civil.timezone"}, "predicate": {"op": "eq", "value": {"type": "text", "value": "Europe/Berlin"}}},
+        {"kind": "fact", "key": {"name": "civil.weekday"}, "predicate": {"op": "range", "min": 1, "max": 5}},
+        {"kind": "fact", "key": {"name": "civil.minute-of-day"}, "predicate": {"op": "range", "min": 540, "max": 1079}}
+      ]}, "onTrue": "call", "onFalse": "hold", "onUnknown": "hold"},
+      {"id": "call", "kind": "terminal", "action": {"kind": "select", "profileId": "profile:call", "overrides": []}},
+      {"id": "hold", "kind": "terminal", "action": {"kind": "no-change"}}
+    ]
+  },
+  "catalog": [
+    {"name": "application.running", "valueType": "text-set", "scope": "global", "maxAgeMs": 5000, "evidencePolicy": "any"},
+    {"name": "application.foreground", "valueType": "text", "scope": "global", "maxAgeMs": 5000, "evidencePolicy": "any"},
+    {"name": "application.call-active", "valueType": "bool", "scope": "entity", "maxAgeMs": 5000, "evidencePolicy": "any"},
+    {"name": "manual.flag", "valueType": "bool", "scope": "entity", "maxAgeMs": 5000, "evidencePolicy": "any"},
+    {"name": "civil.timezone", "valueType": "text", "scope": "global", "maxAgeMs": 5000, "evidencePolicy": "any"},
+    {"name": "civil.weekday", "valueType": "number", "scope": "global", "maxAgeMs": 5000, "evidencePolicy": "any"},
+    {"name": "civil.minute-of-day", "valueType": "number", "scope": "global", "maxAgeMs": 5000, "evidencePolicy": "any"}
+  ],
+  "snapshot": {"schemaVersion": 1, "revision": 9, "epoch": "fixture-boot-A", "facts": [
+    {"key": {"name": "application.running"}, "status": "known", "value": {"type": "text-set", "value": ["example:call-app", "example:music-app"]}, "provider": "fixture:applications", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": null},
+    {"key": {"name": "application.foreground"}, "status": "known", "value": {"type": "text", "value": "example:call-app"}, "provider": "fixture:applications", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": null},
+    {"key": {"name": "application.call-active", "subject": "example:call-app"}, "status": "unsupported", "provider": "fixture:applications", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "partial", "reason": "No call-state observer; foreground independently proves the any condition"},
+    {"key": {"name": "manual.flag", "subject": "quiet"}, "status": "known", "value": {"type": "bool", "value": false}, "provider": "fixture:user-flags", "evidence": "user-declared", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": null},
+    {"key": {"name": "civil.timezone"}, "status": "known", "value": {"type": "text", "value": "Europe/Berlin"}, "provider": "fixture:civil-time", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": "Explicit civil values, no fixed UTC offset"},
+    {"key": {"name": "civil.weekday"}, "status": "known", "value": {"type": "number", "value": 3}, "provider": "fixture:civil-time", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": null},
+    {"key": {"name": "civil.minute-of-day"}, "status": "known", "value": {"type": "number", "value": 600}, "provider": "fixture:civil-time", "evidence": "fixture", "observedAtMs": 1000, "validForMs": 5000, "completeness": "complete", "reason": null}
+  ]},
+  "nowMs": 2000,
+  "context": {"configRevision": 1, "storeRevision": 0, "inventoryRevision": 1, "manualRevision": 2},
+  "manualOverride": false
+}

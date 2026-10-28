@@ -40,6 +40,7 @@
 //! an independent native runtime surviving UI closure; this crate has no UI deps.
 
 pub mod audio;
+pub mod automation;
 pub mod diagnostics;
 pub mod dsp;
 pub mod latency;
