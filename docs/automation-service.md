@@ -105,7 +105,7 @@ aggregate admission bounds run before candidate/path expansion. Excessive work
 fails visibly; no graph IDs, paths or observations are silently rewritten.
 
 The opaque review ID expires after five minutes in this process's monotonic
-clock. Expiry gates **starting arm only**. Successful arming consumes the review;
+clock. Expiry gates **starting arm only**. Arming also rechecks inventory and expiry after preview work. Successful arming consumes the review;
 `status.review` becomes null and `status.armed` describes active authority.
 An armed session has no periodic approval expiry. Fresh capture revision/time
 alone does not invalidate it. The approved authority binds epoch, settings,
@@ -163,7 +163,8 @@ no runtime is started or stopped by this service.
 
 The loop waits 250 ms between owned iterations. For each candidate it takes a
 second fresh server capture, re-observes the controller, resolves both previews,
-then rechecks actual settings/store content and approval under the commit gate.
+then re-queries actual inventory after preview expansion (outside the gate), and
+rechecks actual settings/store content and approval under the commit gate.
 It refreshes the clock and reevaluates fact freshness immediately before guard
 and the expected-store-revision writer. It persists the proposal input through
 that writer and checks the returned revision against `profiles::preview`'s

@@ -606,36 +606,8 @@ impl Engine {
                 "Save a graph and catalog before live evaluation",
             ));
         }
-        let inventory = ReadOnlyClient::inventory(&self.instance, &shared.cancelled).map_err(|e| {
-            fail(
-                "inventory-unavailable",
-                format!(
-                    "Actual runtime inventory unavailable: {e}; no automatic stored-profile writes"
-                ),
-            )
-        });
-        let (inventory, blocked) = match inventory {
-            Ok(inventory) => {
-                let value = serde_json::to_value(&inventory).expect("inventory JSON");
-                if self.inventory_revision.is_some_and(|previous| {
-                    inventory.revision < previous
-                        || (inventory.revision == previous
-                            && self.inventory.as_ref() != Some(&value))
-                }) {
-                    self.revoke();
-                    return Err(fail("inventory-unavailable", "Runtime inventory regressed or changed content without advancing its revision; no automatic writes"));
-                }
-                if self
-                    .inventory
-                    .as_ref()
-                    .is_some_and(|previous| previous != &value)
-                {
-                    self.revoke();
-                }
-                self.inventory = Some(value);
-                self.inventory_revision = Some(inventory.revision);
-                (Some(inventory), None)
-            }
+        let (inventory, blocked) = match self.observe_inventory(shared) {
+            Ok(inventory) => (Some(inventory), None),
             Err(e) => (None, Some(e)),
         };
         capture.now_ms = self.collector.now_ms()?;
@@ -678,6 +650,27 @@ impl Engine {
             inventory,
             blocked,
         })
+    }
+    fn observe_inventory(&mut self, shared: &Shared) -> Result<Inventory> {
+        let inventory=ReadOnlyClient::inventory(&self.instance,&shared.cancelled).map_err(|e|fail("inventory-unavailable",format!("Actual runtime inventory unavailable: {e}; no automatic stored-profile writes")))?;
+        let value = serde_json::to_value(&inventory).expect("inventory JSON");
+        if self.inventory_revision.is_some_and(|previous| {
+            inventory.revision < previous
+                || (inventory.revision == previous && self.inventory.as_ref() != Some(&value))
+        }) {
+            self.revoke();
+            return Err(fail("inventory-unavailable","Runtime inventory regressed or changed content without advancing its revision; no automatic writes"));
+        }
+        if self
+            .inventory
+            .as_ref()
+            .is_some_and(|previous| previous != &value)
+        {
+            self.revoke();
+        }
+        self.inventory = Some(value);
+        self.inventory_revision = Some(inventory.revision);
+        Ok(inventory)
     }
     fn authority(&self, live: &Live) -> Result<Authority> {
         Ok(Authority {
@@ -945,6 +938,7 @@ impl Engine {
                         ));
                     }
                 }
+                self.observe_inventory(shared)?;
                 let _gate = shared
                     .commit
                     .lock()
@@ -961,6 +955,17 @@ impl Engine {
                     return Err(fail(
                         "review-stale",
                         "Authority changed during arming; review again",
+                    ));
+                }
+                if self.review.as_ref().is_none_or(|review| {
+                    review.id != id
+                        || review.authority != authority
+                        || self.now() > review.expires_at_ms
+                        || self.inventory.as_ref() != Some(&review.inventory)
+                }) {
+                    return Err(fail(
+                        "review-stale",
+                        "Review expired or inventory authority changed during arming",
                     ));
                 }
                 self.controller(&live.evaluation.token)?
@@ -1026,6 +1031,10 @@ impl Engine {
                 "Selected candidate differs from exact reviewed actions/configuration",
             ));
         }
+        // Preview expansion may take time; query current inventory again before
+        // entering the short commit gate. Lifecycle events can cancel this probe.
+        self.observe_inventory(shared)?;
+        self.check_armed(&fresh)?;
         let _gate = shared
             .commit
             .lock()
