@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { useSituationRows } from './situation-rows.ts'
 import { vSituationNumber } from './situation-number.ts'
 import { defaultValue, metadataIntegerLiteral } from './situations.ts'
 import type { Definition, Fact, Snapshot } from './situations.ts'
@@ -15,9 +15,9 @@ const emit = defineEmits<{
   invalid: [
   ]
 }>()
-const rowRevision = ref(0)
+const rows = useSituationRows(() => props.snapshot.facts.length)
 function remove(index: number) {
-  rowRevision.value++
+  rows.remove(index)
   emit('update', { ...props.snapshot, facts: props.snapshot.facts.filter((_, i) => i !== index) })
 }
 function change(index: number, patch: Partial<Fact>) {
@@ -67,7 +67,7 @@ function add() {
 <template>
   <details class="situation-facts"><summary>Simulation facts ({{ snapshot.facts.length }})</summary>
     <p>These are supplied claims, including copied context. Choosing “platform-observed” in JSON or a form does not verify native observations. Unknown, stale, partial, error and ambiguous facts stay unknown, including under negative comparisons.</p>
-    <fieldset v-for="(f, i) in snapshot.facts" :key="`${rowRevision}-${i}`"><legend>Fact {{ i + 1 }}</legend>
+    <fieldset v-for="(f, i) in snapshot.facts" :key="rows.keys.value[i]"><legend>Fact {{ i + 1 }}</legend>
       <div class="situation-fields">
         <label class="situation-field">Fact name<select aria-label="Fact name" :value="f.key.name" @change="fact(i, $event)"><option v-for="d in catalog" :key="d.name" :value="d.name">{{ d.name }}</option></select></label>
         <label v-if="catalog.find(d => d.name === f.key.name)?.scope === 'entity'" class="situation-field">Fact subject ID<input :value="f.key.subject" @input="change(i, { key: { ...f.key, subject: ($event.target as HTMLInputElement).value } })" /></label>

@@ -247,8 +247,9 @@ editors are keyed by their exact node identity, so invalid numeric controls do
 not transfer hidden validity errors when navigating to another node.
 Numeric draft validity is synchronized through one shared directive: input capture
 retains invalid literal text before a render, and patched controls revalidate when
-their operand/model changes. Indexed condition, membership, fact and reduction
-removals advance row ownership, including equal-valued surviving rows. Ordinary
+their operand/model changes. Indexed condition, membership, fact and reduction rows have stable private keys
+across model clones. Removing a row disposes only that row; surviving drafts stay
+attached to their original keys, including equal-valued rows. Ordinary
 updates keep a displayed invalid draft invalid; fractional integer literals remain
 blocked. Browser regressions cover every indexed numeric editor and operand
 replacement, alongside import and node-navigation recovery.
