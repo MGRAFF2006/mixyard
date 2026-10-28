@@ -244,3 +244,71 @@ fn packetizer_preserves_whole_multichannel_frames_across_source_block_boundaries
     }
     Ok(())
 }
+
+#[test]
+fn timing_uses_each_negotiated_rate_and_separates_occupancy_holes_partial_and_capacity()
+-> anyhow::Result<()> {
+    let a = spec(1, "a", Codec::RawS24Le, 96_000, &["FR", "FL"], 48);
+    let b = spec(2, "a", Codec::RawF64Le, 192_000, &["FC"], 24);
+    let mut receiver = Receiver::new(
+        permissions("b", "a", &[], &[a.clone(), b.clone()]),
+        limits(),
+    )?;
+    let mut outbox = mixyard_network::pcm::Outbox::new(8);
+    for s in [&a, &b] {
+        receiver.admit(offer(s.clone(), 1))?;
+        outbox.admit(offer(s.clone(), 1));
+        outbox.enqueue(s.stream, sample_bytes(s, 0))?;
+        outbox.enqueue(s.stream, sample_bytes(s, 1))?;
+        // One sample frame pending, below a full packet, must be reported separately.
+        outbox.enqueue_pcm(
+            s.stream,
+            &sample_bytes(s, 2)[..s.codec.sample_bytes()? * s.channels.len()],
+        )?;
+        receiver.ingest(&frame(s, 1, 0));
+        receiver.ingest(&frame(s, 1, 2));
+    }
+    let send = outbox.timing_snapshot();
+    let receive = receiver.timing_snapshot();
+    assert_eq!(send[0].queued_sample_frames, 96);
+    assert_eq!(send[0].queued_sample_ms, 1.0);
+    assert_eq!(send[0].partial_sample_frames, 1);
+    assert_eq!(send[0].partial_sample_ms, 1000.0 / 96_000.0);
+    assert_eq!(send[1].queued_sample_frames, 48);
+    assert_eq!(send[1].queued_sample_ms, 0.25);
+    assert_eq!(send[1].partial_sample_ms, 1000.0 / 192_000.0);
+    assert!(send[0].buffered_timeline_ms.is_none());
+    assert_eq!(receive[0].queued_sample_ms, 1.0);
+    assert_eq!(receive[0].buffered_timeline_sample_frames, Some(144));
+    assert_eq!(receive[0].buffered_timeline_ms, Some(1.5));
+    assert_eq!(receive[0].capacity_sample_ms, 4.0);
+    assert_eq!(receive[1].queued_sample_ms, 0.25);
+    assert_eq!(receive[1].buffered_timeline_ms, Some(0.375));
+    assert_eq!(receive[1].capacity_sample_ms, 1.0);
+    assert!(receive.iter().all(|s| s.consumer_prebuffer_ms.is_none()));
+    receiver.pull(1)?;
+    let after = receiver.timing_snapshot();
+    assert_eq!(after[0].next_sample_frame, Some(48));
+    assert_eq!(after[0].queued_sample_ms, 0.5);
+    assert_eq!(after[0].buffered_timeline_ms, Some(1.0));
+    assert_eq!(after[1].queued_sample_ms, receive[1].queued_sample_ms);
+    receiver.admit(offer(a.clone(), 2))?;
+    outbox.admit(offer(a, 2));
+    let restarted = receiver.timing_snapshot();
+    assert_eq!(restarted[0].generation, 2);
+    assert_eq!(restarted[0].next_sample_frame, Some(0));
+    assert_eq!(restarted[0].queued_sample_frames, 0);
+    assert_eq!(restarted[0].buffered_timeline_sample_frames, Some(0));
+    assert_eq!(restarted[1].generation, 1);
+    assert_eq!(restarted[1].queued_sample_frames, 48);
+    assert_eq!(outbox.timing_snapshot()[0].partial_sample_frames, 0);
+    assert_eq!(outbox.timing_snapshot()[1].partial_sample_frames, 1);
+    receiver.disconnect();
+    assert!(
+        receiver
+            .timing_snapshot()
+            .iter()
+            .all(|s| s.queued_sample_frames == 0 && s.buffered_timeline_sample_frames == Some(0))
+    );
+    Ok(())
+}
