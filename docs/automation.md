@@ -273,9 +273,11 @@ The service/profile adapter must separately:
    OS-default changes, or authorizes media dispatch/resume. Profile/store
    revisions invalidate old media-resume context through existing mechanisms.
 
-There is deliberately no new approval flow or stateful transition guard here.
-The parent service owns observations, graph UI, adapter writes and transition
-policy; evaluation and read-only proposal construction stay separate.
+The evaluator and proposal helper remain stateless. The separate
+[transition controller](automation-controller.md) implements in-memory arming,
+manual ownership, settle, hold, attempt cooldown and guarded candidate lifecycle.
+The parent service still owns observations, graph UI, adapter writes and policy;
+the controller does not authorize writes or provide native activation.
 
 ## Admission limits and verification
 
