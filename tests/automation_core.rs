@@ -856,3 +856,108 @@ fn trace_byte_budget_prevents_large_evidence_expansion_and_preserves_the_result(
     }
     assert!(serde_json::to_vec(&e).unwrap().len() < 128 * 1024);
 }
+
+#[test]
+fn scoped_live_membership_preserves_decisive_evidence_without_global_absence() {
+    let mut r = fixture(APPLICATION);
+    let running = r
+        .snapshot
+        .facts
+        .iter_mut()
+        .find(|f| f.key.name == "application.running")
+        .unwrap();
+    running.value = Some(Value::TextSet(vec!["mapped-present".into()]));
+    let scope = vec!["mapped-present".into(), "mapped-absent".into()];
+    let truth = |r: &Request| {
+        evaluate_scoped(r, &scope)
+            .unwrap()
+            .trace
+            .into_iter()
+            .find_map(|t| match t {
+                Trace::Decision { node, result, .. } if node == r.graph.root => Some(result),
+                _ => None,
+            })
+            .unwrap()
+    };
+    for (predicate, expected) in [
+        (
+            Predicate::Contains {
+                value: "mapped-present".into(),
+            },
+            Truth::True,
+        ),
+        (
+            Predicate::Contains {
+                value: "mapped-absent".into(),
+            },
+            Truth::False,
+        ),
+        (
+            Predicate::Contains {
+                value: "unmapped".into(),
+            },
+            Truth::Unknown,
+        ),
+        (
+            Predicate::ContainsAny {
+                values: vec!["unmapped".into(), "mapped-present".into()],
+            },
+            Truth::True,
+        ),
+        (
+            Predicate::ContainsAll {
+                values: vec!["unmapped".into(), "mapped-absent".into()],
+            },
+            Truth::False,
+        ),
+        (
+            Predicate::Eq {
+                value: Value::TextSet(vec!["mapped-present".into()]),
+            },
+            Truth::Unknown,
+        ),
+        (Predicate::Count { min: 1, max: 1 }, Truth::Unknown),
+        (Predicate::Present {}, Truth::True),
+    ] {
+        set_condition(&mut r, fact("application.running", predicate));
+        assert_eq!(truth(&r), expected);
+    }
+    set_condition(
+        &mut r,
+        Condition::Not {
+            condition: Box::new(contains("application.running", "unmapped")),
+        },
+    );
+    assert_eq!(truth(&r), Truth::Unknown);
+    assert_eq!(
+        root_truth(&r),
+        Truth::True,
+        "Legacy pure simulations retain global-set semantics"
+    );
+    set_condition(
+        &mut r,
+        Condition::Any {
+            conditions: vec![
+                contains("application.running", "mapped-present"),
+                contains("application.running", "unmapped"),
+            ],
+        },
+    );
+    assert_eq!(truth(&r), Truth::True);
+    let running = r
+        .snapshot
+        .facts
+        .iter_mut()
+        .find(|f| f.key.name == "application.running")
+        .unwrap();
+    running.value = Some(Value::TextSet(vec![]));
+    set_condition(&mut r, fact("application.running", Predicate::Present {}));
+    assert_eq!(truth(&r), Truth::Unknown);
+    assert_eq!(root_truth(&r), Truth::False);
+    r.now_ms = 100_000;
+    set_condition(&mut r, contains("application.running", "mapped-absent"));
+    assert_eq!(truth(&r), Truth::Unknown, "Stale scoped absence is unknown");
+    assert!(evaluate_scoped(&r, &["x".repeat(MAX_TEXT_BYTES + 1)]).is_err());
+    assert!(evaluate_scoped(&r, &["same".into(), "same".into()]).is_err());
+    assert!(evaluate_scoped(&r, &vec!["x".into(); 33]).is_err());
+}

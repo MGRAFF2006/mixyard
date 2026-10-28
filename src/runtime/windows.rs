@@ -370,8 +370,27 @@ impl Drop for Listener {
     }
 }
 pub fn connect(endpoint: &str) -> io::Result<Stream> {
+    connect_cancellable(
+        endpoint,
+        &std::sync::atomic::AtomicBool::new(false),
+        super::CLIENT_TIMEOUT,
+    )
+}
+
+pub fn connect_cancellable(
+    endpoint: &str,
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Duration,
+) -> io::Result<Stream> {
+    use std::sync::atomic::Ordering;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(io::ErrorKind::Interrupted.into());
+    }
     let started = std::time::Instant::now();
     let pipe = loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
         let result = handle(unsafe {
             CreateFileW(
                 wide(endpoint).as_ptr(),
@@ -387,7 +406,7 @@ pub fn connect(endpoint: &str) -> io::Result<Stream> {
             Ok(pipe) => break pipe,
             Err(e)
                 if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
-                    && started.elapsed() < super::CLIENT_TIMEOUT =>
+                    && started.elapsed() < deadline =>
             {
                 std::thread::sleep(super::TICK)
             }

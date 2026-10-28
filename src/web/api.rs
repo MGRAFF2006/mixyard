@@ -116,6 +116,10 @@ pub(super) fn dispatch(path: &str, bytes: &[u8], state: &State) -> Reply {
             "/api/dsp/preview" => super::processing::preview(bytes),
             "/api/dsp/validate" => super::processing::validate(bytes),
             "/api/dsp/delay" => super::processing::delay(bytes),
+            "/api/automation/validate" => super::automation::validate(bytes),
+            "/api/automation/evaluate" => super::automation::evaluate(bytes),
+            "/api/automation/context" => super::automation::context(bytes, state),
+            p if p.starts_with("/api/automation/") => super::activation_route(p, bytes, state),
             "/api/status" => {
                 let _: Empty = parse(bytes)?;
                 match ReadOnlyClient::connect(&state.instance) {
@@ -156,12 +160,20 @@ pub(super) fn dispatch(path: &str, bytes: &[u8], state: &State) -> Reply {
                     .store
                     .read_bounded(MAX_RESPONSE)
                     .map_err(profile_error)?;
-                json(
-                    &state
-                        .store
+                if state.activation.is_available() {
+                    state
+                        .activation
                         .edit(body.expected_revision, body.edit.into())
-                        .map_err(profile_error)?,
-                )
+                } else {
+                    // No owner worker can commit automatic work. Retain the original
+                    // manual editing path when automation storage/init is unavailable.
+                    json(
+                        &state
+                            .store
+                            .edit(body.expected_revision, body.edit.into())
+                            .map_err(profile_error)?,
+                    )
+                }
             }
             _ => error(StatusCode::NOT_FOUND, "not-found", "Unknown API endpoint"),
         })

@@ -229,6 +229,10 @@ pub fn serve(instance: &str) -> io::Result<()> {
                 Ok(Some(command)) if stopping.is_none() => {
                     let reply = match command.get("command").and_then(Value::as_str) {
                         Some("status") => envelope(peer.id.clone(), status()),
+                        Some("inventory") => error(
+                            peer.id.clone(), "inventory-unavailable",
+                            "The lifecycle runtime has no audio inventory; automatic stored-profile changes require an actual inventory provider",
+                        ),
                         Some("shutdown") => {
                             stopping = Some(Instant::now());
                             envelope(peer.id.clone(), json!({"shutdown":"requested"}))
@@ -255,7 +259,7 @@ pub fn serve(instance: &str) -> io::Result<()> {
                         Some(_) => error(
                             peer.id.clone(),
                             "unsupported-command",
-                            "implemented commands: status, events, shutdown",
+                            "implemented commands: status, events, inventory, shutdown",
                         ),
                         None => command,
                     };

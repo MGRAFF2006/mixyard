@@ -1,204 +1,17 @@
 //! Actual loopback HTTP against the production binary; all stores are disposable.
+#[path = "web_support/mod.rs"]
+mod support;
 use serde_json::{json, Value};
 use std::{
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{Read, Write},
     net::TcpStream,
-    path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        mpsc, Arc, Barrier,
-    },
+    sync::{Arc, Barrier},
     thread,
     time::{Duration, Instant},
 };
-static NEXT: AtomicU32 = AtomicU32::new(0);
-struct Fixture {
-    root: PathBuf,
-}
-impl Fixture {
-    fn new() -> Self {
-        let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
-            "mixyard-web-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("assets")).unwrap();
-        fs::write(
-            root.join("assets/index.html"),
-            "<!doctype html><title>Web fixture</title>",
-        )
-        .unwrap();
-        fs::write(root.join("assets/app.js"), "console.log('fixture');").unwrap();
-        fs::write(root.join("secret.txt"), "outside secret").unwrap();
-        Self { root }
-    }
-    fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_mixyard-web"));
-        command
-            .arg("--store")
-            .arg(self.root.join("store"))
-            .arg("--assets")
-            .arg(self.root.join("assets"))
-            .args(["--port", "0", "--instance", &self.instance()]);
-        command
-    }
-    fn instance(&self) -> String {
-        format!(
-            "web-{}-{}",
-            std::process::id(),
-            self.root
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .rsplit('-')
-                .next()
-                .unwrap()
-        )
-    }
-    fn start(&self) -> Service {
-        let mut child = self
-            .command()
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let mut line = String::new();
-            BufReader::new(stdout).read_line(&mut line).unwrap();
-            let _ = tx.send(line);
-        });
-        let mut service = Service {
-            child,
-            address: String::new(),
-            token: String::new(),
-        };
-        let line = rx
-            .recv_timeout(Duration::from_secs(10))
-            .expect("web startup deadline");
-        service.address = line
-            .trim()
-            .strip_prefix("Mixyard web: http://")
-            .expect("printed URL")
-            .into();
-        assert!(service.address.starts_with("127.0.0.1:"));
-        let session = service.request("GET", "/api/session", &[], "");
-        assert_eq!(session.status, 200);
-        assert_eq!(session.json()["apiVersion"], 1);
-        assert_eq!(session.json()["audioAvailable"], false);
-        service.token = session.json()["csrfToken"].as_str().unwrap().into();
-        assert!(service.token.len() >= 32);
-        service
-    }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-struct Service {
-    child: Child,
-    address: String,
-    token: String,
-}
-impl Drop for Service {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-struct Reply {
-    status: u16,
-    headers: String,
-    body: Vec<u8>,
-}
-impl Reply {
-    fn json(&self) -> Value {
-        serde_json::from_slice(&self.body).unwrap()
-    }
-}
-impl Service {
-    fn request(&self, method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> Reply {
-        request(&self.address, method, path, headers, body)
-    }
-    fn post(&self, path: &str, body: Value) -> Reply {
-        self.request(
-            "POST",
-            path,
-            &[
-                ("X-Mixyard-Token", &self.token),
-                ("Content-Type", "application/json"),
-            ],
-            &body.to_string(),
-        )
-    }
-    fn ok(&self, path: &str, body: Value) -> Value {
-        let reply = self.post(path, body);
-        assert_eq!(
-            reply.status,
-            200,
-            "{}",
-            String::from_utf8_lossy(&reply.body)
-        );
-        reply.json()
-    }
-    fn edit(&self, revision: u64, edit: Value) -> Value {
-        self.ok(
-            "/api/profiles/edit",
-            json!({"expectedRevision":revision,"edit":edit}),
-        )
-    }
-}
-fn request(address: &str, method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> Reply {
-    let mut stream = TcpStream::connect(address).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(20)))
-        .unwrap();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    let host = if headers
-        .iter()
-        .any(|(name, _)| name.eq_ignore_ascii_case("host"))
-    {
-        String::new()
-    } else {
-        format!("Host: {address}\r\n")
-    };
-    let extra: String = headers
-        .iter()
-        .map(|(name, value)| format!("{name}: {value}\r\n"))
-        .collect();
-    write!(
-        stream,
-        "{method} {path} HTTP/1.1\r\n{host}{extra}Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    )
-    .unwrap();
-    let _ = stream.write_all(body.as_bytes());
-    let mut bytes = Vec::new();
-    match stream.read_to_end(&mut bytes) {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset && !bytes.is_empty() => {}
-        Err(e) => panic!("HTTP response: {e}"),
-    }
-    let split = bytes
-        .windows(4)
-        .position(|x| x == b"\r\n\r\n")
-        .expect("HTTP response headers");
-    let headers = String::from_utf8(bytes[..split].to_vec()).unwrap();
-    let status = headers.split_whitespace().nth(1).unwrap().parse().unwrap();
-    Reply {
-        status,
-        headers,
-        body: bytes[split + 4..].to_vec(),
-    }
-}
+use support::*;
 fn config() -> Value {
     serde_json::from_str(include_str!("../examples/config.json")).unwrap()
 }
@@ -513,6 +326,124 @@ fn actual_delay_measurement_and_explicit_alignment_do_not_change_profiles() {
 }
 
 #[test]
+fn situation_validation_and_simulation_use_the_real_evaluator_without_profile_writes() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    for (source, terminal) in [
+        (
+            include_str!("../examples/automation/headphone-priority.json"),
+            "headphones",
+        ),
+        (
+            include_str!("../examples/automation/interface-monitor.json"),
+            "suppress",
+        ),
+        (
+            include_str!("../examples/automation/application-schedule.json"),
+            "call",
+        ),
+    ] {
+        let mut input: Value = serde_json::from_str(source).unwrap();
+        let validated = service.ok(
+            "/api/automation/validate",
+            json!({"graph":input["graph"],"catalog":input["catalog"]}),
+        );
+        assert_eq!(validated["valid"], true);
+        let result = service.ok("/api/automation/evaluate", input.clone());
+        assert_eq!(result["mode"], "simulation");
+        assert_eq!(result["evaluation"]["terminal"], terminal);
+        assert_eq!(result["evaluation"]["audioApplied"], false);
+        assert!(!result["evaluation"]["trace"].as_array().unwrap().is_empty());
+        input["manualOverride"] = json!(true);
+        let held = service.ok("/api/automation/evaluate", input);
+        assert_eq!(held["evaluation"]["action"]["kind"], "no-change");
+    }
+    let mut input: Value = serde_json::from_str(include_str!(
+        "../examples/automation/headphone-priority.json"
+    ))
+    .unwrap();
+    input["snapshot"]["facts"][0]["evidence"] = json!("platform-observed");
+    let claims = service.ok("/api/automation/evaluate", input.clone());
+    assert_eq!(
+        claims["mode"], "simulation",
+        "Client claims must not become live authority"
+    );
+    input["nowMs"] = json!(20_000);
+    let stale = service.ok("/api/automation/evaluate", input.clone());
+    assert_eq!(stale["evaluation"]["action"]["kind"], "no-change");
+    input["graph"]["nodes"][0]["onTrue"] = input["graph"]["root"].clone();
+    assert_eq!(
+        service
+            .post(
+                "/api/automation/validate",
+                json!({"graph":input["graph"],"catalog":input["catalog"]})
+            )
+            .status,
+        422
+    );
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+    assert!(!fixture.root.join("store").exists());
+}
+
+#[test]
+fn live_situation_context_is_server_owned_and_keeps_unknowns_distinct() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    assert_eq!(
+        service
+            .post(
+                "/api/automation/context",
+                json!({"helper":"client-program","facts":[]})
+            )
+            .status,
+        400
+    );
+    let first = service.ok("/api/automation/context", json!({}));
+    assert_eq!(first["mode"], "read-only-live-context");
+    assert_eq!(first["snapshot"]["schemaVersion"], 1);
+    assert!(!first["snapshot"]["epoch"].as_str().unwrap().is_empty());
+    assert!(!first["providers"].as_array().unwrap().is_empty());
+    assert_eq!(first["applicationScope"], json!([]));
+    let running = first["snapshot"]["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["key"]["name"] == "application.running")
+        .unwrap();
+    assert_ne!(
+        running["status"], "known",
+        "Unconfigured mapping is not a complete empty running set"
+    );
+    let second = service.ok("/api/automation/context", json!({}));
+    assert_eq!(second["snapshot"]["epoch"], first["snapshot"]["epoch"]);
+    assert!(second["snapshot"]["revision"].as_u64() > first["snapshot"]["revision"].as_u64());
+    assert!(second["nowMs"].as_u64() >= first["nowMs"].as_u64());
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+}
+
+#[test]
+fn oversized_situation_predicates_reject_before_evaluation_or_profile_changes() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let mut input: Value = serde_json::from_str(include_str!(
+        "../examples/automation/headphone-priority.json"
+    ))
+    .unwrap();
+    input["graph"]["nodes"][0]["condition"]["predicate"] = json!({"op":"contains-all","values":(0..50_000).map(|i|format!("unknown-{i}")).collect::<Vec<_>>()});
+    assert_eq!(service.post("/api/automation/evaluate", input).status, 422);
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+}
+
+#[test]
 fn dsp_measurement_resets_state_and_preserves_slow_full_output() {
     let fixture = Fixture::new();
     let service = fixture.start();
@@ -668,29 +599,100 @@ fn persistent_profiles_conflicts_and_all_edits_survive_restart() {
 
 #[test]
 fn concurrent_writers_cannot_overwrite_each_other() {
-    let fixture = Fixture::new();
-    let service = fixture.start();
-    let barrier = Arc::new(Barrier::new(3));
-    let mut workers = Vec::new();
-    for name in ["one", "two"] {
-        let barrier = barrier.clone();
-        let address = service.address.clone();
-        let token = service.token.clone();
-        workers.push(thread::spawn(move || {
+    // Repeated fresh stores exercise the original creation race as well as replacement.
+    for _ in 0..32 {
+        let fixture = Fixture::new();
+        let service = fixture.start();
+        for revision in 0..4 {
+            let barrier = Arc::new(Barrier::new(3));
+            let mut workers = Vec::new();
+            for writer in ["one", "two"] {
+                let barrier = barrier.clone();
+                let address = service.address.clone();
+                let token = service.token.clone();
+                workers.push(thread::spawn(move || {
+                    let name = format!("{revision}-{writer}");
+                    let edit = if revision == 0 {
+                        json!({"kind":"save","name":name,"id":null,"config":config()})
+                    } else {
+                        json!({"kind":"rename","id":"profile-1","name":name})
+                    };
+                    barrier.wait();
+                    (
+                        name,
+                        request(
+                            &address,
+                            "POST",
+                            "/api/profiles/edit",
+                            &[
+                                ("Content-Type", "application/json"),
+                                ("X-Mixyard-Token", &token),
+                            ],
+                            &json!({"expectedRevision":revision,"edit":edit}).to_string(),
+                        ),
+                    )
+                }));
+            }
             barrier.wait();
-            request(&address, "POST", "/api/profiles/edit", &[("Content-Type","application/json"),("X-Mixyard-Token", &token)], &json!({"expectedRevision":0,"edit":{"kind":"save","name":name,"id":null,"config":config()}}).to_string()).status
-        }));
+            let replies: Vec<_> = workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect();
+            let mut statuses: Vec<_> = replies.iter().map(|(_, reply)| reply.status).collect();
+            statuses.sort();
+            let evidence = replies
+                .iter()
+                .map(|(name, reply)| {
+                    format!(
+                        "{name}: {}\n{}",
+                        reply.headers,
+                        String::from_utf8_lossy(&reply.body)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(statuses, vec![200, 409], "revision {revision}:\n{evidence}");
+            let (winner, accepted) = replies
+                .iter()
+                .find(|(_, reply)| reply.status == 200)
+                .unwrap();
+            let rejected = replies
+                .iter()
+                .find(|(_, reply)| reply.status == 409)
+                .unwrap();
+            assert!(
+                matches!(
+                    rejected.1.json()["error"]["code"].as_str(),
+                    Some("store-busy" | "store-conflict")
+                ),
+                "{evidence}"
+            );
+            let read = service.post("/api/profiles/read", json!({}));
+            assert_eq!(
+                read.status,
+                200,
+                "{evidence}\nread: {}",
+                String::from_utf8_lossy(&read.body)
+            );
+            let snapshot = read.json();
+            assert_eq!(snapshot, accepted.json(), "{evidence}");
+            assert_eq!(snapshot["storeRevision"], revision + 1, "{evidence}");
+            assert_eq!(
+                snapshot["profiles"].as_array().unwrap().len(),
+                1,
+                "{evidence}"
+            );
+            assert_eq!(snapshot["profiles"][0]["name"], *winner, "{evidence}");
+            assert!(
+                !fixture.root.join("store/write.lock").exists(),
+                "{evidence}"
+            );
+            assert!(
+                !fixture.root.join("store/pending.json").exists(),
+                "{evidence}"
+            );
+        }
     }
-    barrier.wait();
-    let mut statuses: Vec<_> = workers
-        .into_iter()
-        .map(|worker| worker.join().unwrap())
-        .collect();
-    statuses.sort();
-    assert_eq!(statuses, vec![200, 409]);
-    let snapshot = service.ok("/api/profiles/read", json!({}));
-    assert_eq!(snapshot["storeRevision"], 1);
-    assert_eq!(snapshot["profiles"].as_array().unwrap().len(), 1);
 }
 
 #[test]

@@ -319,3 +319,7 @@ pre-scan large cardinality rejection, deduplicated deterministic explanations,
 manual/no-change behavior, profile resolution, planner privacy/capacity checks,
 state token conflicts and revision exhaustion. It proves explicit-snapshot
 behavior only; live recognition and native audio delivery remain unverified.
+
+The [automatic stored-profile service](automation-service.md) integrates server-owned
+observations, reviewed arming, controller timing and expected-revision draft writes.
+It stores desired intent only; native audio remains unavailable.
