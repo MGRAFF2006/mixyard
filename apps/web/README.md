@@ -59,6 +59,21 @@ undo, refresh/conflict recovery, import errors and narrow-screen keyboard use.
 These tests do not prove Rust integration or disk persistence; the parent web
 milestone verifies that combined path with the actual server.
 
+The integrated checks run the built assets against actual Rust binaries,
+disposable on-disk stores and an explicitly owned lifecycle runtime:
+
+```sh
+cargo build --locked --bins --jobs 2
+pnpm --dir apps/web test:integration
+```
+
+They cover service/browser restart persistence, independent send/output edits,
+profile operations, competing windows, real inspection, invalid imports, offline
+recovery, 390 px keyboard operation and read-only runtime survival after UI exit.
+Set `MIXYARD_WEB_BINARY` to use a binary outside the root `target/debug`; the CLI
+and runtime binaries must be beside it. The harness stops only its own children
+and removes its temporary store. CI retains desktop/mobile browser screenshots.
+
 For an already-cached compatible Chromium, avoid another browser download:
 
 ```sh

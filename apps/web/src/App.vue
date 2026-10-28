@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import LevelControl from './LevelControl.vue'
 import { ConsoleSession } from './session.ts'
 import { copy, MAX_INPUT_BYTES, object, parseImport, readConfig, readInventory, setLevel } from './model.ts'
-import type { Config, Level, Mix } from './model.ts'
+import type { Config, Level, Mix, Source } from './model.ts'
 import exampleConfig from './example-config.json?raw'
 import exampleInventory from './example-inventory.json?raw'
 
@@ -20,6 +20,9 @@ function mutate(level: Level, patch: Partial<Pick<Level, 'gain' | 'mute'>>) { se
 function master(mix: Mix): Level { return mix.master ?? { gain: 1, mute: false } }
 function changeMaster(mix: Mix, patch: Partial<Pick<Level, 'gain' | 'mute'>>) { mix.master ??= { gain: 1, mute: false }; mutate(mix.master, patch) }
 function send(source: string, mix: string) { return s.local?.sends.find(value => value.source === source && value.mix === mix) }
+function excluded(source: Source, mix: Mix) {
+  return source.selector.kind === 'call-return' && mix.excludeGroups?.includes(source.selector.group ?? '')
+}
 function addSend(source: string, mix: string) { s.local?.sends.push({ source, mix, gain: 0, mute: false }); s.changed() }
 function renameMix(mix: Mix, event: Event) {
   const value = (event.target as HTMLInputElement).value.trim()
@@ -95,7 +98,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
     </nav>
     <main id="workspace" tabindex="-1">
       <div v-if="s.error" class="message error" role="alert"><strong>Action failed.</strong> {{ s.error }} <span v-if="s.needsRefresh">Refresh before another store write.</span></div>
-      <p v-if="s.statusError || s.status?.error" class="message warning">{{ s.statusError || s.status?.error }} <span>Runtime status is read only. Draft editing is still available.</span></p>
+      <div v-if="s.statusError || s.status?.error" class="message warning"><p>Runtime is not connected. Draft editing is still available.</p><details><summary>Connection details</summary>{{ s.statusError || s.status?.error }}</details></div>
       <div v-if="s.needsRefresh && !s.busy" class="message warning">Store writes paused. Start the local service if needed, then <button @click="s.refresh()">Refresh and review</button>. Local edits are kept; no write is retried automatically.</div>
       <p v-if="s.notice" class="message success" role="status">{{ s.notice }}</p>
       <div class="draft-bar">
@@ -128,6 +131,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
                 <td v-for="mix in s.local.mixes" :key="mix.id">
                   <LevelControl v-if="send(source.id, mix.id)" :level="send(source.id, mix.id)!" :label="`${source.id} to ${mix.name}`" :disabled="s.busy"
                     @gain="mutate(send(source.id, mix.id)!, { gain: $event })" @mute="mutate(send(source.id, mix.id)!, { mute: $event })" />
+                  <div v-else-if="excluded(source, mix)" class="unconfigured"><span>Call return excluded</span></div>
                   <div v-else class="unconfigured"><span>No send</span><button :disabled="s.busy" :aria-label="`Add ${source.id} to ${mix.name} send at zero gain`" @click="addSend(source.id, mix.id)">Add at 0%</button></div>
                 </td>
               </tr></tbody>

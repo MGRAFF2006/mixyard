@@ -5,10 +5,18 @@ on:
   push:
     paths:
       - 'apps/web/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/run-web.sh'
       - '.github/workflows/web-ui.yml'
   pull_request:
     paths:
       - 'apps/web/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/run-web.sh'
       - '.github/workflows/web-ui.yml'
 
 permissions:
@@ -42,10 +50,14 @@ jobs:
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+      - name: Build headless service and lifecycle binaries
+        run: cargo build --locked --manifest-path ../../Cargo.toml --bins --jobs 2
+      - name: Browser workflows against the production service and real store
+        run: pnpm test:integration
       - uses: actions/upload-artifact@v6
-        if: failure()
+        if: always()
         with:
-          name: web-ui-browser-failure
+          name: web-ui-browser-evidence
           path: apps/web/test-results/
       - name: Evidence boundary
-        run: echo 'Static frontend, data safety tests and isolated browser flows against a contract mock. No actual audio, native runtime or Rust persistence integration exercised by this job.' >> "$GITHUB_STEP_SUMMARY"
+        run: echo 'Frontend and isolated browser checks, plus production assets with the actual Rust service/store and explicitly owned lifecycle runtime. No native audio, hardware delivery or quality qualification.' >> "$GITHUB_STEP_SUMMARY"
