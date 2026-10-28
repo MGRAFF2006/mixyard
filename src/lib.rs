@@ -41,6 +41,7 @@
 
 pub mod audio;
 pub mod diagnostics;
+pub mod dsp;
 pub mod profiles;
 
 use serde::{Deserialize, Serialize};
