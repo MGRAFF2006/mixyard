@@ -185,3 +185,20 @@ test('simulation results reject missing identities, wrong actions/branches, manu
   assert.throws(() => readEvaluation(result(r), r), /manual override/)
   assert.doesNotThrow(() => readEvaluation(result(r, { terminal: null, trace: [{ kind: 'manual-override' }] }), r))
 })
+
+
+test('complete traces must finish exactly once at the claimed terminal or manual override; truncated prefixes remain valid', () => {
+  const r = headphones(), decision = { kind: 'decision', node: 'when', result: 'unknown', next: 'safe' }
+  for (const trace of [[], [decision]]) assert.throws(() => readEvaluation(result(r, { trace } as Partial<Evaluation>), r), /Complete trace/)
+  const active = r.graph.nodes.find(n => n.id === 'active')!
+  if (active.kind !== 'terminal') throw Error('fixture')
+  assert.throws(() => readEvaluation(result(r, { terminal: active.id, action: active.action, trace: [decision] } as Partial<Evaluation>), r), /Complete trace/)
+  for (const extra of [{ kind: 'terminal', node: 'safe' }, decision]) {
+    assert.throws(() => readEvaluation(result(r, { trace: [decision, { kind: 'terminal', node: 'safe' }, extra] } as Partial<Evaluation>), r), /after completion/)
+  }
+  assert.doesNotThrow(() => readEvaluation(result(r, { trace: [decision] as Evaluation['trace'], traceTruncated: true }), r))
+  r.manualOverride = true
+  assert.throws(() => readEvaluation(result(r, { terminal: null, trace: [] }), r), /Complete trace/)
+  assert.throws(() => readEvaluation(result(r, { terminal: null, trace: [{ kind: 'manual-override' }, { kind: 'manual-override' }] }), r), /after completion/)
+  assert.doesNotThrow(() => readEvaluation(result(r, { terminal: null, trace: [], traceTruncated: true }), r))
+})

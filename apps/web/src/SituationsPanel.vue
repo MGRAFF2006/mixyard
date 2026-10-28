@@ -177,7 +177,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
       <div class="situation-workspace">
         <div class="situation-map"><SituationGraph :graph="s.request.graph" :selected="selectedId" :evaluation="s.evaluation" @select="select" /></div>
         <div class="situation-node-editor">
-          <fieldset v-if="selected"><legend>Edit node {{ selected.id }}</legend>
+          <fieldset v-if="selected" :key="selected.id"><legend>Edit node {{ selected.id }}</legend>
             <div class="situation-fields"><label class="situation-field">Node ID<input v-model="nodeId" @input="s.invalidate()" /></label><button type="button" @click="rename">Rename and relink references</button></div>
             <p class="situation-hint">Exact IDs are case-sensitive; spaces are preserved. Referenced by {{ refs.join('; ') || 'no nodes' }}.</p>
             <template v-if="selected.kind === 'decision'">
