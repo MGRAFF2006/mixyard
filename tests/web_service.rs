@@ -119,7 +119,13 @@ struct Reply {
 }
 impl Reply {
     fn json(&self) -> Value {
-        serde_json::from_slice(&self.body).unwrap()
+        serde_json::from_slice(&self.body).unwrap_or_else(|error| {
+            panic!(
+                "JSON response: {error}\n{}\n{}",
+                self.headers,
+                String::from_utf8_lossy(&self.body)
+            )
+        })
     }
 }
 impl Service {
@@ -668,29 +674,100 @@ fn persistent_profiles_conflicts_and_all_edits_survive_restart() {
 
 #[test]
 fn concurrent_writers_cannot_overwrite_each_other() {
-    let fixture = Fixture::new();
-    let service = fixture.start();
-    let barrier = Arc::new(Barrier::new(3));
-    let mut workers = Vec::new();
-    for name in ["one", "two"] {
-        let barrier = barrier.clone();
-        let address = service.address.clone();
-        let token = service.token.clone();
-        workers.push(thread::spawn(move || {
+    // Repeated fresh stores exercise the original creation race as well as replacement.
+    for _ in 0..32 {
+        let fixture = Fixture::new();
+        let service = fixture.start();
+        for revision in 0..4 {
+            let barrier = Arc::new(Barrier::new(3));
+            let mut workers = Vec::new();
+            for writer in ["one", "two"] {
+                let barrier = barrier.clone();
+                let address = service.address.clone();
+                let token = service.token.clone();
+                workers.push(thread::spawn(move || {
+                    let name = format!("{revision}-{writer}");
+                    let edit = if revision == 0 {
+                        json!({"kind":"save","name":name,"id":null,"config":config()})
+                    } else {
+                        json!({"kind":"rename","id":"profile-1","name":name})
+                    };
+                    barrier.wait();
+                    (
+                        name,
+                        request(
+                            &address,
+                            "POST",
+                            "/api/profiles/edit",
+                            &[
+                                ("Content-Type", "application/json"),
+                                ("X-Mixyard-Token", &token),
+                            ],
+                            &json!({"expectedRevision":revision,"edit":edit}).to_string(),
+                        ),
+                    )
+                }));
+            }
             barrier.wait();
-            request(&address, "POST", "/api/profiles/edit", &[("Content-Type","application/json"),("X-Mixyard-Token", &token)], &json!({"expectedRevision":0,"edit":{"kind":"save","name":name,"id":null,"config":config()}}).to_string()).status
-        }));
+            let replies: Vec<_> = workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect();
+            let mut statuses: Vec<_> = replies.iter().map(|(_, reply)| reply.status).collect();
+            statuses.sort();
+            let evidence = replies
+                .iter()
+                .map(|(name, reply)| {
+                    format!(
+                        "{name}: {}\n{}",
+                        reply.headers,
+                        String::from_utf8_lossy(&reply.body)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(statuses, vec![200, 409], "revision {revision}:\n{evidence}");
+            let (winner, accepted) = replies
+                .iter()
+                .find(|(_, reply)| reply.status == 200)
+                .unwrap();
+            let rejected = replies
+                .iter()
+                .find(|(_, reply)| reply.status == 409)
+                .unwrap();
+            assert!(
+                matches!(
+                    rejected.1.json()["error"]["code"].as_str(),
+                    Some("store-busy" | "store-conflict")
+                ),
+                "{evidence}"
+            );
+            let read = service.post("/api/profiles/read", json!({}));
+            assert_eq!(
+                read.status,
+                200,
+                "{evidence}\nread: {}",
+                String::from_utf8_lossy(&read.body)
+            );
+            let snapshot = read.json();
+            assert_eq!(snapshot, accepted.json(), "{evidence}");
+            assert_eq!(snapshot["storeRevision"], revision + 1, "{evidence}");
+            assert_eq!(
+                snapshot["profiles"].as_array().unwrap().len(),
+                1,
+                "{evidence}"
+            );
+            assert_eq!(snapshot["profiles"][0]["name"], *winner, "{evidence}");
+            assert!(
+                !fixture.root.join("store/write.lock").exists(),
+                "{evidence}"
+            );
+            assert!(
+                !fixture.root.join("store/pending.json").exists(),
+                "{evidence}"
+            );
+        }
     }
-    barrier.wait();
-    let mut statuses: Vec<_> = workers
-        .into_iter()
-        .map(|worker| worker.join().unwrap())
-        .collect();
-    statuses.sort();
-    assert_eq!(statuses, vec![200, 409]);
-    let snapshot = service.ok("/api/profiles/read", json!({}));
-    assert_eq!(snapshot["storeRevision"], 1);
-    assert_eq!(snapshot["profiles"].as_array().unwrap().len(), 1);
 }
 
 #[test]
