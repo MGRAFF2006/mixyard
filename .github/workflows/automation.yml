@@ -3,16 +3,16 @@ name: Situation decision core (explicit observations)
 on:
   workflow_dispatch:
   push:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/automation/**', 'src/bin/mixyard-automation.rs', 'tests/automation*', 'examples/automation/**', 'docs/automation.md', '.github/workflows/automation.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/automation/**', 'src/bin/mixyard-automation.rs', 'tests/automation*', 'examples/automation/**', 'docs/automation*.md', '.github/workflows/automation.yml']
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/automation/**', 'src/bin/mixyard-automation.rs', 'tests/automation*', 'examples/automation/**', 'docs/automation.md', '.github/workflows/automation.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/automation/**', 'src/bin/mixyard-automation.rs', 'tests/automation*', 'examples/automation/**', 'docs/automation*.md', '.github/workflows/automation.yml']
 
 permissions:
   contents: read
 
 jobs:
   automation:
-    name: Pure evaluator and read-only proposal boundaries
+    name: Evaluator, proposals and transition lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -22,6 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cargo fmt --all -- --check
-      - run: cargo test --locked --test automation_core --test automation_cli
-      - run: cargo clippy --locked --lib --bin mixyard-automation --test automation_core --test automation_cli -- -D warnings
+      - run: cargo test --locked --test automation_core --test automation_cli --test automation_controller
+      - run: cargo clippy --locked --lib --bin mixyard-automation --test automation_core --test automation_cli --test automation_controller -- -D warnings
       - run: cargo run --locked --bin mixyard-automation -- evaluate examples/automation/interface-monitor.json
