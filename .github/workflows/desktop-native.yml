@@ -123,6 +123,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
+          python3 -B verification/desktop-native/test_process_exit.py
           echo 'bash verification/desktop-native/run-linux.sh apps/desktop/src-tauri/target/release/mixyard-desktop target/headless-runtime/release/mixyard-runtime target/headless-runtime/release/mixyard evidence' > evidence/lifecycle-command.txt
           bash verification/desktop-native/run-linux.sh \
             apps/desktop/src-tauri/target/release/mixyard-desktop \
