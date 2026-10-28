@@ -347,6 +347,10 @@ fn scoped_membership(set: &[String], scope: &[String], predicate: &Predicate) ->
             Truth::False
         }
     };
+    let equality_disproved = |expected: &[String]| {
+        set.iter().any(|s| !expected.contains(s))
+            || expected.iter().any(|s| member(s) == Truth::False)
+    };
     match predicate {
         Predicate::Contains { value } => member(value),
         Predicate::ContainsAll { values } => {
@@ -369,14 +373,15 @@ fn scoped_membership(set: &[String], scope: &[String], predicate: &Predicate) ->
         }
         Predicate::Present {} if !set.is_empty() => Truth::True,
         Predicate::Count { max, .. } if set.len() > *max as usize => Truth::False,
-        // Equality can be disproven by an observed member missing from the operand;
-        // it cannot prove completeness of the global desktop application population.
+        // Equality is contradicted by either a known-present unexpected member
+        // or a known-absent expected member. Matching mapped members still do
+        // not prove completeness of the global application population.
         Predicate::Eq {
             value: Value::TextSet(v),
-        } if set.iter().any(|s| !v.contains(s)) => Truth::False,
+        } if equality_disproved(v) => Truth::False,
         Predicate::Ne {
             value: Value::TextSet(v),
-        } if set.iter().any(|s| !v.contains(s)) => Truth::True,
+        } if equality_disproved(v) => Truth::True,
         _ => Truth::Unknown,
     }
 }

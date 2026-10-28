@@ -884,3 +884,35 @@ fn manual_commands_reject_extra_fields_without_advancing_lifecycle() {
     }
     assert!(!fixture.root.join("store").exists());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn scoped_equality_absence_selects_the_correct_owned_profile_branch() {
+    for (operator, wanted) in [("eq", 0.5), ("ne", 0.25)] {
+        let fixture = Fixture::new();
+        let mut options = running_settings();
+        options["declarations"] = json!([]);
+        options["transitionPolicy"] = json!({"settleMs":0,"minimumHoldMs":0,"cooldownMs":0});
+        options["graph"]["nodes"] = json!([
+            {"kind":"decision","id":"choose","condition":{"kind":"fact","key":{"name":"application.running"},"predicate":{"op":operator,"value":{"type":"text-set","value":["mapped-absent"]}}},"onTrue":"yes","onFalse":"no","onUnknown":"unknown"},
+            {"kind":"terminal","id":"yes","action":{"kind":"select","overrides":[{"scope":"mix","mix":"desk","gain":0.25}]}},
+            {"kind":"terminal","id":"no","action":{"kind":"select","overrides":[{"scope":"mix","mix":"desk","gain":0.5}]}},
+            {"kind":"terminal","id":"unknown","action":{"kind":"select","overrides":[{"scope":"mix","mix":"desk","gain":0.75}]}}
+        ]);
+        setup(&fixture, options);
+        let _runtime = InventoryRuntime::start(&fixture);
+        let service = fixture.start_command(observer_fixture(&fixture, json!({"running":[]})));
+        let live = service.ok("/api/automation/live", json!({}));
+        assert_eq!(
+            live["evaluation"]["terminal"],
+            if operator == "eq" { "no" } else { "yes" }
+        );
+        review_arm(&service);
+        until(&service, |s| s["storeRevision"] == 4);
+        let actual = service.ok("/api/profiles/read", json!({}));
+        assert_eq!(
+            actual["draft"]["mixes"][0]["master"]["gain"], wanted,
+            "Wrong {operator} branch persisted"
+        );
+    }
+}
