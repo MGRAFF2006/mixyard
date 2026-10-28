@@ -228,3 +228,16 @@ keyboard use, shared evidence and bounded trace. These are frontend contract
 checks, not actual Rust evaluator/provider or automatic activation evidence.
 The core is PR #41; the service adapter and live-context collector are separate
 dependencies under issue #40.
+
+
+Copied mapped `application.running` sets remain explicitly partial in simulation
+and exports: format 1 has no field carrying a provider's restricted mapping domain.
+The original read-only provider report retains `applicationScope`. This prevents
+an unmapped application's absence becoming false after copying or changing rules;
+scoped live comparisons require the separate service adapter's domain check.
+Integer metadata uses exact nonnegative decimal integer literals (no fractional or
+exponent forms); predicate and fact numeric values retain finite Float64 precision.
+Successful imports/context replacements rebuild form controls to discard obsolete
+DOM validation errors. Simulation responses must agree with graph terminals,
+actions, branches, manual override and shared observation identities; truncated
+trace prefixes remain valid.

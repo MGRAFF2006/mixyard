@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defaultValue } from './situations.ts'
+import { defaultValue, metadataIntegerLiteral } from './situations.ts'
 import type { Definition, Fact, Snapshot } from './situations.ts'
 import SituationValue from './SituationValue.vue'
 const props = defineProps<{
@@ -43,7 +43,7 @@ function time(index: number, key: 'observedAtMs' | 'validForMs', event: Event) {
     emit('update', { ...props.snapshot, facts: props.snapshot.facts.map((v, i) => i === index ? f : v) })
     return
   }
-  if (!Number.isSafeInteger(input.valueAsNumber) || input.valueAsNumber < 0) {
+  if (!metadataIntegerLiteral(input.value)) {
     input.setCustomValidity('Enter an exact nonnegative safe integer.')
     return
   }

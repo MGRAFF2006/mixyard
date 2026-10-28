@@ -161,9 +161,18 @@ export class SituationSession {
     const live = this.live
     this.edit(r => {
       r.snapshot = copyDsp(live.snapshot)
+      // A mapped set is not the complete global application universe. The core
+      // Request has no domain field; retain this uncertainty in the exported fact
+      // itself, so future graph edits/imports cannot turn unmapped absence false.
+      for (const fact of r.snapshot.facts) {
+        if (fact.key.name === 'application.running') {
+          fact.completeness = 'partial'
+          fact.reason = 'Mapped application domain only; copied simulation cannot establish global application absence. Consult the read-only mapping domain.'
+        }
+      }
       r.nowMs = live.nowMs
       r.catalog = [...r.catalog.filter(d => !live.catalog.some(c => c.name === d.name)), ...copyDsp(live.catalog).map(d => ({ ...r.catalog.find(current => current.name === d.name), ...d }))]
     })
-    this.notice = 'Read-only context copied into simulation inputs. Evaluation remains a simulation; changing claims does not establish native observations.'
+    this.notice = 'Read-only context copied; mapped application sets remain partial because they do not establish a complete global set. Evaluation remains a simulation; changing claims does not establish native observations.'
   }
 }

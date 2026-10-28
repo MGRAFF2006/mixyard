@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Api } from './api.ts'
 import type { Config, Inventory, Profile } from './model.ts'
 import { copyDsp, dspJson } from './dsp-json.ts'
 import { SituationSession } from './situation-session.ts'
-import { actionSummary, branches, buildPreset, defaultCondition, deleteNode, graphIssues, LIMITS, MAX_AUTOMATION_BYTES, nextNodeId, references, renameNode } from './situations.ts'
+import { actionSummary, branches, buildPreset, defaultCondition, deleteNode, graphIssues, metadataIntegerLiteral, LIMITS, MAX_AUTOMATION_BYTES, nextNodeId, references, renameNode } from './situations.ts'
 import type { Condition, Node, Preset, SituationRequest } from './situations.ts'
 import SituationAction from './SituationAction.vue'
 import SituationCondition from './SituationCondition.vue'
@@ -70,15 +70,21 @@ function add(kind: 'decision' | 'terminal') {
   })
   selectedId.value = id
 }
+const editorRevision = ref(0)
+async function replaceEditor() {
+  editorRevision.value++
+  await nextTick()
+}
 function preset(value: Preset) {
   s.edit(r => Object.assign(r, buildPreset(value, r)))
   if (!s.error)
     selectedId.value = s.request.graph.root
+  void replaceEditor()
 }
 function metadata(event: Event, change: (r: SituationRequest, n: number) => void) {
   const input = event.target as HTMLInputElement
   s.invalidate()
-  if (!Number.isSafeInteger(input.valueAsNumber) || input.valueAsNumber < 0) {
+  if (!metadataIntegerLiteral(input.value)) {
     input.setCustomValidity('Enter an exact nonnegative safe integer.')
     return
   }
@@ -117,6 +123,7 @@ async function importText() {
   if (await s.import(jsonText.value)) {
     selectedId.value = s.request.graph.root
     jsonText.value = ''
+    await replaceEditor()
   }
 }
 async function importFile(event: Event) {
@@ -129,12 +136,13 @@ async function importFile(event: Event) {
   try {
     const text = await file.text()
     if (generation !== s.generation) { s.fail('Import skipped because editing continued while the file was read.'); return }
-    if (await s.import(text)) selectedId.value = s.request.graph.root
+    if (await s.import(text)) { selectedId.value = s.request.graph.root; await replaceEditor() }
   } catch (error) { if (generation === s.generation) s.fail(error) }
 }
 
 function useContext() {
   s.useLive()
+  void replaceEditor()
   s.edit(r => {
     r.context = { ...r.context, configRevision: props.config?.revision ?? 0, storeRevision: props.storeRevision, inventoryRevision: props.inventory?.revision ?? 0 }
   })
@@ -156,7 +164,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
     <p v-if="!ready" class="message warning">Service session unavailable. Local editing and export remain available. Use Refresh in the console, then retry validation or context collection.</p>
     <p v-if="s.error" class="message error" role="alert">{{ s.error }}</p><p v-if="s.notice" class="message success" role="status">{{ s.notice }}</p>
     <SituationPreset :profiles="profiles" :config="config" @build="preset" />
-    <form ref="editor" @submit.prevent="evaluate">
+    <form :key="editorRevision" ref="editor" @submit.prevent="evaluate">
       <div class="situation-fields situation-identity">
         <label class="situation-field">Graph ID<input :value="s.request.graph.id" @input="s.edit(r => { r.graph.id = ($event.target as HTMLInputElement).value })" /></label>
         <label class="situation-field">Graph name<input :value="s.request.graph.name" @input="s.edit(r => { r.graph.name = ($event.target as HTMLInputElement).value })" /></label>

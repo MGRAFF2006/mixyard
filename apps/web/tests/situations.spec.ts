@@ -235,3 +235,25 @@ test('admitted depth-32 conditions remain keyboard editable without mobile page 
   expect(size.width).toBeLessThanOrEqual(size.viewport)
   expect((await exportRequest(page)).graph.nodes[0]).toMatchObject({ kind: 'decision' })
 })
+
+
+test('valid imports and context replacements clear invalid DOM drafts, integer metadata never rounds', async ({ page }) => {
+  const api = await mockApi(page); await open(page)
+  const clock = page.getByLabel('Evaluate at (epoch ms)', { exact: true })
+  await clock.fill('-1')
+  await expert(page)
+  const imported = emptyRequest(); imported.nowMs = 12
+  await page.getByLabel('Full situation configuration JSON', { exact: true }).fill(dspJson(imported))
+  await page.getByRole('button', { name: 'Validate and import JSON', exact: true }).click()
+  await expect(clock).toHaveValue('12')
+  await expect.poll(() => clock.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+  await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+  await expect(page.getByText('Simulation only. No change.', { exact: false })).toBeVisible()
+  await clock.fill('1.0000000000000001')
+  const before = api.requests.filter(r => r.path.endsWith('/evaluate')).length
+  await page.getByRole('button', { name: 'Simulate configuration', exact: true }).click()
+  expect(api.requests.filter(r => r.path.endsWith('/evaluate')).length).toBe(before)
+  await page.getByRole('button', { name: 'Read live context', exact: true }).click()
+  await page.getByRole('button', { name: 'Copy read-only context into simulation', exact: true }).click()
+  await expect.poll(() => clock.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(true)
+})

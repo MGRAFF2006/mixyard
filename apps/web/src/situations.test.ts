@@ -141,3 +141,47 @@ test('monitor endpoint groups are explicit exact sets, with declaration on a cho
   const single = buildPreset({ ...preset, endpointGroup: [] }, emptyRequest())
   assert.deepEqual(single.graph.nodes[0]?.kind === 'decision' && single.graph.nodes[0].condition, { kind: 'all', conditions: [{ kind: 'fact', key: { name: 'device.connected' }, predicate: { op: 'contains-all', values: ['interface/input'] } }, { kind: 'fact', key: { name: 'device.connected' }, predicate: { op: 'count', min: 1, max: 1 } }, { kind: 'fact', key: { name: 'device.hardware-monitor-declared', subject: 'interface/input' }, predicate: { op: 'eq', value: { type: 'bool', value: true } } }] })
 })
+
+
+test('integer metadata rejects fractional/exponent lexemes before Float64 rounding; numeric fact values retain Float64', () => {
+  const source = dspJson(headphones())
+  for (const literal of ['1.0000000000000001', '9007199254740991.1', '1e0', '-0', '9007199254740992']) {
+    assert.throws(() => parseSituation(source.replace('"revision":0', `"revision":${literal}`)), /integer/)
+    assert.throws(() => parseSituation(source.replace('"nowMs":0', `"nowMs":${literal}`)), /integer/)
+  }
+  const r = headphones(), node = r.graph.nodes[0]!
+  if (node.kind !== 'decision') throw Error('fixture')
+  node.condition = { kind: 'fact', key: { name: 'device.connected' }, predicate: { op: 'count', min: 0, max: 2 } }
+  assert.throws(() => parseSituation(dspJson(r).replace('"min":0', '"min":0.00000000000000001')), /integer/)
+  r.catalog.push({ name: 'precision', valueType: 'number', scope: 'global', maxAgeMs: 1000, evidencePolicy: 'any' })
+  node.condition = { kind: 'fact', key: { name: 'precision' }, predicate: { op: 'range', min: -0, max: 1.0000000000000002 } }
+  assert.equal(dspJson(parseSituation(dspJson(r))), dspJson(r))
+})
+
+test('copied mapped application sets stay partial through graph edits and export/import', () => {
+  const s = new SituationSession({ post: async () => ({}) })
+  s.live = { mode: 'read-only-live-context', snapshot: { schemaVersion: 1, revision: 1, epoch: 'live', facts: [{ key: { name: 'application.running' }, status: 'known', value: { type: 'text-set', value: [] }, provider: 'linux.proc', evidence: 'platform-observed', observedAtMs: 0, validForMs: 5000, completeness: 'complete' }] }, nowMs: 0, catalog: emptyRequest().catalog, providers: [], applicationScope: ['MAPPED'] }
+  s.useLive()
+  s.edit(r => { r.graph.name = 'Later rule querying UNMAPPED' })
+  const reopened = parseSituation(dspJson(s.request)), fact = reopened.snapshot.facts[0]!
+  assert.equal(fact.completeness, 'partial'); assert.match(fact.reason!, /Mapped application domain/)
+  assert.deepEqual(s.live.snapshot.facts[0]!.completeness, 'complete', 'original provider evidence stays intact')
+})
+
+test('simulation results reject missing identities, wrong actions/branches, manual contradictions and mismatched shared evidence', () => {
+  const r = headphones()
+  for (const patch of [
+    { terminal: 'ghost' },
+    { action: { kind: 'select', profileId: 'unrelated', overrides: [] } },
+    { trace: [{ kind: 'decision', node: 'ghost', result: 'unknown', next: 'safe' }] },
+    { trace: [{ kind: 'decision', node: 'when', result: 'true', next: 'safe' }] },
+    { trace: [{ kind: 'terminal', node: 'active' }] },
+    { trace: [{ kind: 'manual-override' }] },
+  ]) assert.throws(() => readEvaluation(result(r, patch as Partial<Evaluation>), r), /graph|Trace|override/)
+  const fact = { key: { name: 'application.running' }, status: 'unknown' as const, provider: 'fixture', evidence: 'fixture', validForMs: 0, completeness: 'partial' as const }
+  assert.throws(() => readEvaluation(result(r, { observations: [fact], trace: [{ kind: 'fact', node: 'when', detail: { key: { name: 'device.connected' }, predicate: { op: 'present' }, result: 'unknown', observationIndex: 0, ageMs: null, fresh: false, unknownReason: 'missing' } }] }), r), /key/)
+  assert.doesNotThrow(() => readEvaluation(result(r, { trace: [], traceTruncated: true }), r))
+  r.manualOverride = true
+  assert.throws(() => readEvaluation(result(r), r), /manual override/)
+  assert.doesNotThrow(() => readEvaluation(result(r, { terminal: null, trace: [{ kind: 'manual-override' }] }), r))
+})

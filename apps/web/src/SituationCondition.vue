@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { metadataIntegerLiteral } from './situations.ts'
 import { computed } from 'vue'
 import { copyDsp } from './dsp-json.ts'
 import { defaultCondition, defaultPredicate, defaultValue, operators } from './situations.ts'
@@ -66,7 +67,7 @@ function child(index: number, value?: Condition) {
 function number(key: 'value' | 'min' | 'max', event: Event) {
   const input = event.target as HTMLInputElement
   emit('invalid')
-  if (Number.isFinite(input.valueAsNumber)) {
+  if (Number.isFinite(input.valueAsNumber) && (props.condition.kind !== 'fact' || props.condition.predicate.op !== 'count' || metadataIntegerLiteral(input.value))) {
     input.setCustomValidity('')
     predicate({ [key]: input.valueAsNumber })
   }

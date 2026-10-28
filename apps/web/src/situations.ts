@@ -456,6 +456,55 @@ export function readRequest(v: unknown): SituationRequest {
     throw new Error('Automation request exceeds 1 MiB.')
   return r as SituationRequest
 }
+// Keep integer metadata lexical: JSON.parse may round a fractional decimal
+// into a safe integer before ordinary shape validation can inspect it.
+export function metadataIntegerLiteral(value: string): boolean {
+  return /^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value))
+}
+const integerFields = new Set(['schemaVersion', 'revision', 'nowMs', 'configRevision', 'storeRevision', 'inventoryRevision', 'manualRevision', 'maxAgeMs', 'observedAtMs', 'validForMs'])
+function checkIntegerLiterals(source: string) {
+  let at = 0
+  function whitespace() { while (/\s/.test(source[at] ?? '') && at < source.length) at++ }
+  function visit(depth: number): void {
+    if (depth > 128) throw new Error('JSON nesting exceeds supported import depth.')
+    whitespace()
+    if (source[at] === '{') {
+      at++; whitespace()
+      const numbers: [string, string][] = []
+      let op = ''
+      while (source[at] !== '}') {
+        const start = at; stringToken(); const key = JSON.parse(source.slice(start, at)) as string
+        whitespace(); at++; whitespace()
+        const valueStart = at
+        visit(depth + 1)
+        const raw = source.slice(valueStart, at)
+        if (key === 'op') op = JSON.parse(raw) as string
+        if (/^-?[0-9]/.test(raw)) numbers.push([key, raw])
+        whitespace()
+        if (source[at] !== ',') break
+        at++; whitespace()
+      }
+      at++
+      for (const [key, raw] of numbers)
+        if ((integerFields.has(key) || (op === 'count' && (key === 'min' || key === 'max'))) && !metadataIntegerLiteral(raw))
+          throw new Error(`Enter an exact nonnegative integer literal for ${key}.`)
+    }
+    else if (source[at] === '[') {
+      at++; whitespace()
+      while (source[at] !== ']') { visit(depth + 1); whitespace(); if (source[at] !== ',') break; at++; whitespace() }
+      at++
+    }
+    else if (source[at] === '"') stringToken()
+    else { while (at < source.length && !/[\s,}\]]/.test(source[at]!)) at++ }
+  }
+  function stringToken() {
+    at++
+    while (at < source.length && source[at] !== '"') { if (source[at] === '\\') at++; at++ }
+    at++
+  }
+  // Syntax is checked by JSON.parse before this bounded traversal.
+  visit(0)
+}
 // JSON.parse accepts duplicate object keys by dropping earlier fields. Reject
 // that ambiguous input before it can bypass the core's duplicate-field parser.
 function rejectDuplicateFields(text: string) {
@@ -485,6 +534,7 @@ export function parseSituation(text: string): SituationRequest {
     throw new Error('Automation import exceeds 1 MiB.')
   const value: unknown = JSON.parse(text)
   rejectDuplicateFields(text)
+  checkIntegerLiterals(text)
   return readRequest(value)
 }
 
@@ -516,22 +566,35 @@ export function readEvaluation(v: unknown, request: SituationRequest): Evaluatio
     throw new Error('Evaluation token does not match the requested graph and context.')
   readAction(e.action)
   bool(e.traceTruncated)
-  if (e.terminal !== null)
-    text(e.terminal)
+  const nodes = new Map(request.graph.nodes.map(n => [n.id, n]))
+  const terminal = e.terminal === null ? null : nodes.get(text(e.terminal))
+  const normalizedAction = (value: unknown) => {
+    const action = readAction(value)
+    return action.kind === 'no-change' ? { kind: action.kind } : { kind: action.kind, profileId: action.profileId ?? null, overrides: action.overrides.map(o => ({ scope: o.scope, source: o.source ?? null, mix: o.mix ?? null, output: o.output ?? null, mute: o.mute ?? null, gain: o.gain ?? null })) }
+  }
+  if (request.manualOverride ? e.terminal !== null || object(e.action).kind !== 'no-change' : !terminal || terminal.kind !== 'terminal' || dspJson(normalizedAction(e.action)) !== dspJson(normalizedAction(terminal.action)))
+    throw new Error('Evaluation terminal/action does not match the requested graph or manual override.')
   const observations = list(e.observations, 512)
   // Reuse observation shape checks; trace evidence can be a subset of supplied facts.
   readSnapshot({ schemaVersion: 1, revision: 0, epoch: request.snapshot.epoch, facts: observations }, request.catalog)
+  let nextNode = request.graph.root
+  if (request.manualOverride && observations.length) throw new Error('Manual override cannot include fact observations.')
   list(e.trace).forEach(v => {
     const t = object(v)
+    if (request.manualOverride !== (t.kind === 'manual-override')) throw new Error('Trace contradicts manual override.')
+    const node = t.kind === 'manual-override' ? null : nodes.get(text(t.node))
+    if (node && node.id !== nextNode) throw new Error('Trace node is outside the evaluated path.')
     switch (choice(t.kind, ['decision', 'fact', 'terminal', 'manual-override'])) {
       case 'decision':
         text(t.node)
         text(t.next)
         choice(t.result, ['true', 'false', 'unknown'])
+        if (!node || node.kind !== 'decision' || t.next !== node[t.result === 'true' ? 'onTrue' : t.result === 'false' ? 'onFalse' : 'onUnknown']) throw new Error('Trace branch does not match the graph.')
+        nextNode = t.next as string
         break
       case 'fact':
         {
-          text(t.node)
+          if (!node || node.kind !== 'decision') throw new Error('Fact trace references a missing decision.')
           const d = object(t.detail)
           readKey(d.key)
           object(d.predicate)
@@ -543,9 +606,13 @@ export function readEvaluation(v: unknown, request: SituationRequest): Evaluatio
             text(d.unknownReason)
           if (d.observationIndex !== null && integer(d.observationIndex) >= observations.length)
             throw new Error('Trace references missing evidence.')
+          if (d.observationIndex !== null) {
+            const key = object(object(observations[d.observationIndex as number]).key), detail = object(d.key)
+            if (key.name !== detail.name || (key.subject ?? null) !== (detail.subject ?? null)) throw new Error('Trace observation key does not match its evidence.')
+          }
           break
         }
-      case 'terminal': text(t.node)
+      case 'terminal': if (!node || node.kind !== 'terminal' || node.id !== e.terminal) throw new Error('Trace terminal does not match the result.')
     }
   })
   return e as Evaluation
