@@ -32,9 +32,7 @@ function syncForm() {
   formRevision.value++
 }
 async function read() {
-  const previous = s.draft
-  await s.read()
-  if (previous !== s.draft) syncForm()
+  await s.read(syncForm)
 }
 function mappingChange() {
   s.changed()

@@ -163,3 +163,42 @@ test('edits during settings reads/writes survive acknowledgments and builder edi
   j.s.builderChanged(); j.release(savedSettings()); await reading
   assert.equal(j.s.draft.graph!.name, 'Saved headphones'); assert.equal(j.s.dirty, false)
 })
+
+
+test('explicit settings reconciliation establishes a fresh process status baseline without losing drafts', async () => {
+  const h = harness(); await h.s.read(); await h.s.manual({ mode: 'until-cleared' })
+  h.s.edit(d => { d.transitionPolicy.settleMs = 777 })
+  h.setStatus(status()); await h.s.refreshStatus(); assert.match(h.s.statusError, /Stale/)
+  await h.s.read()
+  assert.equal(h.s.status!.manualRevision, 0); assert.equal(h.s.statusError, '')
+  assert.equal(h.s.draft.transitionPolicy.settleMs, 777); assert.equal(h.s.dirty, true)
+  assert.equal(h.s.review, null)
+})
+
+test('reviews bind prospective high-water revision and canonical plan identities to every candidate', () => {
+  const saved = savedSettings(), good = liveFixture(saved)
+  const cases: ((v: ReturnType<typeof liveFixture>) => void)[] = [
+    v => { for (const a of v.review!.actions) { a.candidate.revision = 0; a.preview.plan.configRevision = 0 } },
+    v => { v.review!.actions[1]!.candidate.revision = 3; v.review!.actions[1]!.preview.plan.configRevision = 3 },
+    v => { (v.review!.actions[0]!.preview.plan.sources as any[])[0].selector.deviceUid = 'wrong' },
+    v => { (v.review!.actions[0]!.preview.plan.outputs as any[])[0].target.deviceUid = 'wrong' },
+    v => { (v.review!.actions[0]!.preview.plan.outputs as any[])[0].mix = 'wrong' },
+    v => { (v.review!.actions[0]!.preview.plan.outputs as any[])[0].gain = 0.25 },
+    v => { (v.review!.actions[0]!.preview.plan.sends as any[])[0].mute = true },
+    v => { (v.review!.actions[0]!.preview.plan.mixes as any[])[0].channels = 2 },
+  ]
+  for (const mutate of cases) {
+    const bad = copyDsp(good); mutate(bad)
+    // Keep the mirrored unavailable rows internally consistent to exercise
+    // candidate binding, not merely the existing mirror comparison.
+    for (const a of bad.review!.actions) {
+      a.preview.unavailableIdentities.sources = copyDsp((a.preview.plan.sources as any[]).filter(s => s.status !== 'selected'))
+      a.preview.unavailableIdentities.outputs = copyDsp((a.preview.plan.outputs as any[]).filter(s => s.status !== 'selected'))
+    }
+    assert.throws(() => readLive(bad, saved, true))
+  }
+  const live = copyDsp(good); live.review = null; live.status.review = null
+  live.preview = copyDsp(good.review!.actions[0]!)
+  live.preview.candidate.revision = 1; live.preview.preview.plan.configRevision = 1
+  assert.throws(() => readLive(live, saved, false))
+})

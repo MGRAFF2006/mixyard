@@ -152,6 +152,29 @@ function readPlan(v: unknown, candidate: Config, inventory: Inventory): Raw {
   ] as const) {
     if (dspJson(identities(array(p[key]), [...planKeys])) !== dspJson(identities(candidate[key], [...configKeys]))) throw Error('Preview plan omitted or changed candidate identities.')
   }
+  // These are static identities/parameters copied by the planner, not computed
+  // routing results. Bind them to the concrete candidate shown for approval.
+  const requireFields = (row: Raw, expected: Raw) => {
+    if (!Object.entries(expected).every(([key, value]) => sameJson(row[key], value))) throw Error('Preview plan contradicts candidate routing.')
+  }
+  for (const value of array(p.sources)) {
+    const row = object(value), source = candidate.sources.find(s => s.id === row.source)!
+    requireFields(row, { selector: source.selector })
+  }
+  for (const value of array(p.mixes)) {
+    const row = object(value), mix = candidate.mixes.find(m => m.id === row.id)!
+    requireFields(row, { name: mix.name, channels: mix.channels, sampleRateHz: mix.sampleRateHz ?? 48000,
+      master: { gain: mix.master?.gain ?? 1, mute: mix.master?.mute ?? false } })
+    if (!sameJson([...array(row.excludeGroups)].sort(), [...(mix.excludeGroups ?? [])].sort())) throw Error('Preview plan contradicts candidate exclusions.')
+  }
+  for (const value of array(p.sends)) {
+    const row = object(value), send = candidate.sends.find(s => s.source === row.source && s.mix === row.mix)!
+    requireFields(row, { gain: send.gain, mute: send.mute ?? false })
+  }
+  for (const value of array(p.outputs)) {
+    const row = object(value), output = candidate.outputs.find(o => o.id === row.id)!
+    requireFields(row, { mix: output.mix, target: output.target, gain: output.gain, mute: output.mute ?? false, allowMicMonitor: output.allowMicMonitor ?? false })
+  }
   return p
 }
 function sensitive(v: unknown): SensitivePath {
@@ -159,9 +182,10 @@ function sensitive(v: unknown): SensitivePath {
   if ((p.source === null) !== (p.selector === null)) throw Error('Sensitive path source and selector must be paired.')
   choice(p.reason, ['potential-recording', 'microphone-monitoring']); return p as SensitivePath
 }
-function readCandidate(v: unknown, inventory: Inventory | null): Candidate {
+function readCandidate(v: unknown, inventory: Inventory | null, currentRevision: number): Candidate {
   if (!inventory) throw Error('A concrete preview requires server inventory.')
   const c = object(v), candidate = readConfig(c.candidate), p = object(c.preview), changes = object(p.changes)
+  if (candidate.revision <= currentRevision) throw Error('Candidate revision must advance captured config authority.')
   // A replacement can remove 256 old identities and add 256 different ones.
   CHANGE_GROUPS.forEach(k => list(changes[k], 512).forEach(v => {
     const c = object(v), identity = list(c.identity, 2); identity.forEach(string)
@@ -214,7 +238,8 @@ export function readLive(v: unknown, saved: SettingsSnapshot, wantsReview: boole
     if (request && (context.nowMs !== request.nowMs || !sameJson({ ...context.snapshot, facts: context.snapshot.facts.filter(f => request.catalog.some(d => d.name === f.key.name)) }, request.snapshot))) throw Error('Live capture does not match the evaluated request.')
   }
   if (request && !context) throw Error('Server evaluation is missing its capture.')
-  const preview = l.preview === null ? null : readCandidate(l.preview, inventory)
+  const preview = l.preview === null ? null : readCandidate(l.preview, inventory, status.configRevision)
+  let prospectiveRevision = preview?.candidate.revision ?? null
   let review: Review | null = null
   if (l.review !== null && l.review !== undefined) {
     if (!wantsReview || blocked || !inventory || !request) throw Error('Review cannot grant authority without a complete unblocked capture.')
@@ -225,7 +250,10 @@ export function readLive(v: unknown, saved: SettingsSnapshot, wantsReview: boole
     actions.forEach(v => {
       const a = object(v), id = string(a.terminal), action = readAction(a.action), terminal = expected.find(e => e.terminal === id)
       if (!terminal || seen.has(id) || dspJson(normalizedAction(action)) !== dspJson(normalizedAction(terminal.action))) throw Error('Review action differs from reachable Select terminals.')
-      seen.add(id); readCandidate(a, inventory)
+      seen.add(id)
+      const parsed = readCandidate(a, inventory, status.configRevision)
+      if (prospectiveRevision !== null && prospectiveRevision !== parsed.candidate.revision) throw Error('Review candidates disagree on prospective config revision.')
+      prospectiveRevision = parsed.candidate.revision
     })
     if (seen.size !== expected.length) throw Error('Review omitted reachable Select actions; no actions were hidden.')
     review = r as Review

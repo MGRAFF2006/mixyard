@@ -26,6 +26,7 @@ export class ActivationSession {
   generation = 0
   private draftGeneration = 0
   private authorityGeneration = 0
+  private statusGeneration = 0
   private reviewDeadline = 0
   private now: () => number
   constructor(api: Pick<Api, 'post'>, now = () => Date.now()) { this.api = api; this.now = now }
@@ -46,8 +47,8 @@ export class ActivationSession {
   }
   edit(change: (s: Settings) => void) { this.changed(); change(this.draft) }
   get reviewCurrent() { return !!this.review && !!this.status && !this.needsRead && !this.dirty && sameAuthority(this.review.authority, this.status) && this.now() <= this.reviewDeadline }
-  private acceptStatus(next: Status) {
-    if (this.status && REVISION_KEYS.some(k => next[k] !== null && this.status![k] !== null && next[k]! < this.status![k]!)) throw Error('Stale server status discarded. Refresh status or reconnect to the restarted service.')
+  private acceptStatus(next: Status, reconcile = false) {
+    if (this.status && !reconcile && REVISION_KEYS.some(k => next[k] !== null && this.status![k] !== null && next[k]! < this.status![k]!)) throw Error('Stale server status discarded. Use console Refresh, then Read saved settings to reconnect to a restarted service.')
     if (this.review && (!sameAuthority(this.review.authority, next) || next.review?.id !== this.review.id || next.review.expiresAtMs !== this.review.expiresAtMs)) this.invalidateReview()
     if (this.status && next.storeRevision !== this.status.storeRevision) this.routingNotice = 'Stored routing changed. Your unsaved routing draft is kept. Use Refresh in the console to inspect the stored change.'
     if (this.saved && next.settingsRevision !== this.saved.settingsRevision) {
@@ -58,7 +59,7 @@ export class ActivationSession {
     this.status = next
     this.statusError = ''
   }
-  async read() {
+  async read(onAdopt?: () => void) {
     if (this.busy || this.controlBusy) return
     this.busy = true; this.error = ''; this.invalidateReview()
     const generation = this.draftGeneration, authority = ++this.authorityGeneration
@@ -67,24 +68,32 @@ export class ActivationSession {
       if (authority !== this.authorityGeneration) return
       if (this.saved && saved.settingsRevision < this.saved.settingsRevision) throw Error('Stale saved settings discarded.')
       this.saved = copyDsp(saved); this.connected = true; this.needsRead = false
-      if (!this.dirty && generation === this.draftGeneration) { this.draft = copyDsp(saved.settings); this.imported = false }
+      if (!this.dirty && generation === this.draftGeneration) {
+        this.draft = copyDsp(saved.settings); this.imported = false
+        onAdopt?.()
+      }
+      // Explicit reconciliation may attach to a restarted process, whose manual
+      // revision begins again at zero. Prior requests/reviews have been revoked;
+      // automatic polls still enforce monotonic status within this baseline.
+      this.statusError = 'Service ownership is unconfirmed until reconciliation completes.'; this.live = null
       this.notice = this.dirty ? 'Fresh saved revision read. Local settings edits are kept; review them before saving.' : 'Saved settings read. Load the saved graph explicitly to replace the builder graph.'
       // Sequential status read: never start capture or activation on connection.
-      await this.refreshStatus()
+      await this.queryStatus(true)
     } catch (error) { if (authority === this.authorityGeneration) { this.needsRead = true; this.fail(error) } }
     finally { this.busy = false }
   }
-  async refreshStatus() {
-    if (!this.connected || this.refreshing || this.controlBusy) return
+  async refreshStatus() { await this.queryStatus() }
+  private async queryStatus(reconcile = false) {
+    if (!this.connected || (this.refreshing && !reconcile) || this.controlBusy) return
     this.refreshing = true
-    const authority = this.authorityGeneration
+    const authority = this.authorityGeneration, refresh = ++this.statusGeneration
     try {
       const status = readActivationStatus(await this.api.post('/api/automation/status', {}))
       if (authority !== this.authorityGeneration) return
-      this.acceptStatus(status)
+      this.acceptStatus(status, reconcile)
     } catch (error) {
       if (authority === this.authorityGeneration) { this.invalidateReview(); this.statusError = error instanceof Error ? error.message : String(error) }
-    } finally { this.refreshing = false }
+    } finally { if (refresh === this.statusGeneration) this.refreshing = false }
   }
   import(text: string) {
     try {

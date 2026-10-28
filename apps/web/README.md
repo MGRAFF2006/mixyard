@@ -289,6 +289,14 @@ is silently shortened. An explicit inspection checkbox precedes **Arm reviewed
 automatic selection**. The opaque review expires for starting arm after up to
 five minutes; existing armed authority continues while approved state is unchanged.
 Local policy/settings edits and observed revision changes invalidate the review.
+After a service restart, use the console **Refresh**, then **Read saved settings**
+to establish fresh process-local ownership status without reloading the page or
+losing local drafts. Automatic polls still reject decreasing revisions within
+that baseline. Settings forms synchronize when the settings response is adopted;
+a delayed status response never remounts timing text entered in the meantime.
+Concrete previews must advance the captured config revision and agree on one
+prospective high-water revision. Plan selectors, targets, mix references and
+static parameters must match their candidates before any review can enable Arm.
 **Disarm automatic selection** remains usable during capture/review and makes late
 capture responses obsolete. Manual pause/clear controls retain already armed
 ownership but never grant authority to a disarmed policy. Timed expiry is confirmed

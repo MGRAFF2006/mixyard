@@ -232,3 +232,48 @@ test('failed builder validation preserves the invalid graph instead of loading t
   await expect(branch).toHaveValue('when')
   await expect(page.getByText('Graph needs repair.', { exact: true })).toBeVisible()
 })
+
+
+test('settings adoption does not remount invalid timing drafts after a delayed status read', async ({ page }) => {
+  await mock(page)
+  let release: (() => void) | undefined
+  await page.route('**/api/automation/status', async route => {
+    await new Promise<void>(resolve => { release = resolve })
+    await route.fulfill({ contentType: 'application/json', body: dspJson(status()) })
+  })
+  await open(page); const a = activation(page)
+  await a.getByRole('button', { name: 'Read saved settings', exact: true }).click()
+  const settle = a.getByLabel('Settle time (ms)', { exact: true })
+  await expect(settle).toBeVisible()
+  await settle.fill('1.0000000000000001')
+  expect(await settle.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(false)
+  await expect.poll(() => !!release).toBe(true); release!()
+  await expect(a.getByRole('button', { name: 'Read saved settings', exact: true })).toBeEnabled()
+  await expect(settle).toHaveValue('1.0000000000000001')
+  expect(await settle.evaluate(e => (e as HTMLInputElement).validity.valid)).toBe(false)
+})
+
+
+test('contradictory prospective revisions and canonical routes never expose an armable review', async ({ page }) => {
+  const api = await mock(page); await open(page); await connect(page); await load(page); const a = activation(page)
+  for (const contradiction of ['old', 'mixed', 'selector', 'target', 'mix']) {
+    await page.route('**/api/automation/review', async route => {
+      const live = liveFixture(api.saved())
+      if (contradiction === 'old') for (const action of live.review!.actions) { action.candidate.revision = 0; action.preview.plan.configRevision = 0 }
+      else if (contradiction === 'mixed') { live.review!.actions[1]!.candidate.revision = 3; live.review!.actions[1]!.preview.plan.configRevision = 3 }
+      else {
+        const action = live.review!.actions[0]!
+        if (contradiction === 'selector') (action.preview.plan.sources as any[])[0].selector.deviceUid = 'different-source'
+        if (contradiction === 'target') (action.preview.plan.outputs as any[])[0].target.deviceUid = 'different-target'
+        if (contradiction === 'mix') (action.preview.plan.outputs as any[])[0].mix = 'different-mix'
+        action.preview.unavailableIdentities.sources = copyDsp(action.preview.plan.sources as any[])
+        action.preview.unavailableIdentities.outputs = copyDsp(action.preview.plan.outputs as any[])
+      }
+      await route.fulfill({ contentType: 'application/json', body: dspJson(live) })
+    })
+    await a.getByRole('button', { name: 'Review automatic selection', exact: true }).click()
+    await expect(a.getByRole('alert')).toContainText(/Candidate revision|prospective config revision|contradicts candidate/)
+    await expect(a.getByRole('button', { name: 'Arm reviewed automatic selection', exact: true })).toHaveCount(0)
+  }
+  expect(api.calls.filter(c => c.path.endsWith('/arm'))).toHaveLength(0)
+})

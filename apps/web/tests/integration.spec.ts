@@ -612,11 +612,15 @@ test('actual automatic controls review and commit once through real HTTP private
     expect(runtime.commands.filter(c => c === 'inventory').length).toBeGreaterThan(1)
     expect(runtime.commands.some(c => ['start', 'shutdown', 'apply', 'stop'].includes(c))).toBe(false)
   } finally { await runtime.stop() }
-  await service.stop(); await service.start(); await page.reload()
-  await page.getByRole('button', { name: 'Situations', exact: true }).click()
-  const restarted = page.getByRole('region', { name: 'Automatic selection', exact: true })
-  await restarted.getByRole('button', { name: 'Read saved settings', exact: true }).click()
-  await expect(restarted.getByRole('heading', { name: 'Disarmed', exact: true })).toBeVisible()
+  // Keep the same browser, process-local manual baseline and unsaved settings.
+  await panel.getByLabel('Settle time (ms)', { exact: true }).fill('777')
+  await service.stop(); await service.start()
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
+  await panel.getByRole('button', { name: 'Read saved settings', exact: true }).click()
+  await expect(panel.getByRole('heading', { name: 'Disarmed', exact: true })).toBeVisible()
+  await expect(panel.getByLabel('Settle time (ms)', { exact: true })).toHaveValue('777')
+  await expect(panel.getByRole('button', { name: 'Clear manual pause', exact: true })).toBeEnabled()
   expect((await service.post('/api/profiles/read')).storeRevision).toBe(3)
 })
 
