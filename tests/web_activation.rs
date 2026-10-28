@@ -858,3 +858,29 @@ fn corrupt_profile_store_keeps_offline_console_available_and_never_overwrites_co
         3
     );
 }
+
+#[test]
+fn manual_commands_reject_extra_fields_without_advancing_lifecycle() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let before = status(&service);
+    for body in [
+        json!({"mode":"until-cleared","unexpected":true}),
+        json!({"mode":"clear","unexpected":true}),
+        json!({"mode":"for","durationMs":1000,"unexpected":true}),
+    ] {
+        let reply = service.post("/api/automation/manual", body);
+        assert_eq!(
+            reply.status,
+            400,
+            "{}",
+            String::from_utf8_lossy(&reply.body)
+        );
+        let after = status(&service);
+        assert_eq!(after["manualRevision"], before["manualRevision"]);
+        assert_eq!(after["manualOverride"], before["manualOverride"]);
+        assert_eq!(after["armed"], false);
+        assert_eq!(after["storeRevision"], before["storeRevision"]);
+    }
+    assert!(!fixture.root.join("store").exists());
+}

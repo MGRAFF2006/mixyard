@@ -67,12 +67,12 @@ struct Arm {
 #[derive(Clone, Copy, Deserialize)]
 #[serde(tag = "mode", rename_all = "kebab-case", deny_unknown_fields)]
 enum Manual {
-    UntilCleared,
+    UntilCleared {},
     For {
         #[serde(rename = "durationMs")]
         duration_ms: u64,
     },
-    Clear,
+    Clear {},
 }
 
 enum Command {
@@ -832,13 +832,13 @@ impl Engine {
             Command::Manual(manual) => {
                 self.sync()?;
                 let manual = match manual {
-                    Manual::UntilCleared => Some(core::ManualOverride::UntilCleared),
+                    Manual::UntilCleared {} => Some(core::ManualOverride::UntilCleared),
                     Manual::For { duration_ms } => Some(core::ManualOverride::UntilMs(
                         self.now()
                             .checked_add(duration_ms)
                             .ok_or_else(|| fail("revision-exhausted", "Manual clock exhausted"))?,
                     )),
-                    Manual::Clear => None,
+                    Manual::Clear {} => None,
                 };
                 self.manual_event(manual, false)?;
                 self.blocked = None;
@@ -1489,7 +1489,7 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(1);
         engine.handle_envelope(
             Envelope {
-                command: Command::Manual(Manual::UntilCleared),
+                command: Command::Manual(Manual::UntilCleared {}),
                 deadline: Instant::now() + Duration::from_secs(1),
                 reply: tx,
             },
