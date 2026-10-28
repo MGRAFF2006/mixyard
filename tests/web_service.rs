@@ -295,6 +295,59 @@ fn expanding_inspection_is_rejected_without_taking_down_service() {
 }
 
 #[test]
+fn repeated_observation_ids_are_bounded_under_concurrent_inspection() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let config = json!({"schemaVersion":2,"revision":1,
+        "sources":[{"id":"s","selector":{"kind":"app","applicationId":"a"}}],
+        "mixes":(0..180).map(|i|json!({"id":format!("m{i}"),"name":"Mix","channels":2})).collect::<Vec<_>>(),
+        "sends":(0..180).map(|i|json!({"source":"s","mix":format!("m{i}"),"gain":1})).collect::<Vec<_>>(),"outputs":[]});
+    assert_eq!(
+        service.ok("/api/validate", json!({"config":config})),
+        json!({"valid":true})
+    );
+    let inventory = json!({"schemaVersion":2,"revision":1,"platform":"linux","evidence":"simulated",
+        "sources":[{"observedId":"x".repeat(950_000),"selector":{"kind":"app","applicationId":"a"},"origin":"external","format":{"channels":2,"sampleRateHz":48000}}],
+        "outputs":[],"mediaSessions":[],"limits":{}});
+    let body = Arc::new(json!({"config":config,"inventory":inventory}).to_string());
+    assert!(body.len() < 1024 * 1024);
+    let barrier = Arc::new(Barrier::new(4));
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let (address, token, body, barrier) = (
+                service.address.clone(),
+                service.token.clone(),
+                body.clone(),
+                barrier.clone(),
+            );
+            thread::spawn(move || {
+                barrier.wait();
+                let reply = request(
+                    &address,
+                    "POST",
+                    "/api/inspect",
+                    &[
+                        ("X-Mixyard-Token", &token),
+                        ("Content-Type", "application/json"),
+                    ],
+                    &body,
+                );
+                assert_eq!(reply.status, 422);
+                assert_eq!(reply.json()["error"]["code"], "inspection-too-large");
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    assert_eq!(service.request("GET", "/api/session", &[], "").status, 200);
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+}
+
+#[test]
 fn persistent_profiles_conflicts_and_all_edits_survive_restart() {
     let fixture = Fixture::new();
     let service = fixture.start();

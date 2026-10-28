@@ -63,8 +63,10 @@ replacement and manual recovery behavior remain authoritative.
 
 Inspection also checks expansion before constructing the core result: a
 conservative cubic work estimate over configuration/inventory entities must not
-exceed 50 million, and a byte-weighted estimate of repeated path findings and
-cloned mixes must fit 32 MiB. Requests outside these web-specific budgets return
+exceed 50 million. The full request byte length multiplied by the entity/path
+expansion count and a factor of 32 must fit 32 MiB. This deliberately charges
+all fields, including observation IDs repeated in sends, rather than selecting
+specific identities. Requests outside these web-specific budgets return
 422 `inspection-too-large`; use the existing inspect CLI for larger graphs.
 No routing path is truncated and the core's policy/resource limits are unchanged.
 
