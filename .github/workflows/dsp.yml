@@ -3,9 +3,9 @@ name: Offline Float64 DSP (no native delivery)
 on:
   workflow_dispatch:
   push:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/dsp/**', 'tests/dsp*', 'tests/dsp/**', 'examples/dsp*', 'docs/dsp.md', '.github/workflows/dsp.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/dsp/**', 'src/latency.rs', 'tests/latency.rs', 'tests/dsp*', 'tests/dsp/**', 'examples/dsp*', 'docs/dsp.md', 'docs/latency.md', '.github/workflows/dsp.yml']
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/dsp/**', 'tests/dsp*', 'tests/dsp/**', 'examples/dsp*', 'docs/dsp.md', '.github/workflows/dsp.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/dsp/**', 'src/latency.rs', 'tests/latency.rs', 'tests/dsp*', 'tests/dsp/**', 'examples/dsp*', 'docs/dsp.md', 'docs/latency.md', '.github/workflows/dsp.yml']
 
 permissions:
   contents: read
@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Filter, dynamics, channel selection/matrix, reset, precision and allocation oracles
-        run: cargo test --locked --test dsp_core --test dsp_allocations
+        run: cargo test --locked --test dsp_core --test dsp_allocations --test latency
       - name: Render complete slow FIR and report measured block budgets
         shell: bash
         run: cargo run --locked --release --example dsp_render -- "$RUNNER_TEMP/dsp-render"

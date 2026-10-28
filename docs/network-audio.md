@@ -99,8 +99,9 @@ The control Offer is length-prefixed JSON (u32 big endian), one Offer per reliab
 bidirectional stream, followed by FIN; the response is a versioned accept/reject
 Reply followed by FIN. Unknown fields, trailing data, invalid JSON, empty or
 >8192-byte frames fail closed. A configured deadline bounds prefix/body/FIN/reply
-waiting. One inbound control task runs concurrently with datagram reception;
-extra simultaneous controls are reset. Outbound negotiation is serialized
+waiting. One inbound control exchange runs concurrently with datagram reception;
+Quinn limits inbound bidirectional streams to two, so one successor can wait in
+bounded transport storage until the active exchange finishes. Outbound negotiation is serialized
 separately from PCM queues. A failed/uncertain or cancelled negotiation closes the connection
 instead of assuming either side applied it. All raw descriptors must exactly
 match the preconfigured directional permission: selection never guesses a
@@ -214,3 +215,120 @@ end-to-end latency, clicks/transition behavior, long-running/high-rate throughpu
 and endurance, production pairing/storage/revocation, Opus and encoded/DSD.
 The PLAN's audio quality and ease-of-use release gates still apply. Passing
 loopback transport tests does not satisfy them.
+
+## Executable timing and health observations
+
+`Session::probe_rtt().await` performs a caller-triggered, authenticated application
+control round trip on the existing paired QUIC connection. `timing_snapshot().await`
+returns a serializable `timing::SessionTiming` without sending traffic. These are
+allocating/locking network-worker APIs, never realtime callback APIs. The
+standalone `telemetry` example emits JSON observations for initial, queued sender,
+fresh RTT, queued receiver, stale and disconnected states using ephemeral
+certificates and encrypted loopback transport. It also compares the delivered
+raw sample bytes; no devices are opened.
+
+Quinn 0.11.12 `Connection::rtt()` and quinn-proto 0.11.19 `PathStats::rtt` expose
+an estimator without the latest measurement timestamp. The estimator is seeded
+from the transport's initial RTT (default 333 ms). Reading these stats, observing
+new packets, or completing a TLS handshake cannot establish a fresh application
+probe. We therefore do not publish Quinn's estimator as a measured RTT. The
+application measurement includes stream opening, local scheduling, reliable
+transport/retransmission and peer worker turnaround, measured entirely with
+local `std::time::Instant`. It is not a pure wire RTT or an audio delivery time.
+
+The public snapshot contract is:
+
+- `connected`: no local QUIC close reason at observation. This is not proof that
+  the remote process is still alive; undetected failures wait for QUIC timeout.
+- `observed_at_session_ms`: local monotonic milliseconds since Session creation,
+  meaningful only within this Session. No UTC or remote timestamps are used.
+- `application_rtt.kind = "application_control_round_trip"`; `value_ms`,
+  `measured_at_session_ms`, and `age_ms` are null until a successful matching echo.
+  `validity` is `unavailable`, `fresh` (age at most `fresh_for_ms = 3000`), `stale`,
+  or `disconnected`. Repeated reads never refresh a sample. Disconnection takes
+  precedence; historical values retain their original timestamps and ages.
+  `last_attempt` is `never`, `in_flight`, `succeeded`, `failed`, `timed_out`, or
+  `cancelled`, with `last_attempt_at_session_ms`. Failed/cancelled attempts do not
+  replace the last successful sample or its age. A recent successful sample can
+  coexist with a failed latest attempt; callers must inspect both fields.
+- `send_streams` and `receive_streams`: bounded by the directional admitted
+  stream budget. Each contains `stream`, `generation`, `sample_rate`,
+  `frames_per_packet`, `queued_packets`, `queued_sample_frames`,
+  `queued_sample_ms`, `partial_sample_frames`, `partial_sample_ms`,
+  `capacity_packets`, `capacity_sample_frames`, `capacity_sample_ms`,
+  `next_sample_frame`, `buffered_timeline_sample_frames`, `buffered_timeline_ms`,
+  `consumer_prebuffer_ms`, and per-stream loss/error `counters`. Session-level
+  `rejected` counters describe malformed/unadmitted datagrams.
+- Occupancy milliseconds are `sample_frames * 1000 / negotiated_sample_rate`,
+  per stream, independent of channel count and codec width. Sender partial
+  packets are reported separately and are not ready to transmit. Receive timeline
+  span runs from the next pull to the end of the furthest queued packet and
+  includes missing slots; occupied frames exclude those holes. Sender timeline
+  span is null. `next_sample_frame` is the next consumer sample position on
+  receive or next full packet's assigned sample position on send (null on u64
+  exhaustion). Capacity describes the configured bound and is never actual
+  playout residence. Neither occupancy nor span measures elapsed residence.
+- `consumer_prebuffer_ms` is always null: the consumer owns initial prebuffer
+  and pull cadence, and has not reported that configuration to this worker.
+  A generation restart resets that stream's queue, timeline and counters;
+  sibling generations remain independent. A disconnected snapshot flushes
+  receive packets and sender state; admitted receiver metadata/counters remain,
+  while sender entries are removed. QUEUED bytes inside QUIC, downstream devices,
+  or the caller's own buffers are outside the per-stream occupancy observation.
+- `clock_sync.state = "unavailable"`, `offset_ms = null`, and
+  `uncertainty_ms = null`. There is no cross-host clock mapping or drift estimate.
+  `one_way_network_ms` and `end_to_end_audio_ms` are always null. RTT/2 is never
+  labeled measured one-way delay, and RTT is never added into total audio latency.
+  Route alignment requires separately qualified clock and endpoint observations.
+
+Each probe is exactly 16 reliable bytes: `MYTP`, big-endian u16 version `1`,
+u16 kind (`1` ping, `2` echo), and u64 correlation nonce, followed by FIN. Echoes
+are the same size as requests and never recursive. The magic lies outside the
+accepted JSON length range, so a probe cannot deserialize as an `Offer`. No peer
+clock value is trusted. Exact mTLS leaf pins, stream permissions, protocol version,
+40-byte audio header, PCM bytes and datagram budgets are unchanged; probing an older
+peer without this optional envelope can close that connection, without yielding
+a timing value. Use probes only when the paired peer supports this extension. Probe
+requests never grant PCM admission. The application nonce is connection-local
+correlation; QUIC/TLS supplies authentication and replay protection.
+
+Only one local probe may be in flight, and attempts start no faster than once per
+second. Concurrent/rate-exceeded probe calls fail immediately without spawning
+tasks. Probes and outbound PCM negotiation share the reliable-control gate, so
+they cannot reset one another as simultaneous inbound requests. The probe's
+deadline is the lesser of one second and `control_timeout`, including the bounded
+wait for that gate and stream opening. RTT starts after obtaining the gate;
+local admission waiting is not counted as network round-trip time. Cancellation
+releases the probe slot and its QUIC streams without invalidating negotiated
+audio permissions. Failure to deliver an echo for a fully validated probe
+(including a caller that stopped receiving after cancellation/timeout) is local
+to that optional stream; malformed requests still fail closed. Probes
+share the single inbound reliable control worker, polled directly in the receive
+loop so reply FIN and worker availability complete together (avoiding a spawned
+task-completion race on successive requests). The worker does not accept the next
+control until the active exchange completes; otherwise an abandoned probe could
+reset a subsequent valid negotiation after the local caller released its gate.
+At most one successor waits under Quinn's two-stream receive limit, rather than
+an unbounded application queue. Datagrams remain independently serviced. Each
+accepted bidirectional control counts toward a
+`max_streams + 16` per-one-second-window limit (a full configured admission
+burst plus telemetry headroom); exceeding it closes the paired session. A malformed
+or incomplete inbound frame fails closed at the existing control deadline. This
+bounds work per connection and response size; it cannot remove QUIC congestion
+shared with a peer or protect application polling by an unbounded local caller.
+
+Tests cover actual encrypted matching echoes, a delayed peer, no initial sample,
+stale/disconnected states, an injected local monotonic observation time, invalid
+nonce/version/kind/length/trailing data, slow peers, cancellation and flooding.
+Production-worker regressions pause peer turnaround until after probe cancellation
+or timeout and then verify exact audio delivery; another overlaps probing and
+negotiation. All three reproduced connection teardown before the repair. Two
+further regressions cancel or time out a probe and immediately negotiate a new
+generation before peer turnaround (20 attempts per variant); both reproduced
+busy resets before serializing inbound acceptance as well as outbound calls.
+The mixed-rate queue test distinguishes holes and partial packets from occupancy,
+checks restart/sibling isolation, and preserves the existing raw precision oracles.
+These results establish local application RTT and worker queue semantics only.
+Two-machine LAN/Tailscale behavior, native capture/playback, hardware clocks,
+physical one-way/end-to-end latency, drift and synchronized route playout remain
+unqualified.

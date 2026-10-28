@@ -81,3 +81,9 @@ explicit sample rate and ordered channel identities; separate block/signal and
 benchmark controls; output/meters with over-full-scale warnings; unknown timing
 until a fresh preview. Any edit invalidates the old preview. Exact whole-chain
 bypass is an explicit switch. Snapshot changes can click; no smoothing is claimed.
+
+Channel tools now provide beginner operation shortcuts, everyday per-effect lane
+selection and expert matrix coefficients around one complete chain. View changes
+preserve custom settings. The separate [signal delay probe](latency.md) measures
+actual impulse onset/peak positions and proposes explicit sample alignment; it
+does not convert processing throughput into audio latency.

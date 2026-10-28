@@ -10,7 +10,7 @@ function request(d: DspDraft): PreviewRequest { return { config: copy(d.config),
 test('chain import keeps ordered opaque channel IDs, all effects, raw fields and Float64 numeric domains', async () => {
   const d = new DspDraft(), config = starter('empty')
   config.format.sampleRateHz = 123457; config.format.channels = [' right ', 'L', 'aux-7']
-  config.effects = effectKinds.map(newEffect)
+  config.effects = effectKinds.filter(kind => kind !== 'channel-matrix').map(kind => newEffect(kind))
   config.effects.push(...filters.map(filter => ({ name: 'same name allowed', enabled: false, effect: { kind: 'biquad' as const, filter, frequencyHz: 321.1234567890123, q: Math.SQRT1_2, gainDb: 0 } })))
   config.effects[0]!.effect = { kind: 'gain', gain: 1e20, invertPolarity: false }
   config.effects[5]!.effect = { kind: 'fir', coefficients: [1.0000000000000002, 0, -0.000000000000000123, 1e200, ...Array(4096).fill(0)] }
@@ -42,7 +42,7 @@ test('invalid shape, nonfinite values and API domain rejection preserve the prio
 })
 
 test('effect and channel reordering preserve every parameter, enable state and identity', () => {
-  const c = starter('empty'); c.effects = effectKinds.map(newEffect)
+  const c = starter('empty'); c.effects = effectKinds.filter(kind => kind !== 'channel-matrix').map(kind => newEffect(kind))
   c.effects[1]!.enabled = false; const before = copy(c.effects)
   move(c.effects, 5, -1); move(c.effects, 0, 1)
   assert.deepEqual(c.effects, [before[1], before[0], before[2], before[3], before[5], before[4]])
@@ -77,7 +77,7 @@ test('response contract rejects incomplete or mismatched output; unknown timing 
 })
 
 test('slow measurements and service failures keep every effect available for another render', async () => {
-  const d = new DspDraft(); d.config.effects = effectKinds.map(newEffect)
+  const d = new DspDraft(); d.config.effects = effectKinds.filter(kind => kind !== 'channel-matrix').map(kind => newEffect(kind))
   const req = request(d)
   await d.render({ post: async () => previewFixture(req, { slow: true }) }, req)
   assert.equal(d.report?.timing.overBudget, true); assert.deepEqual(d.config, req.config)

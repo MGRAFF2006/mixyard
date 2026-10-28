@@ -6,6 +6,11 @@ import { DspDraft, effectKinds, filters, move, newEffect, readChain, starter } f
 import type { Dynamics, EffectConfig, EffectKind, PreviewRequest, Signal } from './dsp.ts'
 import DspNumber from './DspNumber.vue'
 import DspArray from './DspArray.vue'
+import ChannelOperations from './ChannelOperations.vue'
+import ChannelMatrix from './ChannelMatrix.vue'
+import DelayTiming from './DelayTiming.vue'
+import DelayMeter from './DelayMeter.vue'
+import { addChannel as addLane, removeChannel as removeLane, renameChannel as renameLane } from './channels.ts'
 
 const props = defineProps<{ api: Pick<Api, 'post'>; ready: boolean }>()
 const d = reactive(new DspDraft())
@@ -16,6 +21,8 @@ const preset = ref<'empty' | 'trim' | 'echo' | 'fir'>('empty'), kind = ref<Effec
 const frames = ref(128), iterations = ref(16), signalKind = ref<Signal['kind']>('impulse')
 const amplitude = ref(0.25), frequency = ref(1000), samples = ref<number[]>([0.25, 0])
 const channelId = ref('')
+const renameDrafts = reactive(new Map<string, string>())
+const view = ref<'beginner' | 'everyday' | 'expert'>('everyday')
 const result = computed(() => d.report)
 const effectKeys = new WeakMap<EffectConfig, number>()
 let key = 0
@@ -38,15 +45,40 @@ function exportChain() {
   try { download(readChain(d.config), 'mixyard-chain.json') } catch (e) { error.value = message(e) }
 }
 function loadStarter() { d.config = starter(preset.value); d.bypassed = false; generation.value++; changed(); notice.value = 'Starter loaded. Export chain to keep it.' }
-function addEffect() { d.config.effects.push(newEffect(kind.value)); changed() }
+function addEffect() { d.config.effects.push(newEffect(kind.value, d.config.format.channels)); changed() }
 function removeEffect(index: number) { d.config.effects.splice(index, 1); changed() }
 function reorder<T>(items: T[], index: number, offset: -1 | 1) { move(items, index, offset); changed() }
 function addChannel() {
-  const id = channelId.value
-  if (!id.trim() || d.config.format.channels.includes(id)) { error.value = 'Enter a nonblank, unique channel ID. IDs are preserved exactly.'; return }
-  d.config.format.channels.push(id); channelId.value = ''; changed()
+  try { addLane(d.config, channelId.value); channelId.value = ''; changed() } catch (e) { error.value = message(e) }
 }
-function removeChannel(index: number) { d.config.format.channels.splice(index, 1); changed() }
+function removeChannel(index: number) {
+  try { removeLane(d.config, d.config.format.channels[index]!); changed() } catch (e) { error.value = message(e) }
+}
+function renameChannel(id: string, event: Event) {
+  const input = event.target as HTMLInputElement
+  try { renameLane(d.config, id, input.value); changed() } catch (e) { input.value = id; error.value = message(e) }
+  finally { renameDrafts.delete(id) }
+}
+function appendOperation(item: EffectConfig) { d.config.effects.push(item); changed(); notice.value = `Added ${item.name} at stage ${d.config.effects.length}. Existing stages kept.` }
+function appendAlignment(items: EffectConfig[]) { d.config.effects.push(...items); changed(); notice.value = 'Measured alignment delays appended. Measure signal delay again to verify.' }
+const minimumGainDb = 20 * Math.log10(Number.MIN_VALUE)
+const maximumGainDb = 20 * Math.log10(Number.MAX_VALUE)
+function setGainDb(item: EffectConfig, db: number) {
+  changed()
+  const gain = 10 ** (db / 20)
+  if (!Number.isFinite(gain) || gain === 0) { error.value = 'That dB conversion is outside positive finite Float64 range. The previous gain is kept; use Linear gain for exact extreme values.'; return }
+  if (item.effect.kind === 'gain') item.effect.gain = gain
+}
+function selectMode(item: EffectConfig, event: Event) {
+  if ((event.target as HTMLSelectElement).value === 'all') delete item.channels
+  else item.channels = [d.config.format.channels[0]!]
+  changed()
+}
+function toggleChannel(item: EffectConfig, id: string, event: Event) {
+  const ids = item.channels ?? []
+  item.channels = (event.target as HTMLInputElement).checked ? [...ids, id] : ids.filter(value => value !== id)
+  changed()
+}
 function message(e: unknown) { return e instanceof Error ? e.message : String(e) }
 async function run(action: () => Promise<void>) {
   if (busy.value) return
@@ -84,6 +116,10 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
     <p v-if="!ready" class="message warning">Service session unavailable. Start mixyard-web, then use Refresh above. Chain editing and export remain available.</p>
     <p v-if="error" class="message error" role="alert">{{ error }} Chain edits are kept. Correct the input or reconnect and retry.</p>
     <p v-if="notice" class="message success" role="status">{{ notice }}</p>
+    <div class="dsp-view actions" role="group" aria-label="Control detail">
+      <span>Controls</span><button v-for="value in (['beginner', 'everyday', 'expert'] as const)" :key="value" type="button" :aria-pressed="view === value" @click="view = value">{{ value === 'beginner' ? 'Beginner' : value === 'everyday' ? 'Everyday' : 'Expert' }}</button>
+      <span class="secondary">One complete chain. Views only change detail.</span>
+    </div>
     <form :key="generation" ref="form" @submit.prevent @input="changed">
       <fieldset :disabled="busy" class="dsp-editor">
         <legend>Chain snapshot</legend>
@@ -92,15 +128,16 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
           <DspNumber label="Sample rate (Hz)" :value="d.config.format.sampleRateHz" :min="1" :max="4294967295" integer @update="d.config.format.sampleRateHz = $event" />
           <label class="dsp-check"><input v-model="d.bypassed" type="checkbox" /> Bypass whole chain</label>
         </div>
-        <h3>Channel order</h3><p class="secondary">Opaque IDs are used exactly as entered; no inferred speaker layout or downmix.</p>
+        <h3>Channel order</h3><p class="secondary">Opaque IDs are used exactly as entered; no inferred speaker roles. Editing an ID renames the same lane and all its selectors/routes. Removing a referenced lane is blocked.</p>
         <ol class="dsp-channels">
-          <li v-for="(id, index) in d.config.format.channels" :key="index"><label class="dsp-field">Channel {{ index + 1 }} ID<input v-model="d.config.format.channels[index]" required pattern=".*\S.*" /></label>
+          <li v-for="(id, index) in d.config.format.channels" :key="index"><label class="dsp-field">Channel {{ index + 1 }} ID<input :value="renameDrafts.get(id) ?? id" @input="renameDrafts.set(id, ($event.target as HTMLInputElement).value)" @change="renameChannel(id, $event)" required pattern=".*\S.*" /></label>
             <div class="actions"><button type="button" :disabled="index === 0" :aria-label="`Move channel ${index + 1} up`" @click="reorder(d.config.format.channels, index, -1)">Up</button><button type="button" :disabled="index === d.config.format.channels.length - 1" :aria-label="`Move channel ${index + 1} down`" @click="reorder(d.config.format.channels, index, 1)">Down</button><button type="button" :aria-label="`Remove channel ${index + 1}`" @click="removeChannel(index)">Remove</button></div>
           </li>
         </ol>
         <div class="actions"><label class="dsp-field">New channel ID<input v-model="channelId" /></label><button type="button" @click="addChannel">Add channel</button></div>
         <div class="dsp-starter actions"><label class="dsp-field">Starter preset<select aria-label="Starter preset" v-model="preset"><option value="empty">Empty stereo / 48 kHz</option><option value="trim">Half-amplitude trim</option><option value="echo">20 ms single echo / 48 kHz</option><option value="fir">Three-tap FIR example</option></select></label><button type="button" @click="loadStarter">Load starter (replaces chain)</button><button type="button" @click="exportChain">Export chain</button></div>
       </fieldset>
+      <ChannelOperations :config="d.config" :busy="busy" @append="appendOperation" @error="error = $event" />
       <div class="section-heading"><div><h3>Effect order</h3><p>Signal passes through enabled effects from top to bottom. Disabled parameters are still validated.</p></div></div>
       <p v-if="!d.config.effects.length" class="empty">No effects. The empty chain preserves the input samples.</p>
       <ol class="dsp-effects">
@@ -109,8 +146,20 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
             <div class="dsp-effect-header"><label class="dsp-field">Effect name<input v-model="item.name" required pattern=".*\S.*" /></label><label class="dsp-check"><input v-model="item.enabled" type="checkbox" /> Enabled</label>
               <div class="actions"><button type="button" :disabled="index === 0" :aria-label="`Move effect ${index + 1} up`" @click="reorder(d.config.effects, index, -1)">Up</button><button type="button" :disabled="index === d.config.effects.length - 1" :aria-label="`Move effect ${index + 1} down`" @click="reorder(d.config.effects, index, 1)">Down</button><button type="button" :aria-label="`Remove effect ${index + 1}`" @click="removeEffect(index)">Remove</button></div>
             </div>
+            <div v-if="item.effect.kind !== 'channel-matrix'" class="effect-channels">
+              <label class="dsp-field">Apply effect to<select aria-label="Apply effect to" :value="item.channels == null ? 'all' : 'selected'" @change="selectMode(item, $event)"><option value="all">All format channels</option><option value="selected">Selected channels independently</option></select></label>
+              <div v-if="item.channels != null" class="channel-selection" role="group" aria-label="Effect channel selection">
+                <label v-for="id in d.config.format.channels" :key="id" class="dsp-check"><input type="checkbox" :checked="item.channels.includes(id)" @change="toggleChannel(item, id, $event)" />{{ JSON.stringify(id) }}</label>
+                <p v-if="!item.channels.length" class="message error">Choose at least one channel, or choose All format channels.</p>
+              </div>
+              <p class="secondary">{{ item.channels == null ? 'All format channels' : item.channels.map(id => JSON.stringify(id)).join(', ') }}. Add separate ordered effects for different lane parameters.</p>
+            </div>
+            <p v-else class="secondary">Explicit routing across the fixed format lanes; outputs are identified by ID, independent of channel order.</p>
+            <details class="effect-parameters" :open="view !== 'beginner'"><summary>{{ view === 'beginner' ? 'Edit parameters' : 'Effect parameters' }}</summary>
             <div class="dsp-fields">
               <template v-if="item.effect.kind === 'gain'">
+                <DspNumber label="Level (dB)" :value="item.effect.gain > 0 ? 20 * Math.log10(item.effect.gain) : 0" :min="minimumGainDb" :max="maximumGainDb" @input.stop @update="setGainDb(item, $event)" />
+                <p class="secondary" v-if="item.effect.gain === 0">Silent (linear gain 0). Entering a dB level explicitly restores gain.</p>
                 <DspNumber label="Linear gain" :value="item.effect.gain" :min="0" @update="item.effect.gain = $event" />
                 <label class="dsp-check"><input v-model="item.effect.invertPolarity" type="checkbox" /> Invert polarity</label>
               </template>
@@ -122,7 +171,7 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
                 <p class="secondary dsp-wide">Frequency must be below Nyquist ({{ d.config.format.sampleRateHz / 2 }} Hz); Q must be positive. Gain must be zero except for peaking and shelves. Shelves use Q, not slope S. Rust checks stability.</p>
               </template>
               <template v-else-if="item.effect.kind === 'delay'">
-                <DspNumber label="Delay (frames)" :value="item.effect.frames" :min="1" integer @update="item.effect.frames = $event" />
+                <DelayTiming :frames="item.effect.frames" :rate="d.config.format.sampleRateHz" @update="item.effect.frames = $event; changed()" />
                 <DspNumber label="Wet" :value="item.effect.wet" :min="0" :max="1" @update="item.effect.wet = $event" />
                 <DspNumber label="Dry" :value="item.effect.dry" :min="0" :max="1" @update="item.effect.dry = $event" />
                 <DspNumber label="Feedback" :value="item.effect.feedback" :min="-1" :max="1" @update="item.effect.feedback = $event" />
@@ -132,15 +181,18 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
                 <DspNumber v-for="field in dynamicsFields" :key="field.key" :label="field.label" :value="item.effect.parameters[field.key]" :min="field.min" :max="field.max" @update="item.effect.parameters[field.key] = $event" />
                 <p class="secondary dsp-wide">Independent channel peak detectors; attack/release describe detector time constants. No look-ahead, linking or true-peak limiting. Range is ignored by compressors.</p>
               </template>
+              <ChannelMatrix v-else-if="item.effect.kind === 'channel-matrix'" :routes="item.effect.routes" :channels="d.config.format.channels" :expert="view === 'expert'" @change="changed" />
               <template v-else-if="item.effect.kind === 'fir'">
                 <DspArray label="FIR coefficients (JSON array)" :value="item.effect.coefficients" @update="item.effect.coefficients = $event" />
                 <p class="secondary dsp-wide">{{ item.effect.coefficients.length }} taps, retained in full. No normalization, resampling or truncation. Direct convolution can be slow.</p>
               </template>
             </div>
+            </details>
           </fieldset>
         </li>
       </ol>
       <div class="actions dsp-add"><label class="dsp-field">New effect<select aria-label="New effect" v-model="kind" :disabled="busy"><option v-for="value in effectKinds" :key="value">{{ value }}</option></select></label><button type="button" :disabled="busy" @click="addEffect">Add effect</button></div>
+      <details :open="view === 'expert'" class="dsp-raw"><summary>Complete chain JSON (exact values)</summary><p class="secondary">Read-only canonical snapshot, including all fields. Export to keep it; use Import chain JSON below to validate and replace a full edit.</p><pre>{{ dspJson(d.config, true) }}</pre></details>
       <fieldset :disabled="busy" class="dsp-signal"><legend>Offline block and benchmark</legend>
         <div class="dsp-fields">
           <DspNumber label="Block frames" :value="frames" :min="1" integer @update="frames = $event" />
@@ -154,6 +206,7 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
         <button class="primary dsp-render" type="button" :disabled="busy || !ready" @click="render">{{ busy ? 'Working…' : 'Render and measure' }}</button>
       </fieldset>
     </form>
+    <DelayMeter :api="api" :ready="ready" :config="d.config" :bypassed="d.bypassed" @append="appendAlignment" @export="download($event, 'mixyard-delay.json')" />
     <div class="dsp-results" aria-live="polite" aria-atomic="false">
       <p v-if="!result" class="empty">Speed unknown. No current preview or timing. Render and measure explicitly after editing.</p>
       <template v-else>
@@ -169,8 +222,8 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
           <div><dt>Block budget</dt><dd>{{ result.timing.blockBudgetMs }} ms</dd></div>
           <div><dt>Deadline misses / repetitions</dt><dd>{{ result.timing.deadlineMisses }} / {{ result.timing.iterations }}</dd></div>
           <div><dt>Measurement context</dt><dd>{{ result.timing.build }} / {{ result.timing.os }} / {{ result.timing.arch }}; Float64, {{ result.sampleRateHz }} Hz, {{ result.channels.length }} channels, {{ result.frames }} frames</dd></div>
-          <div><dt>Added buffering / look-ahead</dt><dd>{{ result.admission.algorithmicLatencyFrames }} frames ({{ ms(result.admission.algorithmicLatencyFrames, result.sampleRateHz) }} ms)</dd></div>
-          <div><dt>Explicit delay taps</dt><dd>{{ result.admission.explicitDelayFrames }} frames ({{ ms(result.admission.explicitDelayFrames, result.sampleRateHz) }} ms)</dd></div>
+          <div><dt>Configured buffering / look-ahead</dt><dd>{{ result.admission.algorithmicLatencyFrames }} frames ({{ ms(result.admission.algorithmicLatencyFrames, result.sampleRateHz) }} ms)</dd></div>
+          <div><dt>Configured explicit delay bound</dt><dd>{{ result.admission.explicitDelayFrames }} frames ({{ ms(result.admission.explicitDelayFrames, result.sampleRateHz) }} ms)</dd></div>
           <div><dt>Zero-input tail bound</dt><dd>{{ result.admission.tail.kind === 'finite' ? `${result.admission.tail.frames} frames` : 'Infinite; choose an explicit render duration/tolerance' }}</dd></div>
         </dl>
         <p class="secondary">Filters have frequency-dependent group delay; FIR coefficients may encode delay and phase. Group delay and total route/device/network latency are not measured here. Timing excludes compilation, reset, signal generation, output copying and network/JSON work.</p>

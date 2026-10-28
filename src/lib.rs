@@ -44,6 +44,7 @@ pub mod automation;
 pub mod context;
 pub mod diagnostics;
 pub mod dsp;
+pub mod latency;
 pub mod profiles;
 
 use serde::{Deserialize, Serialize};

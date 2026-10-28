@@ -1,8 +1,10 @@
 use crate::protocol::{Frame, Limits, Offer, Permissions, VERSION};
+use crate::timing::StreamTiming;
 use anyhow::{Result, ensure};
+use serde::Serialize;
 use std::collections::{BTreeMap, VecDeque};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Counters {
     pub accepted: u64,
     pub missing_silence: u64,
@@ -152,6 +154,32 @@ impl Receiver {
 
     pub fn queued(&self, id: u64) -> usize {
         self.streams.get(&id).map_or(0, |s| s.packets.len())
+    }
+
+    pub fn timing_snapshot(&self) -> Vec<StreamTiming> {
+        self.streams
+            .values()
+            .map(|stream| {
+                let mut timing = StreamTiming::new(
+                    &stream.offer,
+                    stream.packets.len(),
+                    self.limits.packets_per_stream,
+                    stream.counters.clone(),
+                );
+                timing.next_sample_frame = stream
+                    .next
+                    .checked_mul(u64::from(stream.offer.spec.frames_per_packet));
+                let span = stream
+                    .packets
+                    .last_key_value()
+                    .map_or(0, |(&last, _)| last - stream.next + 1)
+                    * u64::from(stream.offer.spec.frames_per_packet);
+                timing.buffered_timeline_sample_frames = Some(span);
+                timing.buffered_timeline_ms =
+                    Some(span as f64 * 1000.0 / f64::from(stream.offer.spec.sample_rate));
+                timing
+            })
+            .collect()
     }
 
     pub fn disconnect(&mut self) {
@@ -323,6 +351,35 @@ impl Outbox {
             ..Counters::default()
         })
     }
+    pub fn timing_snapshot(&self) -> Vec<StreamTiming> {
+        self.streams
+            .values()
+            .map(|stream| {
+                let mut timing = StreamTiming::new(
+                    &stream.offer,
+                    stream.packets.len(),
+                    self.limit,
+                    self.counters(stream.offer.spec.stream)
+                        .expect("admitted stream"),
+                );
+                timing.next_sample_frame = stream
+                    .next
+                    .checked_mul(u64::from(stream.offer.spec.frames_per_packet));
+                let frame_bytes = stream
+                    .offer
+                    .spec
+                    .codec
+                    .sample_bytes()
+                    .expect("admitted codec")
+                    * stream.offer.spec.channels.len();
+                timing.partial_sample_frames = (stream.partial.len() / frame_bytes) as u64;
+                timing.partial_sample_ms = timing.partial_sample_frames as f64 * 1000.0
+                    / f64::from(stream.offer.spec.sample_rate);
+                timing
+            })
+            .collect()
+    }
+
     pub fn clear(&mut self) {
         self.streams.clear();
     }
