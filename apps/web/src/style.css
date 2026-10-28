@@ -185,3 +185,70 @@ footer { display: flex; justify-content: space-between; color: #50657a; font-siz
 .delay-meter > form > button { justify-self: start; }
 .delay-meter .dsp-table-scroll { margin: 0; }
 .delay-meter .message { margin-bottom: 0; }
+
+/* Situations uses the console palette; graph topology and labeled paths carry meaning. */
+.situations { min-width: 0; }
+.situations fieldset { min-width: 0; margin: 18px 0; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.situations legend { font-weight: 650; padding: 0 6px; overflow-wrap: anywhere; }
+.situation-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; margin: 10px 0; font-size: .9rem; }
+.situation-field input, .situation-field select, .situation-field textarea { width: 100%; min-width: 0; }
+.situation-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 215px), 1fr)); gap: 0 16px; align-items: end; }
+.situation-check { display: flex; gap: 9px; align-items: center; padding: 10px 0; }
+.situation-check input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--blue); }
+.situation-hint { font-size: .85rem; color: #50657a; margin: 10px 0; overflow-wrap: anywhere; }
+.situation-presets { border: 1px solid var(--line); border-left: 4px solid var(--teal); background: #fff; border-radius: 6px; padding: 0 18px 18px; }
+.situation-presets > p { margin-bottom: 12px; }
+.situation-presets .message { margin-top: 12px; }
+.situation-identity { margin: 20px 0 12px; }
+.situation-toolbar { margin: 16px 0; }
+.situation-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 22px; align-items: start; }
+.situation-map, .situation-node-editor { min-width: 0; }
+.situation-node-editor > fieldset { margin-top: 0; }
+.situation-diagram { width: 100%; max-height: 540px; overflow: auto; background: #e9f0f8; border: 1px solid var(--line); border-radius: 6px; }
+.situation-diagram svg { display: block; max-width: none; color: #50657a; }
+.situation-edge > path { fill: none; stroke: #788da2; stroke-width: 1.5; }
+.situation-edge text { font-size: 12px; fill: var(--ink); stroke: #e9f0f8; stroke-width: 5px; paint-order: stroke; }
+.situation-edge.evaluated > path { stroke: var(--teal); stroke-width: 4; stroke-dasharray: 9 4; }
+.situation-edge.evaluated text { font-weight: 750; }
+.situation-map-node > rect { fill: white; stroke: #8d9fb2; stroke-width: 1.5; }
+.situation-map-node.visited > rect { stroke: var(--teal); stroke-width: 3; }
+.situation-map-node.selected > rect { stroke: var(--blue); }
+.situation-map-node > .situation-selection { fill: none; stroke-width: 1; }
+.situation-map-node > text { fill: var(--ink); font-size: 15px; font-weight: 650; }
+.situation-map-node > text.situation-map-label { font-size: 12px; font-weight: 400; fill: #50657a; }
+.situation-node-list { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 10px; }
+.situation-node-list > li { padding: 12px; border: 1px solid var(--line); background: #fff; border-radius: 4px; overflow-wrap: anywhere; }
+.situation-node-list > li.selected { border-left: 4px solid var(--blue); }
+.situation-node-list > li > strong, .situation-path-label { font-size: .8rem; margin-left: 12px; }
+.situation-path-label { color: var(--teal); font-weight: 650; }
+.situation-node-list p { margin-top: 8px; font-size: .85rem; }
+.situation-branches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.situation-branches button { font-size: .8rem; text-align: left; overflow-wrap: anywhere; }
+.situations .condition-editor { border-left: 3px solid var(--blue); padding: 12px; }
+.condition-child { margin-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.situations .condition-editor .condition-editor { margin-left: 0; }
+.situations .condition-editor.condition-deep { padding-left: 0; padding-right: 0; border-left: 0; border-right: 0; }
+.situation-reduction > button { margin-top: 12px; }
+.situation-live, .situation-result, .situation-expert { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 24px; }
+.situation-live .section-heading { padding-top: 0; }
+.situation-live button { margin-top: 12px; }
+.situation-result > p { margin-top: 12px; }
+.situation-providers, .situation-trace { padding-left: 24px; }
+.situation-providers li, .situation-trace li { margin: 12px 0; overflow-wrap: anywhere; }
+.situation-evidence { border-left: 3px solid var(--teal); padding-left: 14px; margin: 22px 0; }
+.situation-evidence h4 { margin: 0 0 8px; }
+.situation-json { display: grid; gap: 12px; margin-top: 16px; }
+.situation-json > button { justify-self: start; }
+.situation-result pre, .situation-live pre { max-width: 100%; }
+@media (max-width: 850px) { .situation-workspace { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 750px) {
+  nav { flex-wrap: wrap; }
+  .situation-fields { grid-template-columns: minmax(0, 1fr); }
+  .situations fieldset { padding: 12px; }
+  .situation-presets { padding: 0 12px 12px; }
+  .situation-diagram { max-height: 430px; }
+  .situation-toolbar button { flex-grow: 1; }
+}
+.situation-member { display: flex; gap: 10px; align-items: end; }
+.situation-member > label { flex: 1; }
+.situation-member > button { margin-bottom: 10px; }
