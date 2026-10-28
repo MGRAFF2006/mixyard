@@ -4,6 +4,45 @@ use mixyard::dsp::*;
 use support::*;
 
 #[test]
+fn dynamics_do_not_erase_representable_extreme_amplitudes() {
+    let mut p = dynamics();
+    p.threshold_db = -6000.0;
+    let mut compressor = chain(vec![Effect::Compressor { parameters: p }], 2, 48000, 1);
+    compressor.process(1, &[1e300, -1e300]).unwrap();
+    // Static output law: -6000 + (6000 - -6000)/4 = -3000 dB.
+    for (actual, expected) in compressor.output().iter().zip([1e-150, -1e-150]) {
+        assert!(
+            (actual / expected - 1.0).abs() < 1e-12,
+            "{actual:e} != {expected:e}"
+        );
+    }
+    p.threshold_db = -2600.0;
+    let mut subnormal_gain = chain(vec![Effect::Compressor { parameters: p }], 1, 48000, 1);
+    subnormal_gain.process(1, &[1e300]).unwrap();
+    // Output is -450 dB even though the intermediate linear gain is subnormal.
+    assert!((subnormal_gain.output()[0] / 3.162277660168379e-23 - 1.0).abs() < 1e-12);
+    p.threshold_db = 0.0;
+    p.ratio = 2.0;
+    p.range_db = 6000.0;
+    p.makeup_db = 6000.0;
+    let mut expander = chain(vec![Effect::Expander { parameters: p }], 2, 48000, 1);
+    expander.process(1, &[1e-300, -1e-300]).unwrap();
+    // -6000 dB attenuation is exactly cancelled by explicit +6000 dB makeup.
+    assert_eq!(
+        expander
+            .output()
+            .iter()
+            .map(|x| x.to_bits())
+            .collect::<Vec<_>>(),
+        [1e-300f64, -1e-300].map(f64::to_bits)
+    );
+    p.makeup_db = 5900.0;
+    let mut expander = chain(vec![Effect::Expander { parameters: p }], 1, 48000, 1);
+    expander.process(1, &[1e-300]).unwrap();
+    assert!((expander.output()[0] / 1e-305 - 1.0).abs() < 1e-12);
+}
+
+#[test]
 fn exact_disabled_empty_and_chain_bypass_preserve_float64_bits() {
     let pcm = [
         -0.0,
