@@ -1,0 +1,26 @@
+name: Loopback web service
+on:
+  workflow_dispatch:
+  push:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', '.github/workflows/web-service.yml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', '.github/workflows/web-service.yml']
+permissions:
+  contents: read
+jobs:
+  http:
+    name: Real HTTP and profile persistence (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Core and service checks
+        run: cargo test --locked --lib --bins --test web_service --test profiles_cli --test diagnostics_cli
