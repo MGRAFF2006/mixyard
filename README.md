@@ -13,6 +13,22 @@ See [current evidence, compatibility and reviewed heads](docs/STATUS.md), the [r
 
 ## Development
 
+The local web console is the primary interface for the next milestone. From the
+repository root, with Rust, Node 24 and pnpm 11 installed:
+
+```sh
+./scripts/run-web.sh
+```
+
+Open the printed `http://127.0.0.1:8384` URL. The console edits and persists routing
+drafts, manages named profiles, and runs authoritative dry-run inspection. It
+starts empty; importing config or loading the labelled simulated example is
+explicit. Gain/mute controls change saved intent, not live audio. The service
+works without a lifecycle runtime and never starts or stops one. Use
+`--store DIRECTORY`, `--port PORT` and `--instance NAME` to select local state.
+See [web console workflows and verification](apps/web/README.md) and the
+[local service contract](docs/web-service.md).
+
 Run from the repository root. These checks do not open audio devices or change routes/defaults/services. Rust and Python 3.10+ are sufficient for the headless checks; the root package has no GUI dependencies.
 
 ```sh

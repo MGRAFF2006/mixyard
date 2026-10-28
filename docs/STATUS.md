@@ -1,5 +1,32 @@
 # Integrated development status
 
+## Web-first milestone (2026-10-28)
+
+The local Rust `mixyard-web` service and standalone browser console now work
+together without a native desktop SDK. `scripts/run-web.sh` builds and serves the
+console on a protected loopback URL. A fresh store starts empty. Explicit imports
+or the labelled example feed a source/mix matrix, independent output levels,
+persisted drafts, named save/rename/load profiles, revision conflicts and undo.
+Inspection delegates to the core; no route is applied to audio.
+
+Actual production assets with the Rust service passed four isolated browser
+flows: independent gain/mute edits surviving browser/service restart, real
+profile operations and competing windows, diagnostics/import errors/offline
+recovery with 390 px keyboard operation, and the same explicitly started runtime
+surviving UI/service closure. The web service has ten real HTTP tests, including
+admission of inspection expansion before allocation. Both reviewer-reproduced
+memory-exhaustion inputs now reject early with subsequent reads succeeding;
+the selected-observation fanout case was exercised with four simultaneous
+requests under a 512 MiB process address-space limit. Fresh independent final
+review and hosted checks still govern merge readiness.
+
+These results establish local configuration/service behavior. Native source
+capture, application/physical consumer delivery, quality, drift, recovery,
+endurance and complete source-format preservation remain required and unproved.
+Network and wider-precision core foundations proceed in separate PRs; see
+[#29](https://github.com/MGRAFF2006/mixyard/issues/29). Historical evidence and
+remaining platform limitations follow below.
+
 Assembled 2026-10-14 from merged [#9](https://github.com/MGRAFF2006/mixyard/pull/9), exact `origin/main` base `26a096a2aa5045d6d7b0f9953e3d692f546978c1`. Four normal, non-rewriting merges add the reviewed runtime/diagnostics/profiles/native-desktop slices. The original seven components and their history remain present. This integration needs its own independent reviewer, different fixer/response checker, green CI, and an extra new final review for its exact HEAD. Only root may merge the consolidation into main, after no actionable findings and honest merge confidence strictly above 8/10.
 
 ## Exact reviewed imports

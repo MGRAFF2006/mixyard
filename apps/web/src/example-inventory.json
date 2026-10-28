@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 2,
+  "revision": 1,
+  "platform": "linux",
+  "evidence": "simulated",
+  "sources": [
+    {
+      "observedId": "simulated:source:0",
+      "selector": {
+        "kind": "mic",
+        "deviceUid": "example:usb-mic:serial-001"
+      },
+      "origin": "external",
+      "format": {
+        "channels": 1,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:source:1",
+      "selector": {
+        "kind": "app",
+        "applicationId": "example:spotify"
+      },
+      "origin": "external",
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:source:2",
+      "selector": {
+        "kind": "app",
+        "applicationId": "example:vlc"
+      },
+      "origin": "external",
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:source:3",
+      "selector": {
+        "kind": "call-return",
+        "applicationId": "example:call-app",
+        "group": "primary-call"
+      },
+      "origin": "external",
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:private",
+      "selector": {
+        "kind": "app",
+        "applicationId": "example:private-player"
+      },
+      "origin": "external"
+    }
+  ],
+  "outputs": [
+    {
+      "observedId": "simulated:output:0",
+      "target": {
+        "kind": "virtual-input",
+        "endpointId": "example:mixyard:call"
+      },
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:output:1",
+      "target": {
+        "kind": "virtual-input",
+        "endpointId": "example:mixyard:record"
+      },
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:output:2",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:wired-headphones"
+      },
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:output:3",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:device-a"
+      },
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:output:4",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:device-b"
+      },
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:output:5",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:device-c"
+      },
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    },
+    {
+      "observedId": "simulated:output:6",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:combined-output"
+      },
+      "format": {
+        "channels": 2,
+        "sampleRateHz": 48000
+      }
+    }
+  ],
+  "mediaSessions": [
+    {
+      "sessionId": "simulated:session:spotify",
+      "applicationId": "example:spotify",
+      "playbackState": "playing",
+      "supportedActions": [
+        "play",
+        "pause",
+        "next",
+        "previous"
+      ]
+    },
+    {
+      "sessionId": "simulated:session:vlc",
+      "applicationId": "example:vlc",
+      "playbackState": "playing",
+      "supportedActions": [
+        "play",
+        "pause",
+        "next",
+        "previous"
+      ]
+    },
+    {
+      "sessionId": "simulated:session:private-player",
+      "applicationId": "example:private-player",
+      "playbackState": "playing",
+      "supportedActions": [
+        "play",
+        "pause",
+        "next",
+        "previous"
+      ]
+    }
+  ],
+  "limits": {}
+}
