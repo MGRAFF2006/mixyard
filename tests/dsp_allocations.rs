@@ -72,8 +72,13 @@ fn actual_effects_errors_metering_resets_and_bypass_have_zero_heap_operations() 
     let input = [0.25; 512];
     let zeros = [0.0; 512];
     let invalid = [f64::NAN; 512];
+    let mut p = dynamics();
+    p.threshold_db = -6000.0;
+    let mut extreme = chain(vec![Effect::Compressor { parameters: p }], 1, 48000, 1);
     OPERATIONS.with(|n| n.set(Some(0)));
     for _ in 0..256 {
+        extreme.process(1, &[1e300]).unwrap();
+        assert!((extreme.output()[0] / 1e-150 - 1.0).abs() < 1e-12);
         c.process(64, &input).unwrap();
         assert_eq!(c.output().len(), 512);
         c.process(1, &input[..8]).unwrap();

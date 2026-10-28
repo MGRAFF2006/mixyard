@@ -193,7 +193,6 @@ enum State {
         envelope: Box<[f64]>,
         attack: f64,
         release: f64,
-        makeup: f64,
     },
     Fir {
         history: Box<[f64]>,
@@ -370,7 +369,6 @@ impl Chain {
                                 parameters.release_ms,
                                 config.format.sample_rate_hz,
                             ),
-                            makeup: 10f64.powf(parameters.makeup_db / 20.0),
                         }
                     }
                 }
@@ -597,10 +595,10 @@ fn time_coefficient(ms: f64, rate: u32) -> f64 {
     }
 }
 
-fn dynamics_gain(level: f64, p: &Dynamics, compressor: bool) -> f64 {
+fn dynamics_reduction_db(level: f64, p: &Dynamics, compressor: bool) -> f64 {
     let delta = level - p.threshold_db;
     let half = p.knee_db / 2.0;
-    let reduction = if compressor {
+    if compressor {
         let above = if delta <= -half {
             0.0
         } else if delta >= half {
@@ -628,8 +626,23 @@ fn dynamics_gain(level: f64, p: &Dynamics, compressor: bool) -> f64 {
         } else {
             below * slope
         }
-    };
-    10f64.powf(-reduction / 20.0)
+    }
+}
+
+fn apply_db_gain(sample: f64, gain_db: f64) -> f64 {
+    if sample == 0.0 || gain_db == 0.0 {
+        return sample;
+    }
+    let gain = 10f64.powf(gain_db / 20.0);
+    if gain.is_normal() {
+        return sample * gain;
+    }
+    // A gain can underflow even when the final amplitude is normal. Compute the
+    // combined exponent only on that path; ordinary levels keep normal multiply
+    // rounding, and cancelling attenuation/makeup preserves input bits exactly.
+    10f64
+        .powf(sample.abs().log10() + gain_db / 20.0)
+        .copysign(sample)
 }
 
 fn run(effect: &Effect, state: &mut State, channels: usize, block: &mut [f64]) -> bool {
@@ -724,7 +737,6 @@ fn run(effect: &Effect, state: &mut State, channels: usize, block: &mut [f64]) -
                 envelope,
                 attack,
                 release,
-                makeup,
             },
         ) => {
             let compressor = matches!(effect, Effect::Compressor { .. });
@@ -745,8 +757,8 @@ fn run(effect: &Effect, state: &mut State, channels: usize, block: &mut [f64]) -
                     } else {
                         20.0 * envelope[ch].log10()
                     };
-                    let gain = dynamics_gain(level, p, compressor);
-                    *x = (*x * gain) * *makeup;
+                    let reduction = dynamics_reduction_db(level, p, compressor);
+                    *x = apply_db_gain(*x, p.makeup_db - reduction);
                     if !x.is_finite() {
                         return false;
                     }
