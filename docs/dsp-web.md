@@ -64,6 +64,13 @@ the existing structured error shape with an explanation; larger full offline
 rendering remains available through the DSP engine/example. These are endpoint
 resource limits, not product limits or grounds to omit slow effects.
 
+Current endpoint ceilings are 4096 frames, 32 channels, 32768 scalar samples per
+block, 64 effects, 32 MiB retained chain memory, 64 timing repetitions, and 250
+million abstract work units across the initial output and timed repetitions.
+The service request and browser JSON import limit is 1 MiB. A budget rejection
+does not modify the chain; reducing preview block/repetition count or using the
+offline renderer remains an explicit choice.
+
 The interface follows the existing console style: ordered effect list with
 add/remove/reorder/enable controls, type-specific parameters and named presets;
 explicit sample rate and ordered channel identities; separate block/signal and

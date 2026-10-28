@@ -39,6 +39,7 @@ function finiteTree(v: unknown): void {
   else if (v && typeof v === 'object') Object.values(v).forEach(finiteTree)
 }
 export function parseDspJson(text: string): unknown {
+  if (new TextEncoder().encode(text).length > 1_048_576) fail('DSP JSON exceeds the web preview 1 MiB input budget. Use the offline renderer for larger jobs; no coefficients were truncated.')
   const v: unknown = JSON.parse(text); finiteTree(v); return v
 }
 export function readNumbers(text: string): number[] { return list(parseDspJson(text)).map(finite) }

@@ -60,6 +60,7 @@ async function applyImport(text: string) {
 }
 async function importFile(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = ''
+  if (file && file.size > 1_048_576) { error.value = 'Chain file exceeds the web preview 1 MiB input budget. Use the offline renderer for larger jobs. Current chain kept.'; return }
   if (file) await run(async () => applyImport(await file.text()))
 }
 async function render() {
