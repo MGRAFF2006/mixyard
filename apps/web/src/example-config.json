@@ -1,0 +1,221 @@
+{
+  "schemaVersion": 2,
+  "revision": 1,
+  "sources": [
+    {
+      "id": "mic",
+      "selector": {
+        "kind": "mic",
+        "deviceUid": "example:usb-mic:serial-001"
+      }
+    },
+    {
+      "id": "spotify",
+      "selector": {
+        "kind": "app",
+        "applicationId": "example:spotify"
+      }
+    },
+    {
+      "id": "vlc",
+      "selector": {
+        "kind": "app",
+        "applicationId": "example:vlc"
+      }
+    },
+    {
+      "id": "return",
+      "selector": {
+        "kind": "call-return",
+        "applicationId": "example:call-app",
+        "group": "primary-call"
+      }
+    }
+  ],
+  "mixes": [
+    {
+      "id": "call",
+      "name": "Call",
+      "channels": 1,
+      "excludeGroups": [
+        "primary-call"
+      ]
+    },
+    {
+      "id": "record",
+      "name": "Record",
+      "channels": 2
+    },
+    {
+      "id": "monitor",
+      "name": "Monitor",
+      "channels": 2
+    },
+    {
+      "id": "desk-a",
+      "name": "Music at my desk",
+      "channels": 2
+    },
+    {
+      "id": "desk-b",
+      "name": "Movie corner",
+      "channels": 2
+    },
+    {
+      "id": "shared",
+      "name": "Both players • party",
+      "channels": 2
+    }
+  ],
+  "sends": [
+    {
+      "source": "mic",
+      "mix": "call",
+      "gain": 1
+    },
+    {
+      "source": "mic",
+      "mix": "record",
+      "gain": 0.5
+    },
+    {
+      "source": "mic",
+      "mix": "monitor",
+      "gain": 0
+    },
+    {
+      "source": "spotify",
+      "mix": "record",
+      "gain": 0.25
+    },
+    {
+      "source": "return",
+      "mix": "record",
+      "gain": 0.25
+    },
+    {
+      "source": "spotify",
+      "mix": "monitor",
+      "gain": 0.5
+    },
+    {
+      "source": "return",
+      "mix": "monitor",
+      "gain": 0.5
+    },
+    {
+      "source": "spotify",
+      "mix": "desk-a",
+      "gain": 1
+    },
+    {
+      "source": "vlc",
+      "mix": "desk-b",
+      "gain": 1
+    },
+    {
+      "source": "spotify",
+      "mix": "shared",
+      "gain": 0.5
+    },
+    {
+      "source": "vlc",
+      "mix": "shared",
+      "gain": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "call-input",
+      "mix": "call",
+      "target": {
+        "kind": "virtual-input",
+        "endpointId": "example:mixyard:call"
+      },
+      "gain": 1
+    },
+    {
+      "id": "record-input",
+      "mix": "record",
+      "target": {
+        "kind": "virtual-input",
+        "endpointId": "example:mixyard:record"
+      },
+      "gain": 1
+    },
+    {
+      "id": "headphones",
+      "mix": "monitor",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:wired-headphones"
+      },
+      "gain": 1,
+      "allowMicMonitor": true
+    },
+    {
+      "id": "speaker-a",
+      "mix": "desk-a",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:device-a"
+      },
+      "gain": 1
+    },
+    {
+      "id": "speaker-b",
+      "mix": "desk-b",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:device-b"
+      },
+      "gain": 1
+    },
+    {
+      "id": "speaker-c",
+      "mix": "desk-a",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:device-c"
+      },
+      "gain": 0.5
+    },
+    {
+      "id": "party",
+      "mix": "shared",
+      "target": {
+        "kind": "device",
+        "deviceUid": "example:combined-output"
+      },
+      "gain": 1
+    }
+  ],
+  "mediaControls": [
+    {
+      "deviceUid": "example:device-a",
+      "policy": {
+        "mode": "primary",
+        "applicationId": "example:spotify"
+      }
+    },
+    {
+      "deviceUid": "example:device-b",
+      "policy": {
+        "mode": "primary",
+        "applicationId": "example:vlc"
+      }
+    },
+    {
+      "deviceUid": "example:combined-output",
+      "policy": {
+        "mode": "all-routed-players"
+      }
+    },
+    {
+      "deviceUid": "example:device-c",
+      "policy": {
+        "mode": "os-default"
+      }
+    }
+  ]
+}
