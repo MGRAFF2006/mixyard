@@ -1,4 +1,4 @@
-//! Local browser console; never owns audio or the runtime lifecycle.
+//! Local browser console and reviewed stored-profile automation; never owns audio.
 #[path = "../web/mod.rs"]
 mod web;
 

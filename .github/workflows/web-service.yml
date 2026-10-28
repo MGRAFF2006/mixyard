@@ -2,9 +2,9 @@ name: Loopback web service
 on:
   workflow_dispatch:
   push:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', 'observers/**', 'adapters/linux/**', '.github/workflows/web-service.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', 'tests/web_support/**', 'observers/**', 'adapters/linux/**', '.github/workflows/web-service.yml']
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', 'observers/**', 'adapters/linux/**', '.github/workflows/web-service.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', 'tests/web_support/**', 'observers/**', 'adapters/linux/**', '.github/workflows/web-service.yml']
 permissions:
   contents: read
 jobs:
@@ -18,12 +18,16 @@ jobs:
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - name: Formatting
         run: cargo fmt --all --check
       - name: Core and service checks
-        run: cargo test --locked --lib --bins --test web_service --test profiles_cli --test diagnostics_cli
+        run: cargo test --locked --lib --bins --test web_service --test web_activation --test profiles_cli --test diagnostics_cli --test automation_core --test automation_controller --test automation_settings --test context --test runtime_readonly
+      - name: Clippy (existing web reply error-size allowance)
+        run: cargo clippy --locked --all-targets -- -D warnings -A clippy::result_large_err
       - name: Preserve locked resolution of all path-dependent consumers
         run: |
           cargo metadata --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --format-version 1 > desktop-metadata.json

@@ -1,4 +1,5 @@
 //! Bounded loopback HTTP transport for the existing core APIs.
+mod activation;
 mod api;
 mod assets;
 mod automation;
@@ -29,7 +30,7 @@ struct State {
     instance: String,
     store: profiles::Store,
     assets: assets::Assets,
-    context: std::sync::Mutex<Option<mixyard::context::Collector>>,
+    activation: activation::Service,
     operations: Arc<Semaphore>,
 }
 
@@ -41,7 +42,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     while let Some(option) = args.next() {
         if option == "--help" || option == "-h" {
-            println!("Usage: mixyard-web [--store DIRECTORY] [--instance NAME] [--port PORT] [--assets DIRECTORY]\nLoopback draft editing and read-only diagnostics; no audio or runtime lifecycle mutations.");
+            println!("Usage: mixyard-web [--store DIRECTORY] [--instance NAME] [--port PORT] [--assets DIRECTORY]\nLoopback draft editing, read-only diagnostics and explicitly reviewed stored-profile automation; native audio remains unavailable.");
             return Ok(());
         }
         if !["--store", "--instance", "--port", "--assets"].contains(&option.as_str()) {
@@ -59,10 +60,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     runtime::endpoint(&instance)?;
-    let store = profiles::Store::new(match store {
+    let profile_path = match store {
         Some(path) => path,
         None => profiles::default_directory()?,
-    })?;
+    };
+    let activation = activation::Service::start(&profile_path, instance.clone());
+    let store = profiles::Store::new(&profile_path)?;
     let assets = assets::Assets::load(&assets)?;
     let mut random = [0u8; 32];
     getrandom::fill(&mut random).map_err(|e| io::Error::other(e.to_string()))?;
@@ -83,9 +86,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 instance,
                 store,
                 assets,
-                context: std::sync::Mutex::new(
-                    mixyard::context::Collector::new(Default::default()).ok(),
-                ),
+                activation,
                 operations: Arc::new(Semaphore::new(4)),
             });
             let connections = Arc::new(Semaphore::new(32));
@@ -234,7 +235,7 @@ async fn handle(request: Request<Incoming>, state: Arc<State>) -> Reply {
         let _permit = permit;
         api::dispatch(&path, &bytes, &state)
     });
-    match timeout(Duration::from_secs(6), work).await {
+    match timeout(Duration::from_secs(9), work).await {
         Ok(Ok(response)) => response,
         Ok(Err(_)) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -293,4 +294,8 @@ fn json(value: &impl Serialize) -> Reply {
             "Cannot serialize result within the 8 MiB limit; reread before retrying a write",
         ),
     }
+}
+
+fn activation_route(path: &str, bytes: &[u8], state: &State) -> Reply {
+    state.activation.route(path, bytes)
 }

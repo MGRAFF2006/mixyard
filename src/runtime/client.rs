@@ -307,3 +307,103 @@ impl ReadOnlyClient {
         result
     }
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InventoryResponse {
+    ipc_version: u32,
+    request_id: String,
+    #[serde(default, deserialize_with = "non_null")]
+    result: Option<crate::Inventory>,
+    #[serde(default, deserialize_with = "non_null")]
+    error: Option<ServerError>,
+}
+
+impl ReadOnlyClient {
+    /// One bounded, cancellable, read-only inventory connection. Does not start a
+    /// runtime or substitute an empty inventory when the backend has none.
+    pub fn inventory(
+        instance: &str,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<crate::Inventory> {
+        use std::sync::atomic::Ordering;
+        let start = Instant::now();
+        let mut stream = transport::connect_cancellable(
+            &endpoint(instance)?,
+            cancelled,
+            std::time::Duration::from_secs(2),
+        )?;
+        let request_id = format!("inventory-{}", std::process::id());
+        let request =
+            frame(&json!({"ipcVersion":IPC_VERSION,"requestId":request_id,"command":"inventory"}));
+        let mut sent = 0;
+        let mut input = Vec::new();
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            if start.elapsed() >= std::time::Duration::from_secs(2) {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            if sent < request.len() {
+                match stream.write(&request[sent..]) {
+                    Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+                    Ok(n) => sent += n,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(e),
+                }
+            } else {
+                let mut buf = [0; 1024];
+                let limit = buf.len().min(MAX_FRAME + 1 - input.len());
+                match stream.read(&mut buf[..limit]) {
+                    Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+                    Ok(n) => input.extend_from_slice(&buf[..n]),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(e),
+                }
+                if let Some(end) = input.iter().position(|b| *b == b'\n') {
+                    if end > MAX_FRAME || end + 1 != input.len() {
+                        return Err(invalid("invalid inventory frame"));
+                    }
+                    let reply: InventoryResponse = serde_json::from_slice(&input[..end])
+                        .map_err(|_| invalid("malformed inventory response"))?;
+                    if reply.ipc_version != IPC_VERSION || reply.request_id != request_id {
+                        return Err(invalid("inventory version/requestId mismatch"));
+                    }
+                    return match (reply.result, reply.error) {
+                        (Some(inventory), None) => {
+                            if [
+                                inventory.sources.len(),
+                                inventory.outputs.len(),
+                                inventory.media_sessions.len(),
+                            ]
+                            .iter()
+                            .any(|n| *n > 256)
+                            {
+                                return Err(invalid("inventory admission limit"));
+                            }
+                            let empty = crate::Config {
+                                schema_version: 2,
+                                revision: 0,
+                                sources: vec![],
+                                mixes: vec![],
+                                sends: vec![],
+                                outputs: vec![],
+                                media_controls: vec![],
+                            };
+                            crate::plan(&empty, &inventory)
+                                .map_err(|_| invalid("invalid inventory"))?;
+                            Ok(inventory)
+                        }
+                        (None, Some(error)) => Err(io::Error::other(error)),
+                        _ => Err(invalid("expected exactly one inventory result or error")),
+                    };
+                }
+                if input.len() > MAX_FRAME {
+                    return Err(invalid("inventory frame exceeds MAX_FRAME"));
+                }
+            }
+            thread::sleep(TICK);
+        }
+    }
+}

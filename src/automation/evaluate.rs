@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 struct Evaluator<'a> {
     request: &'a Request,
+    application_scope: Option<&'a [String]>,
     catalog: BTreeMap<&'a str, &'a FactDefinition>,
     facts: BTreeMap<&'a FactKey, &'a Fact>,
     observations: Vec<Fact>,
@@ -38,7 +39,7 @@ impl Evaluator<'_> {
         let fresh = observation
             .zip(age_ms)
             .is_some_and(|(f, age)| age <= f.valid_for_ms.min(definition.max_age_ms));
-        let unknown_reason = match observation {
+        let mut unknown_reason = match observation {
             None => Some("missing-observation"),
             Some(f) => match f.status {
                 FactStatus::Unknown => Some("provider-unknown"),
@@ -62,13 +63,30 @@ impl Evaluator<'_> {
                 FactStatus::Known => None,
             },
         };
+        let scoped = if key.name == "application.running" {
+            self.application_scope.and_then(|scope| {
+                observation
+                    .and_then(|f| f.value.as_ref())
+                    .and_then(|v| match v {
+                        Value::TextSet(set) => Some(scoped_membership(set, scope, predicate)),
+                        _ => None,
+                    })
+            })
+        } else {
+            None
+        };
+        if unknown_reason.is_none() && scoped == Some(Truth::Unknown) {
+            unknown_reason = Some("outside-application-mapping-domain");
+        }
         let result = if unknown_reason.is_some() {
             Truth::Unknown
         } else {
             let value = observation
                 .and_then(|f| f.value.as_ref())
                 .expect("validated known observation");
-            if compare(value, predicate) {
+            if let Some(result) = scoped {
+                result
+            } else if compare(value, predicate) {
                 Truth::True
             } else {
                 Truth::False
@@ -191,7 +209,56 @@ fn compare(observed: &Value, predicate: &Predicate) -> bool {
 /// Evaluate one deterministic path in a validated DAG; performs no I/O or clock reads.
 /// Unsupported/missing information always follows onUnknown, never onFalse implicitly.
 pub fn evaluate(request: &Request) -> Result<Evaluation, Error> {
+    evaluate_with_scope(request, None)
+}
+
+/// Live mapped application sets prove membership only within the configured domain.
+/// The legacy evaluator and simulation format deliberately keep global-set semantics.
+/// Admission precedes duplicate scans and all evaluator allocations.
+pub fn evaluate_scoped(
+    request: &Request,
+    application_scope: &[String],
+) -> Result<Evaluation, Error> {
+    if application_scope.len() > 32
+        || application_scope
+            .iter()
+            .any(|s| s.trim().is_empty() || s.len() > MAX_TEXT_BYTES)
+    {
+        return Err(Error::new(
+            "resource-limit",
+            "invalid application mapping domain",
+        ));
+    }
+    let unique: BTreeSet<_> = application_scope.iter().collect();
+    if unique.len() != application_scope.len() {
+        return Err(Error::new(
+            "invalid-automation",
+            "duplicate application mapping identity",
+        ));
+    }
+    evaluate_with_scope(request, Some(application_scope))
+}
+
+fn evaluate_with_scope(
+    request: &Request,
+    application_scope: Option<&[String]>,
+) -> Result<Evaluation, Error> {
     validate(request)?;
+    // A live provider may not assert membership outside its declared domain.
+    if let Some(scope) = application_scope {
+        for f in &request.snapshot.facts {
+            if f.key.name == "application.running" {
+                if let Some(Value::TextSet(set)) = &f.value {
+                    if set.iter().any(|s| !scope.contains(s)) {
+                        return Err(Error::new(
+                            "invalid-automation",
+                            "observed application outside mapping domain",
+                        ));
+                    }
+                }
+            }
+        }
+    }
     let token = StateToken {
         graph_id: request.graph.id.clone(),
         graph_revision: request.graph.revision,
@@ -214,6 +281,7 @@ pub fn evaluate(request: &Request) -> Result<Evaluation, Error> {
     }
     let mut evaluator = Evaluator {
         request,
+        application_scope,
         catalog: request
             .catalog
             .iter()
@@ -264,5 +332,56 @@ pub fn evaluate(request: &Request) -> Result<Evaluation, Error> {
                 });
             }
         }
+    }
+}
+
+// Scoped evidence is deliberately condition-specific, preserving decisive membership
+// and logical evidence without rewriting graph IDs or turning NOT unknown into true.
+fn scoped_membership(set: &[String], scope: &[String], predicate: &Predicate) -> Truth {
+    let member = |s: &String| {
+        if !scope.contains(s) {
+            Truth::Unknown
+        } else if set.contains(s) {
+            Truth::True
+        } else {
+            Truth::False
+        }
+    };
+    let equality_disproved = |expected: &[String]| {
+        set.iter().any(|s| !expected.contains(s))
+            || expected.iter().any(|s| member(s) == Truth::False)
+    };
+    match predicate {
+        Predicate::Contains { value } => member(value),
+        Predicate::ContainsAll { values } => {
+            if values.iter().any(|s| member(s) == Truth::False) {
+                Truth::False
+            } else if values.iter().all(|s| member(s) == Truth::True) {
+                Truth::True
+            } else {
+                Truth::Unknown
+            }
+        }
+        Predicate::ContainsAny { values } => {
+            if values.iter().any(|s| member(s) == Truth::True) {
+                Truth::True
+            } else if values.iter().all(|s| member(s) == Truth::False) {
+                Truth::False
+            } else {
+                Truth::Unknown
+            }
+        }
+        Predicate::Present {} if !set.is_empty() => Truth::True,
+        Predicate::Count { max, .. } if set.len() > *max as usize => Truth::False,
+        // Equality is contradicted by either a known-present unexpected member
+        // or a known-absent expected member. Matching mapped members still do
+        // not prove completeness of the global application population.
+        Predicate::Eq {
+            value: Value::TextSet(v),
+        } if equality_disproved(v) => Truth::False,
+        Predicate::Ne {
+            value: Value::TextSet(v),
+        } if equality_disproved(v) => Truth::True,
+        _ => Truth::Unknown,
     }
 }

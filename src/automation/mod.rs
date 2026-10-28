@@ -10,7 +10,7 @@ mod validate;
 pub use controller::{
     Controller, ControllerDecision, ManualOverride, TransitionCandidate, TransitionPolicy,
 };
-pub use evaluate::evaluate;
+pub use evaluate::{evaluate, evaluate_scoped};
 pub use model::*;
 pub use proposal::{preview_proposal, Proposal};
 pub use validate::{validate, validate_policy};

@@ -156,6 +156,13 @@ struct Fake {
 
 impl Fake {
     fn start(reply: impl FnOnce(&str) -> Vec<u8> + Send + 'static, hold_open: bool) -> Self {
+        Self::command("events", reply, hold_open)
+    }
+    fn command(
+        command: &'static str,
+        reply: impl FnOnce(&str) -> Vec<u8> + Send + 'static,
+        hold_open: bool,
+    ) -> Self {
         let instance = instance();
         let endpoint = runtime::endpoint(&instance).unwrap();
         let (done, finish) = mpsc::channel();
@@ -184,7 +191,7 @@ impl Fake {
                 }
                 assert!(input.len() <= MAX_FRAME && started.elapsed() < LIMIT);
             };
-            assert_eq!(request["command"], "events");
+            assert_eq!(request["command"], command);
             assert_eq!(request["ipcVersion"], IPC_VERSION);
             assert_eq!(request.as_object().unwrap().len(), 3);
             write(&mut stream, &reply(request["requestId"].as_str().unwrap()));
@@ -593,4 +600,98 @@ fn readonly_connect_uses_existing_transport_permissions() {
     drop(ReadOnlyClient::connect(&daemon.instance).unwrap());
     daemon.command("shutdown");
     wait(&mut daemon.child);
+}
+
+#[test]
+fn inventory_query_is_actual_typed_ipc_and_lifecycle_daemon_reports_unavailable() {
+    use std::sync::atomic::AtomicBool;
+    let daemon = Daemon::start(instance());
+    let error = ReadOnlyClient::inventory(&daemon.instance, &AtomicBool::new(false)).unwrap_err();
+    assert_eq!(
+        error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<ServerError>()
+            .unwrap()
+            .code,
+        "inventory-unavailable"
+    );
+    assert_eq!(
+        ReadOnlyClient::connect(&daemon.instance)
+            .unwrap()
+            .initial_snapshot()
+            .lifecycle,
+        Lifecycle::Running
+    );
+    let fake = Fake::command(
+        "inventory",
+        |id| {
+            frame(&envelope(
+                id,
+                json!({"schemaVersion":2,"revision":77,"platform":"linux","evidence":"simulated","sources":[],"outputs":[]}),
+            ))
+        },
+        true,
+    );
+    let inventory = ReadOnlyClient::inventory(&fake.instance, &AtomicBool::new(false)).unwrap();
+    assert_eq!(inventory.revision, 77);
+    assert_eq!(inventory.evidence, mixyard::Evidence::Simulated);
+    assert!(ReadOnlyClient::inventory(&fake.instance, &AtomicBool::new(true)).is_err());
+}
+#[test]
+fn inventory_rejects_bad_envelopes_oversize_and_is_cancellable_with_total_deadline() {
+    use std::sync::{atomic::AtomicBool, Arc};
+    for kind in 0..7 {
+        let fake = Fake::command(
+            "inventory",
+            move |id| {
+                let mut reply = envelope(
+                    id,
+                    json!({"schemaVersion":2,"revision":1,"platform":"linux","evidence":"simulated","sources":[],"outputs":[]}),
+                );
+                match kind {
+                0=>reply["requestId"]=json!("wrong"),
+                1=>reply["ipcVersion"]=json!(2),
+                2=>reply["error"]=json!({"code":"both","message":"ambiguous"}),
+                3=>reply["result"]=Value::Null,
+                4=>reply["result"]["schemaVersion"]=json!(1),
+                5=>reply["result"]["extra"]=json!("x".repeat(MAX_FRAME)),
+                6=>return format!("{{\"ipcVersion\":1,\"ipcVersion\":1,\"requestId\":\"{id}\",\"result\":null}}\n").into_bytes(),
+                _=>unreachable!(),
+            }
+                frame(&reply)
+            },
+            true,
+        );
+        assert!(
+            ReadOnlyClient::inventory(&fake.instance, &AtomicBool::new(false)).is_err(),
+            "bad envelope {kind}"
+        );
+    }
+    let fake = Fake::command("inventory", |_| b"{\"ipcVersion\":".to_vec(), true);
+    let start = Instant::now();
+    assert_eq!(
+        ReadOnlyClient::inventory(&fake.instance, &AtomicBool::new(false))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::TimedOut
+    );
+    assert!(start.elapsed() < Duration::from_secs(3));
+    drop(fake);
+    let fake = Fake::command("inventory", |_| Vec::new(), true);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let signal = cancelled.clone();
+    let worker = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(100));
+        signal.store(true, Ordering::Release);
+    });
+    let start = Instant::now();
+    assert_eq!(
+        ReadOnlyClient::inventory(&fake.instance, &cancelled)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::Interrupted
+    );
+    assert!(start.elapsed() < Duration::from_secs(1));
+    worker.join().unwrap();
 }
