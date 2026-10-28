@@ -24,3 +24,8 @@ jobs:
         run: cargo fmt --all --check
       - name: Core and service checks
         run: cargo test --locked --lib --bins --test web_service --test profiles_cli --test diagnostics_cli
+      - name: Preserve locked resolution of all path-dependent consumers
+        run: |
+          cargo metadata --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --format-version 1 > desktop-metadata.json
+          cargo metadata --locked --manifest-path verification/desktop-inspection/Cargo.toml --format-version 1 > inspection-metadata.json
+          cargo metadata --locked --manifest-path verification/desktop-profiles/Cargo.toml --format-version 1 > profiles-metadata.json

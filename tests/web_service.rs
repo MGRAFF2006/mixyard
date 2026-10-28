@@ -248,6 +248,53 @@ fn core_validation_inspection_and_disconnected_status() {
 }
 
 #[test]
+fn expanding_inspection_is_rejected_without_taking_down_service() {
+    let fixture = Fixture::new();
+    let service = fixture.start();
+    let pad = "x".repeat(1000);
+    let config = json!({
+        "schemaVersion":2,"revision":1,
+        "sources": (0..300).map(|i| json!({"id":format!("s{i}-{pad}"),"selector":{"kind":"app","applicationId":format!("app{i}")}})).collect::<Vec<_>>(),
+        "mixes":[{"id":"m","name":"Mix","channels":2}],"sends":[],
+        "outputs": (0..300).map(|i| json!({"id":format!("o{i}-{pad}"),"mix":"m","target":{"kind":"virtual-input","endpointId":format!("out{i}")},"gain":1})).collect::<Vec<_>>()
+    });
+    let inventory = json!({"schemaVersion":2,"revision":1,"platform":"linux","evidence":"simulated","sources":[],"outputs":[],"mediaSessions":[],"limits":{}});
+    let body = json!({"config":config,"inventory":inventory});
+    assert!(body.to_string().len() < 1024 * 1024);
+    assert_eq!(
+        service.ok("/api/validate", json!({"config":config})),
+        json!({"valid":true})
+    );
+    let rejected = service.post("/api/inspect", body);
+    assert_eq!(rejected.status, 422);
+    assert_eq!(rejected.json()["error"]["code"], "inspection-too-large");
+    // Small path count alone is insufficient: long repeated source/mix strings
+    // can exhaust memory too, so exercise byte-weighted admission separately.
+    for field in ["source", "mix"] {
+        let mut config = json!({"schemaVersion":2,"revision":1,
+            "sources":[{"id":"s","selector":{"kind":"app","applicationId":"a"}}],
+            "mixes":[{"id":"m","name":"Mix","channels":2}],"sends":[],
+            "outputs":(0..100).map(|i|json!({"id":format!("o{i}"),"mix":"m","target":{"kind":"virtual-input","endpointId":format!("out{i}")},"gain":1})).collect::<Vec<_>>()});
+        if field == "source" {
+            config["sources"][0]["id"] = json!("x".repeat(500_000));
+        } else {
+            config["mixes"][0]["name"] = json!("x".repeat(500_000));
+        }
+        let rejected = service.post(
+            "/api/inspect",
+            json!({"config":config,"inventory":inventory}),
+        );
+        assert_eq!(rejected.status, 422);
+        assert_eq!(rejected.json()["error"]["code"], "inspection-too-large");
+    }
+    assert_eq!(service.request("GET", "/api/session", &[], "").status, 200);
+    assert_eq!(
+        service.ok("/api/profiles/read", json!({}))["storeRevision"],
+        0
+    );
+}
+
+#[test]
 fn persistent_profiles_conflicts_and_all_edits_survive_restart() {
     let fixture = Fixture::new();
     let service = fixture.start();

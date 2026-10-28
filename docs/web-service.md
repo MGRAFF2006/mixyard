@@ -61,6 +61,13 @@ a fresh read. No store is truncated, migrated, repaired, or unlocked by the web
 service. The core's private path checks, expected-revision conflicts, atomic
 replacement and manual recovery behavior remain authoritative.
 
+Inspection also checks expansion before constructing the core result: a
+conservative cubic work estimate over configuration/inventory entities must not
+exceed 50 million, and a byte-weighted estimate of repeated path findings and
+cloned mixes must fit 32 MiB. Requests outside these web-specific budgets return
+422 `inspection-too-large`; use the existing inspect CLI for larger graphs.
+No routing path is truncated and the core's policy/resource limits are unchanged.
+
 Run focused checks with two build jobs:
 
 ```sh
