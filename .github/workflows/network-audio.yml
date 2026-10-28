@@ -1,0 +1,29 @@
+name: Network audio foundation
+
+on:
+  pull_request:
+    paths: ['network/**', 'docs/network-audio.md', '.github/workflows/network-audio.yml']
+  push:
+    branches: [main]
+    paths: ['network/**', 'docs/network-audio.md', '.github/workflows/network-audio.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secure-loopback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_TARGET_DIR: ${{ runner.temp }}/mixyard-network-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path network/Cargo.toml -- --check
+      - run: cargo clippy --locked --manifest-path network/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path network/Cargo.toml
+      - run: cargo run --locked --manifest-path network/Cargo.toml --example loopback
