@@ -97,39 +97,12 @@ fn admit_inspection(body: &InspectBody, input_bytes: usize) -> Result<(), Reply>
         return Err(rejected());
     }
     let paths = config.sources.len().saturating_mul(config.outputs.len());
-    let source_ids = config.sources.iter().fold(0usize, |total, source| {
-        total.saturating_add(source.id.len())
-    });
-    let output_ids = config.outputs.iter().fold(0usize, |total, output| {
-        total
-            .saturating_add(output.id.len())
-            .saturating_add(output.mix.len())
-    });
-    let path_subject_bytes = source_ids
-        .saturating_mul(config.outputs.len())
-        .saturating_add(output_ids.saturating_mul(config.sources.len()))
-        .saturating_add(paths.saturating_mul(64));
-    let mix_clones = config.outputs.iter().fold(0usize, |total, output| {
-        let bytes = config
-            .mixes
-            .iter()
-            .find(|mix| mix.id == output.mix)
-            .map_or(0, |mix| {
-                mix.exclude_groups.iter().fold(
-                    128usize
-                        .saturating_add(mix.id.len())
-                        .saturating_add(mix.name.len()),
-                    |sum, group| sum.saturating_add(group.len()).saturating_add(32),
-                )
-            });
-        total.saturating_add(bytes)
-    });
-    // Conservative work and materialization budgets for the web endpoint only;
-    // the core/CLI retain their existing policy and product resource semantics.
-    let estimated_bytes = input_bytes
-        .saturating_mul(8)
-        .saturating_add(path_subject_bytes.saturating_mul(32))
-        .saturating_add(mix_clones);
+    // Charge the entire request for every possible entity/path expansion. This
+    // deliberately overcounts, so arbitrary long fields (including observation
+    // IDs cloned once per planned send) cannot evade a field-specific estimate.
+    // The factor covers repeated reasons and owned structure overhead.
+    let copies = entities.saturating_add(paths).saturating_add(1);
+    let estimated_bytes = input_bytes.saturating_mul(copies).saturating_mul(32);
     if estimated_bytes > 32 * 1024 * 1024 {
         return Err(rejected());
     }
