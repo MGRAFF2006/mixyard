@@ -528,6 +528,8 @@ async function privateInventory(service: Service) {
   const directory = join(process.platform === 'darwin' ? '/private/tmp' : '/tmp', `mixyard-${process.getuid!()}-${service.instance}`)
   mkdirSync(directory, { mode: 0o700 })
   const identity = lstatSync(directory), path = join(directory, 'runtime.sock'), sockets = new Set<Socket>(), commands: string[] = []
+  let paused = false
+  const pendingReplies: (() => void)[] = []
   const server = createServer(socket => {
     sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.on('error', () => {})
     socket.setTimeout(5000, () => socket.destroy())
@@ -545,7 +547,8 @@ async function privateInventory(service: Service) {
         const envelope = request.command === 'inventory'
           ? { ipcVersion: 1, requestId: request.requestId, result: { schemaVersion: 2, revision: 1, evidence: 'simulated', platform: 'linux', sources: [], outputs: [], mediaSessions: [] } }
           : { ipcVersion: 1, requestId: request.requestId, error: { code: 'fixture-inventory-only', message: 'Explicit simulated inventory fixture' } }
-        socket.end(JSON.stringify(envelope) + '\n')
+        const reply = () => { if (!socket.destroyed) socket.end(JSON.stringify(envelope) + '\n') }
+        if (paused) pendingReplies.push(reply); else reply()
       } catch { socket.destroy() }
     })
   })
@@ -554,6 +557,8 @@ async function privateInventory(service: Service) {
   const socketIdentity = lstatSync(path)
   return {
     commands,
+    pause() { paused = true },
+    resume() { paused = false; for (const reply of pendingReplies.splice(0)) reply() },
     async stop() {
       for (const socket of sockets) socket.destroy()
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
@@ -636,4 +641,29 @@ test('actual missing inventory blocks arming without a stored write and narrow c
   await page.screenshot({ path: 'test-results/integration-automatic-blocked-mobile.png', fullPage: true })
   await panel.getByRole('button', { name: 'Disarm automatic selection', exact: true }).click()
   expect((await service.post('/api/automation/status')).armed).toBe(false)
+})
+
+
+test('actual Disarm cancels slow pending Arm without a stored write or late authority restoration', async ({ page, service }) => {
+  test.skip(process.platform !== 'linux', 'Owned Unix IPC inventory fixture is qualified on Linux only')
+  await seedAutomatic(service)
+  const panel = await openAutomatic(page, service), runtime = await privateInventory(service)
+  try {
+    await panel.getByRole('button', { name: 'Review automatic selection', exact: true }).click()
+    await panel.getByLabel('I have inspected every candidate and sensitive path.', { exact: true }).check()
+    const count = runtime.commands.length
+    runtime.pause()
+    await panel.getByRole('button', { name: 'Arm reviewed automatic selection', exact: true }).click()
+    await expect.poll(() => runtime.commands.length).toBeGreaterThan(count)
+    const disarm = panel.getByRole('button', { name: 'Disarm automatic selection', exact: true })
+    // Check immediately while inventory is withheld; auto-waiting could hide
+    // the defect by waiting for the Arm request to time out first.
+    expect(await disarm.isEnabled()).toBe(true); await disarm.click()
+    await expect(panel.getByRole('status').filter({ hasText: 'Automatic selection disarmed' })).toBeVisible()
+    runtime.resume()
+    await panel.getByRole('button', { name: 'Refresh selection status', exact: true }).click()
+    await expect(panel.getByRole('heading', { name: 'Disarmed', exact: true })).toBeVisible()
+    expect((await service.post('/api/profiles/read')).storeRevision).toBe(2)
+    expect((await service.post('/api/automation/status')).armed).toBe(false)
+  } finally { await runtime.stop() }
 })

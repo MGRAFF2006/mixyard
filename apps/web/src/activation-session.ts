@@ -18,6 +18,7 @@ export class ActivationSession {
   needsRead = true
   busy = false
   controlBusy = false
+  disarming = false
   refreshing = false
   error = ''
   notice = ''
@@ -165,7 +166,8 @@ export class ActivationSession {
   }
   async disarm() { await this.control('disarm', {}) }
   private async control(path: string, body: unknown) {
-    if (!this.connected || this.controlBusy) return
+    if (!this.connected || (path === 'disarm' ? this.disarming : this.controlBusy)) return
+    this.disarming = path === 'disarm'
     this.controlBusy = true; this.error = ''; this.notice = ''; this.invalidateReview(); this.live = null
     const authority = ++this.authorityGeneration
     try {
@@ -180,6 +182,9 @@ export class ActivationSession {
         this.fail(error)
         this.statusError = 'Ownership change is unconfirmed. Refresh status before another action; Disarm remains available.'
       }
-    } finally { this.controlBusy = false }
+    } finally {
+      // A superseded Arm/manual reply must not unlock a newer Disarm request.
+      if (authority === this.authorityGeneration) { this.controlBusy = false; this.disarming = false }
+    }
   }
 }

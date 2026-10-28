@@ -116,8 +116,9 @@ onUnmounted(() => { disposed = true; clearTimeout(poll); clearInterval(ticker); 
     <template v-if="s.connected">
       <div class="situation-ownership">
         <div><h4>{{ state }}</h4><p v-if="s.statusError" role="alert" class="message error">{{ s.statusError }}</p><p v-if="s.status?.blocked" class="message warning">Blocked: {{ s.status.blocked.code }} — {{ s.status.blocked.message }}</p><p v-if="s.status">Decision: {{ s.status.decision.kind }}. Last stored change: {{ s.status.lastAppliedAtMs === null ? 'none reported' : `${s.status.lastAppliedAtMs} ms in the server observation epoch` }}.</p></div>
-        <button class="situation-disarm" :disabled="!ready || s.controlBusy" @click="s.disarm">Disarm automatic selection</button>
+        <button class="situation-disarm" :disabled="!ready || s.disarming" @click="s.disarm">Disarm automatic selection</button>
       </div>
+      <p v-if="s.controlBusy" role="status">{{ s.disarming ? 'Disarming automatic selection…' : 'Waiting for ownership update… Disarm remains available.' }}</p>
       <div class="actions"><button :disabled="!ready || s.refreshing || s.busy || s.controlBusy" @click="s.refreshStatus">Refresh selection status</button><button :disabled="!ready || s.controlBusy || !!s.statusError" @click="s.manual({ mode: 'until-cleared' })">Pause until cleared</button><button :disabled="!ready || s.controlBusy || !!s.statusError" @click="s.manual({ mode: 'clear' })">Clear manual pause</button></div>
       <div class="situation-fields situation-pause"><label class="situation-field">Manual pause duration (ms, 1–86400000)<input v-model="durationText" inputmode="numeric" /></label><button :disabled="!ready || s.controlBusy || !!s.statusError" @click="pauseTimed">Pause for duration</button></div>
       <p v-if="s.status?.manualOverride?.mode === 'for'">Timed pause ends at {{ s.status.manualOverride.untilMs }} ms in the server observation epoch. Status refresh confirms expiry; this browser does not infer it.</p>

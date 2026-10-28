@@ -297,8 +297,10 @@ a delayed status response never remounts timing text entered in the meantime.
 Concrete previews must advance the captured config revision and agree on one
 prospective high-water revision. Plan selectors, targets, mix references and
 static parameters must match their candidates before any review can enable Arm.
-**Disarm automatic selection** remains usable during capture/review and makes late
-capture responses obsolete. Manual pause/clear controls retain already armed
+**Disarm automatic selection** remains usable during capture/review and pending
+Arm or manual updates. It sends its own cancellation request; superseded replies
+cannot restore client authority or unlock a newer Disarm. Late capture responses
+also become obsolete. Manual pause/clear controls retain already armed
 ownership but never grant authority to a disarmed policy. Timed expiry is confirmed
 by server status, not guessed from the browser wall clock.
 

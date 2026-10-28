@@ -202,3 +202,27 @@ test('reviews bind prospective high-water revision and canonical plan identities
   live.preview.candidate.revision = 1; live.preview.preview.plan.configRevision = 1
   assert.throws(() => readLive(live, saved, false))
 })
+
+
+test('Disarm preempts pending Arm and only the newest control owns busy state and authority', async () => {
+  for (const lateArm of [false, true]) {
+    let finishArm: ((v: unknown) => void) | undefined, finishDisarm: ((v: unknown) => void) | undefined
+    const s = new ActivationSession({ async post(path) {
+      if (path.endsWith('/settings/read')) return savedSettings()
+      if (path.endsWith('/status')) return status()
+      if (path.endsWith('/review')) return liveFixture()
+      if (path.endsWith('/arm')) return new Promise(resolve => { finishArm = resolve })
+      if (path.endsWith('/disarm')) return new Promise(resolve => { finishDisarm = resolve })
+      throw Error(path)
+    } })
+    await s.read(); await s.capture(true)
+    const arming = s.arm(), disarming = s.disarm()
+    assert.ok(finishArm); assert.ok(finishDisarm, 'Disarm must dispatch while Arm is pending')
+    const armed = { ...status(), armed: true, decision: { kind: 'armed' } }
+    if (!lateArm) { finishArm(armed); await arming; assert.equal(s.controlBusy, true) }
+    finishDisarm(status()); await disarming
+    if (lateArm) { finishArm(armed); await arming }
+    assert.equal(s.status!.armed, false); assert.equal(s.controlBusy, false); assert.equal(s.review, null)
+    assert.match(s.notice, /disarmed/)
+  }
+})
