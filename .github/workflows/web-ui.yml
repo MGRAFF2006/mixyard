@@ -1,0 +1,51 @@
+name: Web console frontend checks
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/web-ui.yml'
+  pull_request:
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/web-ui.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-ui-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Strict types, data safety, browser flows and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: '11.10.0'
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.1'
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: web-ui-browser-failure
+          path: apps/web/test-results/
+      - name: Evidence boundary
+        run: echo 'Static frontend, data safety tests and isolated browser flows against a contract mock. No actual audio, native runtime or Rust persistence integration exercised by this job.' >> "$GITHUB_STEP_SUMMARY"
