@@ -71,6 +71,71 @@ fn profile_error(e: profiles::Error) -> Reply {
     };
     error(status, e.code, &e.message)
 }
+
+fn admit_inspection(body: &InspectBody, input_bytes: usize) -> Result<(), Reply> {
+    let config = &body.config;
+    let inventory = &body.inventory;
+    // The inspector expands all source/output paths, including rejected ones.
+    // Its findings own repeated identity strings, and each output clones its
+    // mix. A response-writer limit cannot bound those earlier allocations.
+    let entities = [
+        config.sources.len(),
+        config.mixes.len(),
+        config.sends.len(),
+        config.outputs.len(),
+        inventory.sources.len(),
+        inventory.outputs.len(),
+        inventory.media_sessions.len(),
+    ]
+    .into_iter()
+    .fold(0usize, usize::saturating_add);
+    let rejected = || {
+        error(StatusCode::UNPROCESSABLE_ENTITY, "inspection-too-large",
+        "Inspection exceeds the web work or expansion budget. Use the inspect CLI for this configuration; no paths were truncated.")
+    };
+    if entities.saturating_pow(3) > 50_000_000 {
+        return Err(rejected());
+    }
+    let paths = config.sources.len().saturating_mul(config.outputs.len());
+    let source_ids = config.sources.iter().fold(0usize, |total, source| {
+        total.saturating_add(source.id.len())
+    });
+    let output_ids = config.outputs.iter().fold(0usize, |total, output| {
+        total
+            .saturating_add(output.id.len())
+            .saturating_add(output.mix.len())
+    });
+    let path_subject_bytes = source_ids
+        .saturating_mul(config.outputs.len())
+        .saturating_add(output_ids.saturating_mul(config.sources.len()))
+        .saturating_add(paths.saturating_mul(64));
+    let mix_clones = config.outputs.iter().fold(0usize, |total, output| {
+        let bytes = config
+            .mixes
+            .iter()
+            .find(|mix| mix.id == output.mix)
+            .map_or(0, |mix| {
+                mix.exclude_groups.iter().fold(
+                    128usize
+                        .saturating_add(mix.id.len())
+                        .saturating_add(mix.name.len()),
+                    |sum, group| sum.saturating_add(group.len()).saturating_add(32),
+                )
+            });
+        total.saturating_add(bytes)
+    });
+    // Conservative work and materialization budgets for the web endpoint only;
+    // the core/CLI retain their existing policy and product resource semantics.
+    let estimated_bytes = input_bytes
+        .saturating_mul(8)
+        .saturating_add(path_subject_bytes.saturating_mul(32))
+        .saturating_add(mix_clones);
+    if estimated_bytes > 32 * 1024 * 1024 {
+        return Err(rejected());
+    }
+    Ok(())
+}
+
 pub(super) fn dispatch(path: &str, bytes: &[u8], state: &State) -> Reply {
     // Keep typed JSON extraction separate from the transport's protection checks.
     let result = || -> Result<Reply, Reply> {
@@ -95,6 +160,7 @@ pub(super) fn dispatch(path: &str, bytes: &[u8], state: &State) -> Reply {
             }
             "/api/inspect" => {
                 let body: InspectBody = parse(bytes)?;
+                admit_inspection(&body, bytes.len())?;
                 json(&diagnostics::inspect(&body.config, &body.inventory))
             }
             "/api/profiles/read" => {
