@@ -180,7 +180,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         <details v-if="s.status"><summary>Last read-only runtime snapshot</summary><pre>{{ JSON.stringify(s.status, null, 2) }}</pre></details>
       </section>
 
-      <SituationsPanel v-show="page === 'Situations'" :api="s.api" :ready="!!s.api.token && !s.busy" :profiles="s.snapshot?.profiles ?? []" :config="s.local" :store-revision="s.snapshot?.storeRevision ?? 0" :inventory="s.inventory" />
+      <SituationsPanel v-show="page === 'Situations'" :visible="page === 'Situations'" :api="s.api" :ready="!!s.api.token && !s.busy" :profiles="s.snapshot?.profiles ?? []" :config="s.local" :store-revision="s.snapshot?.storeRevision ?? 0" :inventory="s.inventory" />
 
       <ProcessingPanel v-show="page === 'Processing'" :api="s.api" :ready="!!s.api.token && !s.busy" />
 

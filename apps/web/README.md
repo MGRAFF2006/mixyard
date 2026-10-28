@@ -162,8 +162,9 @@ on narrow screens the matrix scrolls in its own region with sticky source labels
 Situations edits one complete decision configuration in browser memory. Export
 **full configuration** before closing: it includes graph, catalog, simulation
 snapshot, monotonic clock, revision context and manual-override input. Switching
-workspaces keeps the draft. It does not save graphs or change profiles/audio.
-Activation and controller ownership are separate integration work.
+workspaces keeps the draft. Simulation does not change profiles or audio.
+Saving policy and granting automatic selection authority are explicit operations
+in the separate Automatic selection section.
 
 Start with configurable headphones, explicit interface endpoint-group hardware monitoring, or
 application-combination presets. Supply exact device/profile/source/mix/output
@@ -253,3 +254,75 @@ attached to their original keys, including equal-valued rows. Ordinary
 updates keep a displayed invalid draft invalid; fractional integer literals remain
 blocked. Browser regressions cover every indexed numeric editor and operand
 replacement, alongside import and node-navigation recovery.
+
+
+## Saved policy and automatic selection
+
+**Automatic selection** is a frontend client for the protected activation API.
+Opening the tab makes no activation/settings requests. **Read saved settings**
+connects explicitly and reads settings, then status. Status polling starts only
+once connected, runs sequentially while Situations and the document are visible,
+and never replaces unsaved settings or the console routing draft.
+
+There is one graph/catalog editor: the existing Situations builder. **Load saved
+graph into builder** replaces only that policy, preserving supplied simulation
+facts, clocks and claims. **Save builder graph and settings** replaces the whole
+saved graph/catalog together with the ordinary settings forms. **Save settings**
+keeps the graph currently in the settings draft. Both writes disarm and invalidate
+reviews. A completed builder save adopts returned defaults only if no later edit
+occurred. The two graph names and replacement notice make the operation explicit.
+
+Ordinary forms expose settle/hold/cooldown (0–86400000 ms), exact host executable
+path → application-ID mappings (up to 32), nullable host label, zoneinfo timezone,
+and explicit boolean hardware-monitor/manual-flag declarations. Simulation's
+hardware declaration checkbox is never copied into saved declarations. Physical
+groups, native consent and app IDs are never inferred. Duplicate mapping paths
+remain separate editable rows and block saving. Shared private row keys and the
+numeric draft directive preserve surviving invalid inputs.
+
+**Read live decision** and **Review automatic selection** use saved policy and
+server-owned capture/request/evaluation, separately labeled from simulation.
+Review displays every reachable Select terminal, concrete candidate, changes,
+all sensitive paths before/after, unavailable identities and full plans. Granular
+fields are expandable, and the complete review can be downloaded. No bounded list
+is silently shortened. An explicit inspection checkbox precedes **Arm reviewed
+automatic selection**. The opaque review expires for starting arm after up to
+five minutes; existing armed authority continues while approved state is unchanged.
+Local policy/settings edits and observed revision changes invalidate the review.
+**Disarm automatic selection** remains usable during capture/review and makes late
+capture responses obsolete. Manual pause/clear controls retain already armed
+ownership but never grant authority to a disarmed policy. Timed expiry is confirmed
+by server status, not guessed from the browser wall clock.
+
+All operations use the existing same-origin Api and CSRF token:
+
+- `settings/read {}` → format-1 settings snapshot.
+- `settings/write {expectedSettingsRevision,settings}` → replacement snapshot.
+- `status {}` → stored-intent-only status and revisions.
+- `live {}` / `review {}` → server capture, exact request/evaluation, inventory,
+  optional current preview, blocked reason and (for review) concrete actions/token.
+- `arm {reviewId}`, `disarm {}`, `manual {mode:"until-cleared"}`,
+  `manual {mode:"for",durationMs}` or `manual {mode:"clear"}` → status.
+
+These paths all have the `/api/automation/` prefix. The reader checks the complete
+DTO shapes, exact safe integer metadata, matching capture/token/revisions,
+candidate/plan identities and every reachable Select action. Kind-only `waiting`
+after manual clear is allowed; a waiting report containing timers requires all
+three. Native backend availability and audio application must both be false.
+Inventory absence blocks approval; missing individual identities and provider gaps
+are shown explicitly. Native device/network latency remains unmeasured.
+
+Conflict, offline, uncertain or malformed write outcomes retain local drafts,
+require a fresh read before another write and never retry automatically. Expert
+settings JSON imports are local drafts only; imported revisions cannot replace
+current write authority. Supported raw fields, Float64 low bits and signed zero
+survive transport/export. Unknown fields stay attached for authoritative rejection.
+
+`src/activation.test.ts` exercises malformed DTOs, stale authority, conflicts,
+uncertain writes, precision, imports, manual ownership and cancellation races.
+`tests/activation.spec.ts` drives the actual Vue interface in isolated Chromium
+with an intercepted contract API, including complete review, pause/disarm while
+busy, missing inventory, draft preservation and 390 px keyboard operation.
+These fixtures do not prove the Rust service, runtime IPC, persistence or actual
+native observations. Combined backend integration belongs to the parent task;
+this frontend leaf does not apply audio or include backend/runtime changes.
