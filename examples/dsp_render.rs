@@ -35,6 +35,7 @@ struct Timing {
 }
 fn effect(name: &str, effect: Effect) -> EffectConfig {
     EffectConfig {
+        channels: None,
         name: name.into(),
         enabled: true,
         effect,

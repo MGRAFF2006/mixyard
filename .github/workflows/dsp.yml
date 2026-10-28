@@ -23,7 +23,7 @@ jobs:
       CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v4
-      - name: Filter, dynamics, continuity, reset, precision and allocation oracles
+      - name: Filter, dynamics, channel selection/matrix, reset, precision and allocation oracles
         run: cargo test --locked --test dsp_core --test dsp_allocations
       - name: Render complete slow FIR and report measured block budgets
         shell: bash
