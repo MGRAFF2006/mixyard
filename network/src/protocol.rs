@@ -33,6 +33,7 @@ impl Limits {
             "empty rate/timeout budget"
         );
         self.queue_bytes()?;
+        self.transport_queue_bytes()?;
         Ok(())
     }
 
@@ -41,6 +42,21 @@ impl Limits {
             .checked_mul(self.packets_per_stream)
             .and_then(|n| n.checked_mul(self.max_datagram))
             .ok_or_else(|| anyhow::anyhow!("queue budget overflow"))
+    }
+
+    pub(crate) fn transport_queue_bytes(&self) -> Result<usize> {
+        // Quinn charges bookkeeping as well as payload for each queued datagram.
+        // Reserve 128 bytes per packet, separately from the application budget.
+        // Session creation also checks Quinn's actual empty payload capacity so
+        // a dependency change fails admission instead of dropping every packet.
+        self.max_datagram
+            .checked_add(128)
+            .and_then(|packet| {
+                self.max_streams
+                    .checked_mul(self.packets_per_stream)?
+                    .checked_mul(packet)
+            })
+            .ok_or_else(|| anyhow::anyhow!("QUIC queue budget overflow"))
     }
 }
 

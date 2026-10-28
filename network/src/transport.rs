@@ -84,8 +84,8 @@ pub fn endpoint(
     client_tls.alpn_protocols = vec![ALPN.to_vec()];
     client_tls.enable_early_data = false;
     let mut transport = quinn::TransportConfig::default();
-    transport.datagram_receive_buffer_size(Some(limits.queue_bytes()?));
-    transport.datagram_send_buffer_size(limits.queue_bytes()?);
+    transport.datagram_receive_buffer_size(Some(limits.transport_queue_bytes()?));
+    transport.datagram_send_buffer_size(limits.transport_queue_bytes()?);
     // One active reliable admission exchange. Extra controls are reset; PCM is independent.
     transport.max_concurrent_bidi_streams(2u32.into());
     transport.max_concurrent_uni_streams(0u32.into());
@@ -169,6 +169,12 @@ impl SecureEndpoint {
             connection.max_datagram_size().is_some(),
             "peer does not support QUIC DATAGRAM"
         );
+        if connection.datagram_send_buffer_space() < self.limits.max_datagram {
+            connection.close(1u32.into(), b"QUIC queue cannot fit a configured packet");
+            anyhow::bail!(
+                "QUIC queue cannot hold the configured datagram budget including transport metadata"
+            );
+        }
         Ok(Arc::new(Session {
             receiver: Mutex::new(Receiver::new(
                 self.permissions.clone(),

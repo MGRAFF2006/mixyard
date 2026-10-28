@@ -174,10 +174,14 @@ and sibling progress, not reserved network bandwidth or loss immunity.
 
 `Limits` configures connection count, admitted stream count, packets per stream,
 datagram size, aggregate rate and control deadline. Permission lists themselves
-must fit those budgets. The same `max_streams * packets_per_stream * max_datagram`
-budget bounds each QUIC send/receive datagram buffer and application payload queue
-per direction per connection; one partial sender packet per stream, map/Vec/TLS
-metadata and headers add overhead.
+must fit those budgets. Application payload queues use
+`max_streams * packets_per_stream * max_datagram` per direction per connection.
+Each QUIC send/receive buffer additionally reserves 128 bytes per packet for
+transport metadata, using checked arithmetic. Session creation checks Quinn's
+reported empty send capacity against the full configured datagram size; an
+impossible configuration rejects explicitly instead of permanently dropping
+admitted packets. One partial sender packet per stream and map/Vec/TLS metadata
+add further overhead.
 Pending handshake count and buffers are also bounded. The API caller must not
 create unbounded endpoints. No OS resources are published by admission.
 

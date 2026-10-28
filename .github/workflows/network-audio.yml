@@ -17,9 +17,10 @@ jobs:
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
-      CARGO_TARGET_DIR: ${{ runner.temp }}/mixyard-network-target
     steps:
       - uses: actions/checkout@v4
+      - name: Set isolated Cargo target directory
+        run: echo "CARGO_TARGET_DIR=${RUNNER_TEMP}/mixyard-network-target" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

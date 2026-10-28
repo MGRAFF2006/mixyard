@@ -85,6 +85,19 @@ pub async fn pair(
     transport::SecureEndpoint,
     transport::SecureEndpoint,
 )> {
+    pair_with_limits(send, receive, limits()).await
+}
+
+pub async fn pair_with_limits(
+    send: &[Spec],
+    receive: &[Spec],
+    budget: Limits,
+) -> Result<(
+    Arc<Session>,
+    Arc<Session>,
+    transport::SecureEndpoint,
+    transport::SecureEndpoint,
+)> {
     let a = identity("a")?;
     let b = identity("b")?;
     let pin_a = PairedPeer {
@@ -102,14 +115,14 @@ pub async fn pair(
         a,
         pin_b,
         permissions("a", "b", send, receive),
-        limits(),
+        budget.clone(),
     )?;
     let endpoint_b = endpoint(
         "127.0.0.1:0".parse()?,
         b,
         pin_a,
         permissions("b", "a", receive, send),
-        limits(),
+        budget,
     )?;
     let (a, b) = tokio::try_join!(
         endpoint_a.connect(endpoint_b.local_addr()?),
