@@ -1,7 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, unlinkSync } from 'node:fs'
+import { createServer } from 'node:net'
+import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -517,4 +519,117 @@ test('deleting another row preserves the surviving invalid draft in every numeri
       await expect(page.locator('.situation-result .message.success')).toContainText('Terminal: safe.')
     }
   }
+})
+
+
+// Explicit simulated inventory over actual protected private IPC. The evaluator,
+// controller, review, HTTP service and optimistic disk writer remain production.
+async function privateInventory(service: Service) {
+  const directory = join(process.platform === 'darwin' ? '/private/tmp' : '/tmp', `mixyard-${process.getuid!()}-${service.instance}`)
+  mkdirSync(directory, { mode: 0o700 })
+  const identity = lstatSync(directory), path = join(directory, 'runtime.sock'), sockets = new Set<Socket>(), commands: string[] = []
+  const server = createServer(socket => {
+    sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.on('error', () => {})
+    socket.setTimeout(5000, () => socket.destroy())
+    let data = Buffer.alloc(0), replied = false
+    socket.on('data', chunk => {
+      if (replied) return
+      data = Buffer.concat([data, chunk])
+      if (data.length > 65536) { socket.destroy(); return }
+      const end = data.indexOf(10)
+      if (end < 0) return
+      replied = true
+      try {
+        const request = JSON.parse(data.subarray(0, end).toString('utf8'))
+        commands.push(request.command)
+        const envelope = request.command === 'inventory'
+          ? { ipcVersion: 1, requestId: request.requestId, result: { schemaVersion: 2, revision: 1, evidence: 'simulated', platform: 'linux', sources: [], outputs: [], mediaSessions: [] } }
+          : { ipcVersion: 1, requestId: request.requestId, error: { code: 'fixture-inventory-only', message: 'Explicit simulated inventory fixture' } }
+        socket.end(JSON.stringify(envelope) + '\n')
+      } catch { socket.destroy() }
+    })
+  })
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(path, () => { server.removeListener('error', reject); resolve() }) })
+  chmodSync(path, 0o600)
+  const socketIdentity = lstatSync(path)
+  return {
+    commands,
+    async stop() {
+      for (const socket of sockets) socket.destroy()
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      // Only remove this fixture's endpoint, never a replacement or shared path.
+      try { if (lstatSync(path).ino === socketIdentity.ino) unlinkSync(path) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      if (lstatSync(directory).ino === identity.ino) rmdirSync(directory)
+    },
+  }
+}
+async function seedAutomatic(service: Service) {
+  const config = (gain: number, revision: number) => ({ schemaVersion: 2, revision, sources: [], mixes: [{ id: 'desk', name: 'Desk', channels: 2, master: { mute: false, gain } }], sends: [], outputs: [], mediaControls: [] })
+  const profile = await service.post('/api/profiles/edit', { expectedRevision: 0, edit: { kind: 'save', id: null, name: 'Quiet', config: config(0.25, 7) } })
+  await service.post('/api/profiles/edit', { expectedRevision: 1, edit: { kind: 'draft', config: config(1, 1) } })
+  const graph = { schemaVersion: 1, id: 'browser-policy', name: 'Browser automatic policy', revision: 1, root: 'rule', nodes: [
+    { kind: 'decision', id: 'rule', condition: { kind: 'fact', key: { name: 'manual.flag', subject: 'desk' }, predicate: { op: 'eq', value: { type: 'bool', value: true } } }, onTrue: 'selected', onFalse: 'hold', onUnknown: 'hold' },
+    { kind: 'terminal', id: 'selected', action: { kind: 'select', profileId: profile.profiles[0].id, overrides: [] } },
+    { kind: 'terminal', id: 'hold', action: { kind: 'no-change' } },
+  ] }
+  await service.post('/api/automation/settings/write', { expectedSettingsRevision: 0, settings: { graph, catalog: emptyRequest().catalog, declarations: [{ key: { name: 'manual.flag', subject: 'desk' }, value: true }], transitionPolicy: { settleMs: 0, minimumHoldMs: 0, cooldownMs: 0 }, observer: { applications: {}, hostLabel: null, timezone: 'Europe/Berlin' } } })
+}
+async function openAutomatic(page: Page, service: Service) {
+  await open(page, service)
+  await page.getByRole('button', { name: 'Situations', exact: true }).click()
+  const panel = page.getByRole('region', { name: 'Automatic selection', exact: true })
+  await panel.getByRole('button', { name: 'Read saved settings', exact: true }).click()
+  await panel.getByRole('button', { name: 'Load saved graph into builder', exact: true }).click()
+  await expect(page.getByLabel('Graph name', { exact: true })).toHaveValue('Browser automatic policy')
+  await panel.getByRole('button', { name: 'Clear manual pause', exact: true }).click()
+  return panel
+}
+
+test('actual automatic controls review and commit once through real HTTP private IPC and disk; restart stays disarmed', async ({ page, service }) => {
+  test.skip(process.platform !== 'linux', 'Owned Unix IPC inventory fixture is qualified on Linux only')
+  await seedAutomatic(service)
+  const panel = await openAutomatic(page, service), runtime = await privateInventory(service)
+  try {
+    await panel.getByRole('button', { name: 'Review automatic selection', exact: true }).click()
+    await expect(panel.getByText('Review covers 1 reachable Select actions.', { exact: false })).toBeVisible()
+    const arm = panel.getByRole('button', { name: 'Arm reviewed automatic selection', exact: true })
+    await expect(arm).toBeDisabled()
+    await panel.getByLabel('I have inspected every candidate and sensitive path.', { exact: true }).check()
+    await expect(arm).toBeEnabled()
+    await page.screenshot({ path: 'test-results/integration-automatic-review-desktop.png', fullPage: true })
+    await arm.click()
+    await expect.poll(async () => (await service.post('/api/profiles/read')).storeRevision).toBe(3)
+    const stored = await service.post('/api/profiles/read')
+    expect(stored.draft.mixes[0].master.gain).toBe(0.25)
+    await panel.getByRole('button', { name: 'Refresh selection status', exact: true }).click()
+    await expect(panel.getByRole('heading', { name: 'Armed', exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Pause until cleared', exact: true }).click()
+    await expect(panel.getByRole('heading', { name: 'Manually paused / armed authority retained', exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Clear manual pause', exact: true }).click()
+    await panel.getByRole('button', { name: 'Disarm automatic selection', exact: true }).click()
+    await expect(panel.getByRole('heading', { name: 'Disarmed', exact: true })).toBeVisible()
+    expect((await service.post('/api/profiles/read')).storeRevision).toBe(3)
+    expect(runtime.commands.filter(c => c === 'inventory').length).toBeGreaterThan(1)
+    expect(runtime.commands.some(c => ['start', 'shutdown', 'apply', 'stop'].includes(c))).toBe(false)
+  } finally { await runtime.stop() }
+  await service.stop(); await service.start(); await page.reload()
+  await page.getByRole('button', { name: 'Situations', exact: true }).click()
+  const restarted = page.getByRole('region', { name: 'Automatic selection', exact: true })
+  await restarted.getByRole('button', { name: 'Read saved settings', exact: true }).click()
+  await expect(restarted.getByRole('heading', { name: 'Disarmed', exact: true })).toBeVisible()
+  expect((await service.post('/api/profiles/read')).storeRevision).toBe(3)
+})
+
+test('actual missing inventory blocks arming without a stored write and narrow controls remain usable', async ({ page, service }) => {
+  await seedAutomatic(service)
+  const panel = await openAutomatic(page, service)
+  await panel.getByRole('button', { name: 'Review automatic selection', exact: true }).click()
+  await expect(panel.getByText('inventory-unavailable', { exact: false }).first()).toBeVisible()
+  await expect(panel.getByRole('button', { name: 'Arm reviewed automatic selection', exact: true })).toHaveCount(0)
+  expect((await service.post('/api/profiles/read')).storeRevision).toBe(2)
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: 'test-results/integration-automatic-blocked-mobile.png', fullPage: true })
+  await panel.getByRole('button', { name: 'Disarm automatic selection', exact: true }).click()
+  expect((await service.post('/api/automation/status')).armed).toBe(false)
 })
