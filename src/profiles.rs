@@ -188,12 +188,12 @@ impl Store {
         if !check_file(&path)? {
             return Ok(Snapshot::default());
         }
-        let file = File::open(&path).map_err(Error::io)?;
+        let file = File::open(&path).map_err(|e| Error::io_at("open snapshot", &path, e))?;
         let parsed = if let Some(limit) = max_bytes {
             let mut bytes = Vec::new();
             file.take((limit as u64).saturating_add(1))
                 .read_to_end(&mut bytes)
-                .map_err(Error::io)?;
+                .map_err(|e| Error::io_at("read snapshot", &path, e))?;
             if bytes.len() > limit {
                 return Err(Error::new("store-too-large", format!("Store exceeds the {limit}-byte desktop read limit; nothing was truncated. Use the profiles CLI for larger stores."), 3));
             }
@@ -203,7 +203,7 @@ impl Store {
         };
         let snapshot: Snapshot = parsed.map_err(|e| {
             if e.is_io() {
-                Error::io(e)
+                Error::io(format!("read snapshot {}: {e}", path.display()))
             } else {
                 Error::new(
                     "corrupt-store",
@@ -230,14 +230,15 @@ impl Store {
         let lock = create_file(&lock_path).map_err(|e| {
             if e.kind() == io::ErrorKind::AlreadyExists {
                 Error::new("store-busy", "write.lock exists: another writer or interrupted write. Verify no writer is running, back up profiles.json, then inspect/remove write.lock and pending.json manually; never reclaimed automatically", 5)
-            } else { Error::io(e) }
+            } else { Error::io_at("create writer lock", &lock_path, e) }
         })?;
         drop(lock);
         // Errors retain our sentinel: a failed/uncertain write requires review.
         let mut snapshot = self.read()?;
         if let Err(error) = self.prepare(&mut snapshot, expected_revision, &edit) {
             // No write has started: a revision race does not abandon our lock.
-            fs::remove_file(&lock_path).map_err(Error::io)?;
+            fs::remove_file(&lock_path)
+                .map_err(|e| Error::io_at("remove unused writer lock", &lock_path, e))?;
             return Err(error);
         }
         let pending_path = self.directory.join(PENDING);
@@ -245,15 +246,26 @@ impl Store {
             return Err(Error::new("recovery-required", "pending.json exists; preserve prior profiles.json and inspect interrupted write manually", 5));
         }
         let bytes = serde_json::to_vec_pretty(&snapshot).map_err(Error::io)?;
-        let mut pending = create_file(&pending_path).map_err(Error::io)?;
-        pending.write_all(&bytes).map_err(Error::io)?;
-        pending.sync_all().map_err(Error::io)?;
+        let mut pending = create_file(&pending_path)
+            .map_err(|e| Error::io_at("create pending snapshot", &pending_path, e))?;
+        pending
+            .write_all(&bytes)
+            .map_err(|e| Error::io_at("write pending snapshot", &pending_path, e))?;
+        pending
+            .sync_all()
+            .map_err(|e| Error::io_at("sync pending snapshot", &pending_path, e))?;
         // Close before rename, including on Windows.
         drop(pending);
         // Recheck paths; never delete the destination to work around rename errors.
         self.check_directory()?;
         check_file(&self.directory.join(DATA))?;
-        fs::rename(&pending_path, self.directory.join(DATA)).map_err(Error::io)?;
+        fs::rename(&pending_path, self.directory.join(DATA)).map_err(|e| {
+            Error::io(format!(
+                "replace snapshot {} -> {}: {e}",
+                pending_path.display(),
+                self.directory.join(DATA).display()
+            ))
+        })?;
         #[cfg(unix)]
         File::open(&self.directory).and_then(|f| f.sync_all()).map_err(|e| {
             Error::new("commit-uncertain", format!("Replacement occurred but directory sync failed: {e}; reread store before retrying"), 4)
