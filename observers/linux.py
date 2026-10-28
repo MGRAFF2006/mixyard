@@ -34,8 +34,10 @@ def unavailable(names, provider, reason, status="unknown"):
     return [fact(n, status=status, reason=reason, provider=provider, complete=False) for n in names]
 
 
-def read_text(path, limit=4096):
-    with path.open("rb") as stream:
+def read_text(path, limit=4096, *, dir_fd=None):
+    opened = Path(path).open("rb") if dir_fd is None else os.fdopen(
+        os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=dir_fd), "rb")
+    with opened as stream:
         raw = stream.read(limit + 1)
     if len(raw) > limit:
         raise ValueError("file-size-limit")
@@ -50,6 +52,34 @@ def entries(path, limit):
                 raise ValueError("enumeration-limit")
             result.append(Path(item.path))
     return result
+
+
+def process_owners(directory):
+    status = read_text("status", 65536, dir_fd=directory)
+    owners = [line.split()[1:] for line in status.splitlines() if line.startswith("Uid:")]
+    if len(owners) != 1 or len(owners[0]) != 4 or not all(v.isdecimal() for v in owners[0]):
+        raise ValueError("malformed-process-owner")
+    return tuple(map(int, owners[0]))
+
+
+def current_executable(process, uid):
+    # An open proc directory remains tied to the original task across PID reuse.
+    directory = os.open(process, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        identity = os.fstat(directory)
+        owners = process_owners(directory)
+        if any(owner != uid for owner in owners[:2]):
+            return None
+        executable = os.readlink("exe", dir_fd=directory)
+        after = os.fstat(directory)
+        current = os.stat(process, follow_symlinks=False)
+        if (process_owners(directory) != owners
+                or (identity.st_dev, identity.st_ino, identity.st_uid) != (after.st_dev, after.st_ino, after.st_uid)
+                or (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino)):
+            raise ValueError("process-identity-changed")
+        return executable
+    finally:
+        os.close(directory)
 
 
 def applications(root, uid, mappings):
@@ -67,13 +97,9 @@ def applications(root, uid, mappings):
         try:
             # Only consume UID, including for undumpable/root-owned proc entries.
             # Never collect process names, arguments, environments or other UIDs.
-            status = read_text(process / "status", 65536)
-            owners = [line.split()[1:] for line in status.splitlines() if line.startswith("Uid:")]
-            if len(owners) != 1 or len(owners[0]) != 4 or not all(v.isdecimal() for v in owners[0]):
-                raise ValueError("malformed-process-owner")
-            if any(int(v) != uid for v in owners[0][:2]):
+            executable = current_executable(process, uid)
+            if executable is None:
                 continue
-            executable = os.readlink(process / "exe")
             if len(executable.encode()) > 4096:
                 raise ValueError("executable-size-limit")
             if executable.endswith(" (deleted)"):
@@ -159,6 +185,7 @@ def bounded_command(command, timeout=2.0, limit=MAX_BYTES):
                              stderr=subprocess.PIPE)
     try:
         result = bytearray()
+        diagnostics = False
         total = 0
         deadline = time.monotonic() + timeout
         with selectors.DefaultSelector() as selector:
@@ -178,11 +205,17 @@ def bounded_command(command, timeout=2.0, limit=MAX_BYTES):
                             raise ValueError("child-output-limit")
                         if key.fileobj is child.stdout:
                             result.extend(block)
+                        else:
+                            diagnostics = True
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("child-timeout")
             if child.wait(timeout=remaining) != 0:
                 raise OSError("child-failed")
+            if diagnostics:
+                # pw-dump can report omitted/bind-failed objects yet exit zero.
+                # Retain only the failure signal, never private stderr text.
+                raise OSError("child-diagnostic-output")
         return bytes(result)
     finally:
         if child.poll() is None:
@@ -211,7 +244,11 @@ def audio_objects(objects, adapter):
         if not adapter.kind(obj, "Node"):
             continue
         props = adapter.props(obj)
-        direction = {"Audio/Source": "input", "Audio/Sink": "output"}.get(props.get("media.class"))
+        media_class = props.get("media.class")
+        if not isinstance(media_class, str) or not media_class.strip():
+            incomplete = True
+            continue
+        direction = {"Audio/Source": "input", "Audio/Sink": "output"}.get(media_class)
         if direction is None:
             continue
         if "device.id" in props and str(props["device.id"]) not in devices:
