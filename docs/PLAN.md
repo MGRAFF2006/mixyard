@@ -5,6 +5,34 @@ Decision: develop Linux, Windows and macOS concurrently; qualify each independen
 Hard requirement: excellent audio quality and ease of use. Previous routing setups
 had dropouts/bad sound. Reliability is a release gate, not a post-release polish task.
 
+### Scope update (2026-10-28)
+
+The local browser console is the primary next interface, served by an explicit
+loopback service like a local administration tool; the desktop remains available.
+The [web milestone](web-interface.md) covers persisted routing drafts/profiles,
+authoritative inspection and read-only runtime status, with actual browser/service
+integration tests. Native audio execution remains a separate required milestone.
+
+The product also includes bidirectional network audio between paired machines:
+independent application streams, direct inputs and arbitrary premixed buses,
+with explicit raw/compressed mode choices and local routing/processing at either
+end. Network inputs and outputs share routing semantics; transport does not
+implicitly capture all system audio or grant microphone access. Pairing,
+encryption, admission, provenance/loop prevention, bounded jitter/clock handling,
+disconnect/revoke/restart safety and per-stream isolation require proof.
+
+Source-format preservation supersedes the initial mono/stereo prototype limits
+as a finished-product requirement. Preserve rate, precision and ordered channels
+through local and network routes unless explicitly converted/processed or the
+particular final destination requires conversion. Convert per destination;
+a limited sink must not reduce sibling routes. Do not impose a universal
+48 kHz/Float32/stereo ceiling or silently choose lossy compression, discard
+channels, resample, normalize or clip. Unsupported routes reject with exact
+capability/resource limits. Raw passthrough, DSP, encoded/DSD paths and actual
+native delivery have distinct qualification boundaries. The complete updated
+acceptance and remaining gaps are tracked in
+[#29](https://github.com/MGRAFF2006/mixyard/issues/29).
+
 ## Product contract
 
 Create arbitrary user-defined mixes that applications can select as audio inputs
