@@ -1,0 +1,37 @@
+name: Offline Float64 DSP (no native delivery)
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/dsp/**', 'tests/dsp*', 'tests/dsp/**', 'examples/dsp*', 'docs/dsp.md', '.github/workflows/dsp.yml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/dsp/**', 'tests/dsp*', 'tests/dsp/**', 'examples/dsp*', 'docs/dsp.md', '.github/workflows/dsp.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  dsp:
+    name: DSP output, allocation and timing (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Filter, dynamics, continuity, reset, precision and allocation oracles
+        run: cargo test --locked --test dsp_core --test dsp_allocations
+      - name: Render complete slow FIR and report measured block budgets
+        shell: bash
+        run: cargo run --locked --release --example dsp_render -- "$RUNNER_TEMP/dsp-render"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsp-offline-${{ matrix.os }}
+          path: ${{ runner.temp }}/dsp-render/
+      - name: Qualification boundary
+        shell: bash
+        run: echo 'Synthetic offline host throughput only. A missed block budget is reported and does not remove the effect or truncate output. Native delivery, hard realtime, total route latency and physical quality remain unverified.' >> "$GITHUB_STEP_SUMMARY"
