@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vSituationNumber } from './situation-number.ts'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Api } from './api.ts'
 import type { Config, Inventory, Profile } from './model.ts'
@@ -191,8 +192,8 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         </div>
       </div>
       <fieldset class="situation-inputs"><legend>Simulation context</legend>
-        <div class="situation-fields"><label class="situation-field">Snapshot epoch<input :value="s.request.snapshot.epoch" @input="s.edit(r => { r.snapshot.epoch = ($event.target as HTMLInputElement).value })" /></label><label class="situation-field">Snapshot revision<input type="number" min="0" step="1" :value="s.request.snapshot.revision" required @input="metadata($event, (r, n) => { r.snapshot.revision = n })" /></label><label class="situation-field">Evaluate at (epoch ms)<input type="number" min="0" step="1" :value="s.request.nowMs" required @input="metadata($event, (r, n) => { r.nowMs = n })" /></label></div>
-        <details><summary>Revision context (expert)</summary><div class="situation-fields"><label v-for="key in (['configRevision','storeRevision','inventoryRevision','manualRevision'] as const)" :key="key" class="situation-field">{{ key }}<input type="number" min="0" step="1" :value="s.request.context[key]" required @input="metadata($event, (r, n) => { r.context[key] = n })" /></label></div></details>
+        <div class="situation-fields"><label class="situation-field">Snapshot epoch<input :value="s.request.snapshot.epoch" @input="s.edit(r => { r.snapshot.epoch = ($event.target as HTMLInputElement).value })" /></label><label class="situation-field">Snapshot revision<input v-situation-number type="number" min="0" step="1" :value="s.request.snapshot.revision" required @input="metadata($event, (r, n) => { r.snapshot.revision = n })" /></label><label class="situation-field">Evaluate at (epoch ms)<input v-situation-number type="number" min="0" step="1" :value="s.request.nowMs" required @input="metadata($event, (r, n) => { r.nowMs = n })" /></label></div>
+        <details><summary>Revision context (expert)</summary><div class="situation-fields"><label v-for="key in (['configRevision','storeRevision','inventoryRevision','manualRevision'] as const)" :key="key" class="situation-field">{{ key }}<input v-situation-number type="number" min="0" step="1" :value="s.request.context[key]" required @input="metadata($event, (r, n) => { r.context[key] = n })" /></label></div></details>
         <label class="situation-check"><input type="checkbox" :checked="s.request.manualOverride" @change="s.edit(r => { r.manualOverride = ($event.target as HTMLInputElement).checked })" />Simulate manual override (returns no change; does not control runtime)</label>
         <SituationFacts :snapshot="s.request.snapshot" :catalog="s.request.catalog" @update="s.edit(r => { r.snapshot = $event })" @invalid="s.invalidate()" />
       </fieldset>
