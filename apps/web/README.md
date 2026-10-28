@@ -156,3 +156,71 @@ validation decides route correctness, headroom and monitoring constraints.
 The UI can add sends and mixes; source/output identity creation, policy editing
 and removal use imported config. Arbitrary imported mixes render horizontally;
 on narrow screens the matrix scrolls in its own region with sticky source labels.
+
+## Situations workspace (format 1)
+
+Situations edits one complete decision configuration in browser memory. Export
+**full configuration** before closing: it includes graph, catalog, simulation
+snapshot, monotonic clock, revision context and manual-override input. Switching
+workspaces keeps the draft. It does not save graphs or change profiles/audio.
+Activation and controller ownership are separate integration work.
+
+Start with configurable headphones, interface-only hardware monitoring, or
+application-combination presets. Supply exact device/profile/source/mix/output
+IDs; saved profile IDs and current routing identities are offered as suggestions.
+No display-name-to-ID inference occurs. The monitor preset requires a complete
+single-device set and explicit hardware-monitor declaration, and suppresses only
+the chosen source-to-monitor send. Unknown gets its own configurable profile or
+no-change terminal. Time windows compose provider-supplied timezone and civil
+minutes; the browser does no fixed-offset conversion.
+
+The same graph has recursive all/any/not conditions, every typed predicate,
+three explicit branch links, profile/scoped-reduction actions and expert Request
+JSON. Node renaming relinks incoming branches/root atomically; referenced nodes
+cannot be deleted. Cycles, missing targets, invalid bounds/types and excessive
+input are rejected. Lists and identities are never trimmed or truncated.
+Changing a condition/operator/action type intentionally replaces its operands;
+unrecognized raw fields remain attached for authoritative rejection. Ordinary
+edits retain all other parameters and raw fields. Automation requests/exports
+use finite Float64 JSON, preserving signed zero and low bits, with separate
+safe-integer revision/time checks; legacy routing JSON is unchanged.
+
+The directed diagram shows all three labeled branches, selected nodes and the
+evaluated path. Its scroll region is keyboard-focusable; an equivalent node and
+branch button list provides full keyboard navigation without dragging or color.
+Simulation reasons link to deduplicated evidence by observationIndex. Core
+traceTruncated is explicitly shown as an incomplete prefix; facts remain supplied
+claims even when their evidence label says platform-observed. Every edit,
+including invalid text, invalidates prior trace/validation; older asynchronous
+responses cannot replace later edits.
+
+The fixed integration boundary uses the existing same-origin Api/CSRF session:
+
+- `POST /api/automation/validate {graph,catalog}` -> `{valid:true}`
+- `POST /api/automation/evaluate <complete Request>` ->
+  `{mode:"simulation",evaluation:<core Evaluation>}`
+- `POST /api/automation/context {}` ->
+  `{mode:"read-only-live-context",snapshot,nowMs,catalog,providers}`
+
+Provider reports contain `{provider,status,reason}` with complete/partial/
+unsupported/error status. Collection never changes simulation inputs until the
+explicit copy action. Collection failure keeps local work and allows retry.
+Imports run graph validation **and full-request simulation** before replacing
+any active data. Services lacking these endpoints return a visible error;
+editing/export remain available. No fabricated local evaluator substitutes for
+the authoritative service.
+
+Format-1 admission: 256 nodes, graph/condition depth 32, 512 catalog/fact entries,
+256 items per set/list/override collection, 1024-byte text, 4096 admitted work
+items, 1 MiB request. Rust enforces the complete work budget and reserved catalog
+policy; frontend shape checks do not replace it. Trace has at most 256 entries
+and a shared 256 KiB compact evidence budget.
+
+`src/situations.test.ts` covers exact edits/presets, full-parameter preservation,
+safe metadata, unknown-path expectations, import failure atomicity, stale-response
+suppression and offline recovery. `tests/situations.spec.ts` exercises the real
+Vue forms and accessible diagram against mocked API responses, including 390 px
+keyboard use, shared evidence and bounded trace. These are frontend contract
+checks, not actual Rust evaluator/provider or automatic activation evidence.
+The core is PR #41; the service adapter and live-context collector are separate
+dependencies under issue #40.
