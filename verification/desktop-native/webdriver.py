@@ -85,7 +85,8 @@ def exited(pid):
     path = Path(f'/proc/{pid}/stat')
     try:
         status = path.read_text()
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # Disappearance can fail during open (ENOENT) or an already-open read (ESRCH).
         return True
     return status.split(') ')[1].startswith('Z')
 
