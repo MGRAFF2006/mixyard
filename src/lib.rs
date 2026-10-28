@@ -41,6 +41,7 @@
 
 pub mod audio;
 pub mod automation;
+pub mod context;
 pub mod diagnostics;
 pub mod dsp;
 pub mod latency;
