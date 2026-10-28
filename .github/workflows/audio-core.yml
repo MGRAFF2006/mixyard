@@ -1,0 +1,32 @@
+name: Core PCM processing (no native delivery)
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/audio.rs', 'tests/audio*', 'tests/audio/**', 'examples/**', 'docs/audio-core.md', '.github/workflows/audio-core.yml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/audio.rs', 'tests/audio*', 'tests/audio/**', 'examples/**', 'docs/audio-core.md', '.github/workflows/audio-core.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  pcm:
+    name: Offline PCM and allocation checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Actual processor PCM oracles and callback heap checks
+        run: cargo test --locked --test audio_core --test audio_allocations
+      - name: Offline sample-render demonstration
+        run: cargo test --locked --test audio_core offline_render_demo -- --nocapture
+      - name: Qualification boundary
+        shell: bash
+        run: echo 'Actual core sample processing only. Native delivery, device clocks, latency, quality and endurance remain unverified.' >> "$GITHUB_STEP_SUMMARY"
