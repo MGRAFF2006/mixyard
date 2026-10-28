@@ -2,7 +2,7 @@
 
 This is the first executable slice of [DSP #33](https://github.com/MGRAFF2006/mixyard/issues/33), preserving the [precision contract #29](https://github.com/MGRAFF2006/mixyard/issues/29). It depends on the Float64 core/codecs from PR #31. It adds no route permissions, native devices, web endpoints, callback installation, or changes to schema 2's existing routing policy. That policy's mono/stereo subset is **not** this DSP API's channel limit.
 
-`mixyard::dsp::Chain` compiles an ordered, named effect list for interleaved `f64` blocks. Its format contains a positive negotiated integer sample rate and an explicit ordered list of unique opaque channel identities. Every positive `u32` rate is admissible, subject to parameters and caller resources, rather than a rate whitelist. There is no inferred layout, reordering, resampling, narrowing to `f32`, normalization, clipping or automatic limiter. Encoded/DSD passthrough is a separate capability, not a DSP input.
+`mixyard::dsp::Chain` compiles an ordered, named effect list for interleaved `f64` blocks. Its format contains a positive negotiated integer sample rate and an explicit ordered list of unique opaque channel identities. Every positive `u32` rate is admissible, subject to parameters and caller resources, rather than a rate whitelist. There is no inferred layout, implicit reordering, resampling, narrowing to `f32`, normalization, clipping or automatic limiter. Encoded/DSD passthrough is a separate capability, not a DSP input.
 
 ## Compile, process and attach
 
@@ -15,7 +15,7 @@ let config = ChainConfig {
         channels: vec!["front-right".into(), "front-left".into()],
     },
     effects: vec![EffectConfig {
-        name: "polarity".into(), enabled: true,
+        name: "polarity".into(), enabled: true, channels: None,
         effect: Effect::Gain { gain: 1.0, invert_polarity: true },
     }],
 };
@@ -65,22 +65,116 @@ The serde contract uses camelCase fields and kebab-case effect/filter tags, deni
 }
 ```
 
-`expander` has the same `parameters` structure as `compressor`. Filter tags are `low-pass`, `high-pass`, `band-pass`, `notch`, `peaking`, `low-shelf`, `high-shelf`, `all-pass`. There are no implicit defaults. Even disabled effects' parameters are validated at compile time.
+`expander` has the same `parameters` structure as `compressor`. Filter tags are `low-pass`, `high-pass`, `band-pass`, `notch`, `peaking`, `low-shelf`, `high-shelf`, `all-pass`. Effect parameters have no implicit defaults; only the optional channel selector defaults to all lanes. Even disabled effects' parameters are validated at compile time.
 
 `BlockReport` serializes as `{frames, overFullScaleSamples, bypassed}`. Each channel `Meter` is `{peak, rms, overFullScaleSamples}` for the current block, without smoothing or calibrated loudness. RMS uses scaled sums of squares to handle finite signals even near `f64::MAX` without squaring overflow. `abs(sample) > 1` is an over-full-scale diagnostic, not a mutation or automatic failure. The chain can intentionally produce >1.0; destination encoders must make their own explicit representability/conversion decision.
 
 `Chain::admission()` serializes as `{memoryBytes, workUnitsPerBlock, algorithmicLatencyFrames, explicitDelayFrames, tail}`. Tail is `{kind:"finite", frames:N}` or `{kind:"infinite"}`. These are resource/structural metadata, **not measured speed**:
 
-- `memoryBytes` bounds retained requested payload, including config vector/string capacities, output, state, meters and structs. It excludes caller input, transient compile work and allocator bookkeeping/fragmentation. Arithmetic is checked before state allocation. A caller needing a physical memory cap must account for those external costs separately.
+- `memoryBytes` bounds retained requested payload, including config vector/string capacities, output, state, meters and structs. This includes selector IDs/capacities, prepared lane indices, matrix routes/input IDs/gains/capacities, compiled routing indices and frame scratch. It excludes caller input, transient compile work and allocator bookkeeping/fragmentation. Arithmetic is checked before state allocation. A caller needing a physical memory cap must account for those external costs separately.
 - `workUnitsPerBlock` accounts abstract scalar work for the maximum admitted block, output checks/metering, and worst-case state reset. It is not a calibrated instruction count or CPU cost: transcendental operations and platform math differ. It allows explicit caller admission without declaring a slow algorithm unsupported.
 - `algorithmicLatencyFrames` is **added implementation buffering/look-ahead latency**, currently 0. It does not mean an effect has no temporal/phase response. Filters have frequency-dependent group delay; a caller-provided IR may encode delay/phase of any kind. Neither filter/IR group delay nor total route/device/network latency is measured here.
-- `explicitDelayFrames` sums configured delay tap lengths, distinct from throughput and added buffering. A dry path can arrive immediately, mixed with delayed sound. This field does not attempt to infer delay encoded in arbitrary FIR coefficients.
-- Finite tail length is a conservative zero-input flushing bound after the final input frame, summing FIR and non-feedback delay support. Biquads and nonzero delay feedback conservatively report infinite tails; hosts must choose an explicit normal-render duration/tail tolerance. Dynamics can retain detector state but does not generate sound from zeros. No tail is automatically rendered, truncated, or allowed to survive a privacy reset.
+- `explicitDelayFrames` conservatively sums enabled configured delay tap lengths, including separate instances selecting independent channels, distinct from throughput and added buffering. It can overestimate every individual lane's delay: taps of 1 frame on A and 3 frames on B report 4, although their wet impulses arrive at frames 1 and 3. It is not a per-channel delay or group-delay measurement. A dry path can arrive immediately, mixed with delayed sound. This field does not attempt to infer delay encoded in arbitrary FIR coefficients.
+- Finite tail length is a conservative zero-input flushing bound after the final input frame, summing FIR and non-feedback delay support even when instances select disjoint lanes, so it may overestimate the flushing time. Biquads and nonzero delay feedback conservatively report infinite tails; hosts must choose an explicit normal-render duration/tail tolerance. Dynamics can retain detector state but does not generate sound from zeros. No tail is automatically rendered, truncated, or allowed to survive a privacy reset.
 
 Limits are supplied by a trusted caller, not guessed from source layout or silently increased. Channel count, effect count, requested memory and abstract work excess reject with the named resource, required amount and limit. Checked-size overflow rejects before allocation. There is no fixed product band/channel count. A host may explicitly admit a heavy chain for offline rendering even when its work estimate exceeds that host's chosen live allowance. Estimated or measured CPU cost never silently removes, bypasses, degrades or truncates an effect.
 
+## Independent channel selection and explicit routing
+
+Each effect config has optional `channels: ["opaque-id", ...]`. Omitted or JSON
+`null` means all format channels and serializes without this field, preserving
+legacy JSON. An explicit selector must be nonempty, unique and contain only
+known format IDs. Order is retained; it never reorders the interleaved format.
+Gain, biquad, delay, compressor, expander and FIR apply only to those lanes;
+unselected samples pass through that stage bit-for-bit, including signed zero,
+subnormals and Float64 low bits. Each selected lane has independent history and
+detector state. Use multiple ordered instances with different selectors to give
+any lane its own parameters, including feedback, filter shape, dynamics times or
+IR coefficients. Selectors/parameters validate even on disabled effects.
+
+A matrix instead supplies explicit outputs and rejects a non-null `channels`
+selector because its routes already define routing. As with other effects,
+JSON `channels: null` is absence. For example, this swaps A/B and explicitly
+silences C while keeping format order `["A", "B", "C"]`:
+
+```json
+{"name":"swap and mute","enabled":true,"effect":{"kind":"channel-matrix","routes":[
+  {"output":"B","inputs":[{"channel":"A","gain":1.0}]},
+  {"output":"A","inputs":[{"channel":"B","gain":1.0}]},
+  {"output":"C","inputs":[]}
+]}}
+```
+
+Every format output ID must appear exactly once, in any route declaration order.
+Within a route, input IDs must be unique and known. Signed finite gains permit
+polarity, arbitrary crossfeed/mixing and copies; no stereo pairing or balance
+law is inferred. For balance, explicitly attenuate the desired lane(s) with gain
+instances, or set the matrix coefficients. A matrix does not add/remove channels
+or change their IDs: that format-conversion boundary is outside this effect,
+not a product channel ceiling. Invalid routes reject even when disabled.
+
+Compile resolves all selectors/routes to indices and allocates compact selected
+state and one frame of matrix scratch after checked memory/work admission.
+Processing does no string lookup, allocation, locks or I/O. Scratch is cleared
+alongside retained state on privacy/error reset and bypass changes.
+
+These sample-bit guarantees refer to already supplied `f64` PCM and exact
+assignments. They do not promise that arbitrary decimal samples round-trip
+bit-exactly through every JSON parser; JSON precision handling is a separate host
+contract. This change does not alter serde_json's parser features.
+
+## Host derivation of channel timing details
+
+No new scalar latency API is introduced here. `Chain::config()` is the stable,
+immutable metadata source; inspect it off callback and retain effect index/name
+alongside the explicit channel IDs. For every enabled `Delay`, enumerate
+`effect.channels` or, when absent, `format.channels`, and record that lane's
+`frames`, `dry`, `wet`, and `feedback`. Convert frames to milliseconds with
+`1000 * frames / sampleRateHz` in suitable host arithmetic. Disabled effects and
+whole-chain bypass contribute no active processing delay. These values are
+configured sample-domain facts, not measured wall-clock delivery times.
+
+A delay has an immediate branch when `dry != 0`, a D-frame branch when
+`wet != 0`, and further kD-frame echoes when wet and feedback are nonzero.
+Independent delays on different lanes are separate branches: A with D=1 and B
+with D=3 does not yield a four-frame path. Follow matrix input/output edges at
+each stage to associate earlier channel branches with their eventual outputs;
+multiple nonzero inputs union their dependencies rather than adding their delays.
+The next stage always consumes the previous stage's complete lane frame.
+
+For a conservative **per-output zero-input tail bound**, the host can start each
+lane at finite 0 and walk enabled stages in order:
+
+- Unselected lanes retain their previous bounds. Selected gain and dynamics do
+  not add support. Selected FIR adds `coefficients.len()-1`; selected biquad
+  conservatively becomes infinite. This intentionally ignores cancellation and
+  leading/trailing zero coefficients, rather than asserting an exact IR delay.
+- A selected delay adds D for zero feedback or becomes infinite for nonzero
+  feedback. This is a safe structural bound even with wet=0; a host refining it
+  can retain the input bound when wet=0 and dry is nonzero, or finite 0 when
+  both dry and wet are zero. Feedback state still exists and must be reset even
+  when currently inaudible.
+- For a matrix, derive all outputs from a snapshot of the previous bounds. Each
+  output takes the maximum bound of its nonzero-gain input routes (infinite
+  dominates); no contributing inputs gives finite 0. It adds no temporal support.
+  Do not mutate the input bounds while traversing routes.
+
+Use checked addition and preserve infinity explicitly. This describes structural
+support, not a measured signal delay or a guaranteed minimum tail duration.
+A dry/wet mixture, IIR filter, arbitrary FIR or mixed matrix can have multiple
+arrival times and frequency-dependent phase/group delay; nonlinear dynamics
+also preclude treating every chain as a fixed linear delay. Implementation
+buffering remains 0, distinct from explicit sample taps, IR-encoded timing,
+frequency-dependent group delay and external device/network queues.
+
+Path synchronization/alignment needs an explicit host policy for those branches,
+plus separately measured queue/device/network timing and uncertainty. This core
+does not measure RTT, estimate a one-way delay from it, schedule synchronized
+playback, or qualify native synchronization.
+
 ## Implemented effect semantics
 
+- **Channel matrix:** explicit signed finite gains map existing format lanes to every output, with no hidden normalization or clipping. Exact single-input unity assignments copy sample bits (including signed zero/subnormals) without arithmetic; other single-input routes multiply directly. Multiple-input routes multiply each input and sum in listed order, starting at +0.0. Empty inputs emit +0.0. Every product, intermediate sum and final result must be finite; overflow rejects the entire block and resets all state, even if later terms could cancel it. All routes read the original pre-stage frame, so swaps and permutations never reuse an already overwritten output. Output identities, channel count and interleaved order remain unchanged.
 - **Gain/polarity:** finite nonnegative linear gain, including boosts and zero, with explicit polarity inversion. Enabled unity gain with no inversion, disabled effects, an empty chain, and whole-chain bypass preserve finite input bits exactly, including signed zero and Float64 low bits. Polarity and non-unity processing are intentional arithmetic.
 - **Parametric biquad family:** [W3C/RBJ cookbook](https://www.w3.org/TR/audio-eq-cookbook/) low/high-pass, unity-center-gain band-pass, notch, peaking EQ, low/high shelf and all-pass, in Float64 direct form I with per-channel history. Frequency must be strictly between zero and Nyquist; Q is finite and positive. Shelves use `alpha = sin(w)/(2Q)` rather than a shelf-slope S control. `gainDb` is required to be zero except for peaking/shelves. Gain must be finite within ±6000 dB; computed coefficients must be finite and pass strict second-order stability conditions. Extremely marginal/unrepresentable frequency/Q/gain combinations reject explicitly rather than returning unstable coefficients. All-pass preserves magnitude, not phase or samples. DC removal and graphic EQ can be explicitly composed from high-pass/parametric sections; there is no separate calibrated preset/UI yet.
 - **Delay:** positive integer frame delay D. Per channel, `y[n] = dry*x[n] + wet*buffer[n-D]`, and the new retained sample is `x[n] + feedback*buffer[n-D]`. Wet and dry are independently in `[0,1]` and do not have to sum to one. Feedback is finite with `abs(feedback) < 1`, permitting alternating echoes. No fractional delay or hidden cross-channel feedback. Both retained and output results are checked for finiteness, including when wet is zero.
@@ -125,8 +219,8 @@ The `dsp.yml` workflow runs output/allocation tests and the release render on Li
 
 ## Verification and remaining implementation
 
-Tests use actual output: known quarter-rate Butterworth impulse coefficients; DC/Nyquist shelf/pass gains; steady-tone cutoff, notch, band-pass, peaking and all-pass magnitudes; dynamics static laws, quadratic knee, attack/release time constants and bounded gate attenuation; exact delay/FIR impulse/feedback sequences and block partition continuity; explicit eight-channel isolation; ordered nonlinear effects; Float64 low bits/signed zero bypass; non-whitelisted high/low rates; typed format/parameter/resource rejection and overflow; tail flushing versus privacy/error reset; immediate bypass discontinuity; and heap allocation/reallocation/deallocation instrumentation around the real processing paths. These tests are offline algorithm/lifecycle evidence, not native audio qualification.
+Tests use actual output: known quarter-rate Butterworth impulse coefficients; DC/Nyquist shelf/pass gains; steady-tone cutoff, notch, band-pass, peaking and all-pass magnitudes; dynamics static laws, quadratic knee, attack/release time constants and bounded gate attenuation; exact delay/FIR impulse/feedback sequences and block partition continuity; explicit eight-channel isolation; selected lane histories and untouched low bits/subnormals; matrix identity/swap/copy/polarity/mix/silence, listed-order sums and atomic overflow; retained selector/matrix capacity accounting and budget rejection before allocation; ordered nonlinear effects; Float64 low bits/signed zero bypass; non-whitelisted high/low rates; typed format/parameter/resource rejection and overflow; tail flushing versus privacy/error reset; immediate bypass discontinuity; and heap allocation/reallocation/deallocation instrumentation around the real processing paths. These tests are offline algorithm/lifecycle evidence, not native audio qualification.
 
-Remaining #33 work is explicit: web editor/preview and warnings; native source/mix/per-output attachment and provenance generations; click-free automation/control changes and A/B/presets; channel matrices, balance/width/crossfeed and crossovers; calibrated loudness; de-essing and sidechains; look-ahead/true-peak limiting; advanced/partitioned convolution and reverb tools; plugin discovery/isolation/hosting (CLAP, LV2, VST3, Audio Units) with actual precision/latency/crash compatibility probes. None is advertised as implemented by this slice. There is no simple limiter mislabeled true-peak.
+Remaining #33 work is explicit: web editor/preview and warnings; native source/mix/per-output attachment and provenance generations; click-free automation/control changes and A/B/presets; higher-level balance/width/crossfeed controls and crossovers; calibrated loudness; de-essing and sidechains; look-ahead/true-peak limiting; advanced/partitioned convolution and reverb tools; plugin discovery/isolation/hosting (CLAP, LV2, VST3, Audio Units) with actual precision/latency/crash compatibility probes. None is advertised as implemented by this slice. There is no simple limiter mislabeled true-peak.
 
 [LV2 core](https://lv2plug.in/ns/lv2core) separates instantiation/audio execution and defines latency reporting; its [worker extension](https://lv2plug.in/ns/ext/worker) separates non-realtime tasks and offline execution. They inform these boundaries; this engine does not load LV2 code. Future hosts must probe native precision: LV2 core audio ports use float arrays, while [CLAP audio-port capabilities](https://github.com/free-audio/clap/blob/main/include/clap/ext/audio-ports.h) make 64-bit support explicit and optional. No plugin may silently narrow an admitted Float64 route.
