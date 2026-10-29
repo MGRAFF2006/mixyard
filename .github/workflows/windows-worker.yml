@@ -1,0 +1,39 @@
+name: Windows exact PCM worker (SDK and portable checks only)
+on:
+  workflow_dispatch:
+  push:
+    paths: ['adapters/windows/**', '.github/workflows/windows-worker.yml']
+  pull_request:
+    paths: ['adapters/windows/**', '.github/workflows/windows-worker.yml']
+permissions:
+  contents: read
+jobs:
+  portable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and exercise production portable boundary with sanitizers
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -O1 -g0 -pthread -fsanitize=address,undefined adapters/windows/worker_queue.cpp adapters/windows/wasapi_worker.cpp adapters/windows/worker_check.cpp -o /tmp/mixyard-worker-check
+          /tmp/mixyard-worker-check
+  sdk:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require existing SDK worker disk reserve
+        shell: python
+        run: |
+          import shutil
+          if shutil.disk_usage('.').free < 10 * 2**30:
+              raise SystemExit('BLOCKED: less than 10 GiB free')
+      - name: Compile real WASAPI worker and existing probe against Windows SDK
+        run: cmake -S adapters/windows -B build/windows -A x64
+      - name: Build native production bridge and safe test executables
+        run: cmake --build build/windows --config Release --parallel 1 --target mixyard-windows-probe mixyard-windows-worker-check mixyard-windows-worker-sdk-check
+      - name: Run portable and SDK-injected operations only
+        run: ctest --test-dir build/windows -C Release -R "windows-(exact-worker-model|worker-sdk-injected)" --output-on-failure --no-tests=error
+      - name: State qualification boundary
+        shell: pwsh
+        run: "'SDK compile/link plus portable/injected production-boundary checks only. No endpoint activation, capture/render, driver load, virtual mic, consumer delivery or backend availability proof.' >> $env:GITHUB_STEP_SUMMARY"
