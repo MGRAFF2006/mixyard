@@ -10,6 +10,13 @@ cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
   "$root/adapters/linux/native-host/native_format_check.c" \
   -o "$MIXYARD_NATIVE_BUILD/native-format-check"
 "$MIXYARD_NATIVE_BUILD/native-format-check"
+# Real plugin pool/alias counterexample; no context, server connection or devices.
+cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
+  $(pkg-config --cflags libpipewire-0.3) \
+  "$root/adapters/linux/native-host/native_pool_check.c" \
+  $(pkg-config --libs libpipewire-0.3) \
+  -o "$MIXYARD_NATIVE_BUILD/native-pool-check"
+"$MIXYARD_NATIVE_BUILD/native-pool-check"
 cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
   $(pkg-config --cflags libpipewire-0.3 json-c) \
   -I"$root/adapters/engine/include" \

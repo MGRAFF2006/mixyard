@@ -142,3 +142,13 @@ The followup's private generated files occupied 2,270,602 logical bytes at link
 within the 16 MiB cap and were deleted. Run the linked executable with
 `python3 -B adapters/linux/native-host/check_host.py PATH/host-oracle PRIVATE_DIR`.
 This injected evidence remains separate from the SDK/native graph lane.
+
+The next ownership probe (`native_pool_check.c`) loads the distro SPA audiomixer
+through PipeWire's public loader with an owned loop, without a context, server
+connection or device. It supplies two owned exact-format input/output buffers
+and tests whether an output token aliases upstream chunk/header/PCM after the
+input is acknowledged reusable. It retains both output tokens, observes source
+reuse and pool exhaustion, and compares an independent owned copy. Its expected
+counterexample is diagnostic evidence about dynamic buffer ownership, never a
+passing full private graph. Hosted execution is required; the SDK and plugin are
+absent locally. Current graph chunk/sample/warning checks remain unchanged.
