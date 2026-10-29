@@ -6,19 +6,49 @@ edition = "2021"
 license = "MIT"
 description = "Read-only configuration validation and dry-run audio routing policy"
 
+[features]
+default = ["desktop"]
+# Desktop IPC/services and local stores are opt-in for mobile core consumers.
+desktop = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio", "dep:getrandom", "dep:sha2", "dep:libc", "dep:windows-sys"]
+
+[[bin]]
+name = "mixyard"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "mixyard-runtime"
+path = "src/bin/mixyard-runtime.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "mixyard-web"
+path = "src/bin/mixyard-web.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "mixyard-context"
+path = "src/bin/mixyard-context.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "mixyard-automation"
+path = "src/bin/mixyard-automation.rs"
+required-features = ["desktop"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 # HTTP parsing/framing stays in Hyper; no handwritten wire parser.
-hyper = { version = "1", features = ["http1", "server"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync"] }
-getrandom = "0.4"
-sha2 = "0.10"
+hyper = { version = "1", features = ["http1", "server"], optional = true }
+hyper-util = { version = "0.1", features = ["tokio"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync"], optional = true }
+getrandom = { version = "0.4", optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = { version = "0.2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_IO", "Win32_System_SystemServices", "Win32_System_JobObjects", "Win32_System_Com", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61", optional = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_IO", "Win32_System_SystemServices", "Win32_System_JobObjects", "Win32_System_Com", "Win32_UI_Shell"] }

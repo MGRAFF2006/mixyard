@@ -1,6 +1,76 @@
 # Linux PipeWire prototype
 
-This lane is independent of the Rust policy CLI. `example.json` is an adapter
+## Owned in-process Rust PCM path
+
+`src/runtime/linux_audio.rs` provides a callable Linux host bridge: an already
+compiled authoritative `Processor64`, exact source/destination bindings, aligned
+in-process PCM, independent bounded output queues, and owned null/raw-file
+consumers. This path executes shared policy and actual PCM; it does not connect
+the Python graph planner to an audio server. The lifecycle IPC and inventory
+`backendAvailable`/`audioApplied` flags remain false.
+
+Construct `LinuxAudio::new` off callback with one optional `Endpoint` per immutable
+processor source/output slot. Each selected endpoint must match the exact planned
+observed ID, nominal rate, Float64 precision and canonical ordered `MONO` or
+`FL,FR` channels. Missing/ambiguous ports require `None`; formats/layouts outside
+the current core are rejected. The constructor admits the **total** output PCM
+queue budget; processor buffers, endpoint metadata and consumer scratch are
+separate explicit budgets.
+
+Call `render` with caller-owned PCM and matching `Input` metadata. All supplied
+sources must share the explicit engine clock ID, generation/revision, sequence
+and first frame, with current monotonic capture/deadline timestamps. Output
+deadlines cannot extend a contributing source's lifetime. Identity, format,
+stamp or sample errors revoke the instance and erase queued PCM. Missing input
+is fresh silence. A full or expired output queue fails only that destination.
+Revocation is terminal; restart needs a new host generation, fresh binding and
+new consumers. Numeric stamps are lifetime checks, not capture authorization.
+
+Create one `Consumer::null` or `Consumer::create_file` per selected output off
+callback, then drain each independently outside render. Exclusive consumer claims
+reject duplicate attachment instead of splitting a stream.
+Additional consumers need separate explicitly planned output routes/queues.
+The queues use exclusive ownership and are **not** cross-thread SPSC queues; native callback scheduling
+and lock-free interthread ownership transport remain unqualified. A file drain
+can block its calling thread, so it must never run on a realtime callback.
+Files are exclusively created with mode 0600 and never reopened/truncated;
+callers choose a trusted owned parent directory. They contain headerless
+interleaved PCM, with the admitted format retained on `Consumer::format`.
+Each destination explicitly selects Float64LE, rounded Float32LE, or an exact
+signed codec. No rounding/clipping/dither is implicit for signed PCM. A conversion,
+frame-budget or I/O failure stops that consumer and clears its queue; sibling
+output precision/queues are unchanged. Partial I/O failure may leave an incomplete
+file and is never retried automatically. Total recorded frames and scratch bytes
+are admitted before file creation.
+
+Run the focused production-path tests after integrating the worker/module exports:
+
+```sh
+CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo test --locked --test native_linux_pcm -- --nocapture
+```
+
+For constrained hosts, `python3 -B adapters/linux/check-owned-pcm.py --help`
+describes a `rustc` harness using existing compatible dependency artifacts read
+only. It compiles the unchanged full root library and these tests, checks
+resource floors and deletes its private `/dev/shm` artifacts. This verifies the
+actual library module graph; Cargo manifests, bins and native SDKs are not checked.
+
+The executable checks compare generated-source consumer file bytes (including
+Float64 low bits, signed zero, subnormals, independent mixes and an explicitly
+narrowed sibling), queue saturation/null progress, stale/revoked/restarted
+bindings, no-overwrite and exact-codec rejection. Allocation instrumentation
+covers render, queue handoff and null drain; file I/O is outside that scope.
+
+On 2026-10-29 this implementation host had no `libpipewire-0.3` pkg-config SDK,
+PipeWire runtime library in `ldconfig`, `pipewire` or `pw-cat`. No installation,
+server, native graph, personal source, physical output or desktop session was
+used. Native PipeWire transport/private-server isolation, selectable virtual
+inputs, hardware clocks, drift, latency and physical/endurance qualification
+remain open. Generated in-process delivery does not establish those gates.
+
+## Existing Python graph prototype
+
+The Python PipeWire prototype is independent of the Rust policy CLI. `example.json` is an adapter
 sample, not the shared core config. There is no integration yet. Python 3.10+
 stdlib plans native PipeWire filter-chain streams; Python never sees PCM.
 External graph mutation is disabled. Discovery, health observation and offline
