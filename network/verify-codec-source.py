@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import tomllib
 
+from codec_source_links import selected_links
+
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--cache', type=pathlib.Path, required=True,
                help='existing cache root with network/Cargo.lock and target/debug/deps')
@@ -63,7 +65,9 @@ def run(command):
     subprocess.run(command, check=True, env=env, timeout=180)
     reserve()
 
-run(['rustc', '--edition=2024', '-C', 'debuginfo=0', '-D', 'warnings', *flags,
+links = selected_links(root, target, features, env, run)
+base += links
+run(['rustc', '--edition=2024', '-C', 'debuginfo=0', '-D', 'warnings', *flags, *links,
      '--crate-type=rlib', '--crate-name', 'mixyard_network_codecs',
      str(root / 'codecs/src/lib.rs'), '-o', str(codec)])
 base += ['-L', f'dependency={target}']

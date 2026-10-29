@@ -257,3 +257,5 @@ compiles these actual sources with rustc against read-only cached rlibs, reserve
 dependency download. This supplements hosted locked Cargo qualification. Linked
 platform/package parity is an independent prerequisite; local Linux success does
 not establish Windows/macOS/mobile native availability or physical audio.
+
+The direct-source verifier executes the production `network/codecs/build.rs` selector for enabled FFI features and propagates its literal link directives to the codec crate, network crate and final test binaries. The same `MIXYARD_{ZSTD,OPUS}_{LIB_DIR,LIB_NAME,LINK_KIND}` settings apply; selected artifact removal fails before compilation. Empty features and `--legacy` do not invoke the selector. This host-only proof uses the caller-pinned read-only dependency cache and does not replace locked Cargo CI or platform qualification.
