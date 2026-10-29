@@ -67,7 +67,7 @@ defineExpose({ hasUnsavedDrafts: () => s.dirty })
             <p>Conversion: normalized-f32-clamp-v1. No implicit resampling or downmix.</p>
           </div>
           <label class="codec-check"><input v-model="s.selected.form.allowLossy" type="checkbox" />I allow lossy conversion for this exact stream intent</label>
-          <p v-if="s.selected.form.allowLossy && s.selected.form.mode !== 'opus'" class="secondary">Lossy consent is recorded, but raw and Zstd still preserve the original bytes.</p>
+          <p v-if="s.selected.form.allowLossy && s.selected.form.mode !== 'opus'" class="secondary">This combination is invalid. Turn off lossy consent for raw/Zstd; it cannot be exported or probed.</p>
           <p v-if="valid.error" class="codec-validation" role="status">{{ valid.error }}</p>
           <p v-else class="codec-validation">Portable config v1 is valid. This does not grant access or establish support.</p>
           <div class="actions"><button :disabled="!valid.config" @click="exportIntent">Export valid intent</button><button disabled title="No canonical codec control route is connected">Apply to live stream</button></div>
@@ -90,6 +90,8 @@ defineExpose({ hasUnsavedDrafts: () => s.dirty })
           <h4>{{ report.available ? (s.evidence.evidenceKind === 'fixture' ? 'Fixture reports an available plan' : 'Exact local plan available') : 'Exact plan unavailable' }}</h4>
           <p v-if="report.unavailableReason">{{ report.unavailableReason }}</p>
           <p>Agreement: {{ report.agreementState }}.</p><p>Availability scope: {{ report.availabilityScope }}</p>
+          <p v-if="report.agreementState === 'send-operation-in-flight'">A send operation is in flight. This does not confirm the requested plan.</p>
+          <p v-if="report.agreementState === 'different-plan-admitted'">A different plan is admitted. This intent has not replaced it.</p>
           <p>Availability and agreement do not prove remote consumption, live graph insertion or physical delivery.</p>
           <dl class="codec-facts">
             <div><dt>Original source</dt><dd>{{ s.evidence.originalSpec.name }} / {{ s.evidence.originalSpec.codec }} / {{ s.evidence.originalSpec.sample_rate }} Hz</dd></div>

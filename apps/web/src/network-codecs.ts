@@ -90,6 +90,7 @@ export function readCodecConfig(value: unknown): CodecConfig {
     if (e.conversion !== 'normalized-f32-clamp-v1') throw Error('Opus requires normalized-f32-clamp-v1 conversion.')
     if (v.allowLossy !== true) throw Error('Opus requires explicit lossy consent.')
   } else throw Error('Choose raw, zstd or opus; no automatic fallback is supported.')
+  if (e.mode !== 'opus' && v.allowLossy !== false) throw Error('Raw and Zstd require allowLossy: false. Turn off lossy consent for these modes.')
   return clone(v) as CodecConfig
 }
 export function parseCodecConfig(source: string): CodecConfig { return readCodecConfig(parseCodecJson(source)) }
@@ -117,7 +118,7 @@ export type CodecConstraints = { maxSourceChannels: number; zstdLevels: number[]
 export type CodecMeasurements = { blocks: number; rawBytes: number; envelopeBytes: number; fragmentBytes: number; wallNanos: number; cpuNanos: number | null; cpuUnavailableReason: string | null; lookaheadFrames: number; contextBytes: number }
 // Matches network/src/codec_transport.rs CodecCapability (camelCase serde).
 export type CodecCapability = {
-  version: 1; request: CodecConfig; available: boolean; agreementState: 'local-capability-only' | 'send-agreement-confirmed' | 'receive-admitted'; availabilityScope: string; unavailableReason: string | null; constraints: CodecConstraints; zstdVersion: number | null; opusVersion: string | null;
+  version: 1; request: CodecConfig; available: boolean; agreementState: 'local-capability-only' | 'send-agreement-confirmed' | 'send-operation-in-flight' | 'different-plan-admitted' | 'receive-admitted'; availabilityScope: string; unavailableReason: string | null; constraints: CodecConstraints; zstdVersion: number | null; opusVersion: string | null;
   maxRawBytes: number; maxEncodedBytes: number; maxEnvelopeBytes: number | null; maxFragmentsPerBlock: number | null; reservedWindowBytes: number | null; maxAggregateReassemblyBytes: number; maxWorkWallNanos: number; lookaheadFrames: number | null; contextBytes: number | null; measurements: CodecMeasurements | null; measurementUnavailableReason: string | null; networkDelayNanos: number | null; physicalDelayNanos: number | null; delayUnavailableReason: string
 }
 export type CodecTimeline = { version: 1; request: CodecConfig; sourceSpec: OriginalSpec; nextSourceSampleFrame: string; bitPreserving: boolean; destinationConversion: 'normalized-f32-clamp-v1' | null; codecLookaheadFrames: number }
@@ -153,8 +154,8 @@ export function readCodecEvidence(value: unknown, binding: CodecBinding, request
   if (spec.stream !== request.streamId || codecSignature(r) !== codecSignature(readCodecConfig(request))) throw Error('Capability does not match this exact stream, generation and encoding request.')
   if (c.version !== 1) throw Error('Unsupported capability version.')
   bool(c.available); nonempty(c.availabilityScope); nonempty(c.delayUnavailableReason)
-  if (!['local-capability-only', 'send-agreement-confirmed', 'receive-admitted'].includes(text(c.agreementState))) throw Error('Unsupported agreement state.')
-  if ((c.agreementState === 'send-agreement-confirmed' && e.direction !== 'send') || (c.agreementState === 'receive-admitted' && e.direction !== 'receive')) throw Error('Agreement direction mismatch.')
+  if (!['local-capability-only', 'send-agreement-confirmed', 'send-operation-in-flight', 'different-plan-admitted', 'receive-admitted'].includes(text(c.agreementState))) throw Error('Unsupported agreement state.')
+  if ((['send-agreement-confirmed', 'send-operation-in-flight', 'different-plan-admitted'].includes(c.agreementState as string) && e.direction !== 'send') || (c.agreementState === 'receive-admitted' && e.direction !== 'receive')) throw Error('Agreement direction mismatch.')
   for (const key of ['unavailableReason', 'opusVersion', 'measurementUnavailableReason']) if (c[key] !== null) nonempty(c[key])
   if (!c.available && !c.unavailableReason) throw Error('Unavailable capability requires a reason.')
   for (const key of ['maxRawBytes', 'maxEncodedBytes', 'maxAggregateReassemblyBytes', 'maxWorkWallNanos']) integer(c[key])

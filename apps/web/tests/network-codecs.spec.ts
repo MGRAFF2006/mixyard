@@ -53,6 +53,41 @@ test('actual console edits full-u64 intent offline, rejects ambiguous imports, a
   expect(await page.evaluate(() => !window.dispatchEvent(new Event('beforeunload', { cancelable: true })))).toBe(true)
 })
 
+test('raw and Zstd cannot export or probe lossy consent, and invalid imported consent stays reviewable', async ({ page }) => {
+  await open(page, true); const p = panel(page)
+  await fillIds(page); await p.getByRole('button', { name: 'Bind for capability reads' }).click()
+  await p.getByLabel('I allow lossy conversion', { exact: false }).check()
+  for (const mode of ['raw', 'zstd']) {
+    await p.getByLabel('Encoding intent').selectOption(mode)
+    await expect(p.getByRole('button', { name: 'Export valid intent' })).toBeDisabled()
+    await expect(p.getByRole('button', { name: 'Probe exact intent' })).toBeDisabled()
+    await expect(p.getByText('Raw and Zstd require allowLossy: false.', { exact: false })).toBeVisible()
+  }
+  expect(await page.evaluate(() => window.codecHarness.calls.length)).toBe(0)
+  await p.getByLabel('I allow lossy conversion', { exact: false }).uncheck()
+  expect(await downloaded(page, 'Export valid intent')).toEqual({ ...rawIntent, encoding: { mode: 'zstd', level: 1 } })
+  await p.getByText('Import portable intent or restore unfinished drafts', { exact: true }).click()
+  const invalid = JSON.stringify({ ...rawIntent, allowLossy: true })
+  await p.getByLabel('Codec JSON', { exact: true }).fill(invalid)
+  await p.getByRole('button', { name: 'Import intent', exact: true }).click()
+  await expect(p.getByRole('alert')).toContainText('Raw and Zstd require allowLossy: false')
+  await expect(p.getByLabel('Codec JSON', { exact: true })).toHaveValue(invalid)
+})
+
+test('legitimate send-busy and different-plan reports remain evidence rather than requested-plan agreement', async ({ page }) => {
+  await open(page, true); const p = panel(page)
+  await fillIds(page); await p.getByRole('button', { name: 'Bind for capability reads' }).click()
+  await page.evaluate(() => window.codecHarness.mode('busy-send'))
+  await p.getByRole('button', { name: 'Probe exact intent' }).click()
+  await expect(p.getByText('Agreement: send-operation-in-flight.')).toBeVisible()
+  await expect(p.getByText('A send operation is in flight. This does not confirm the requested plan.')).toBeVisible()
+  await page.evaluate(() => window.codecHarness.mode('different-plan'))
+  await p.getByRole('button', { name: 'Probe exact intent' }).click()
+  await expect(p.getByText('Agreement: different-plan-admitted.')).toBeVisible()
+  await expect(p.getByText('A different plan is admitted. This intent has not replaced it.')).toBeVisible()
+  await expect(p.getByRole('button', { name: 'Apply to live stream' })).toBeDisabled()
+})
+
 test('real workspace retains hidden target drafts and discards stale fixture capability after session revision, switch and revocation', async ({ page }) => {
   await open(page, true); const p = panel(page)
   expect(await page.evaluate(() => window.codecHarness.hasUnsaved())).toBe(false)

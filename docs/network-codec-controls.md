@@ -23,6 +23,9 @@ exact Spec and separate audio grant. It cannot supply or replace that descriptor
 }
 ```
 
+Raw and Zstd require `allowLossy: false`; Opus requires `allowLossy: true`.
+An invalid combination stays editable, but cannot be exported or probed.
+
 Encoding is exactly one of:
 
 - `{ "mode": "raw" }`: original PCM bytes.
@@ -104,8 +107,11 @@ boundary if counters exceed JavaScript's exact safe-integer range.
 
 Reports qualify only **local worker construction + exact local audio grant +
 active TLS**. `agreementState` separately reports `local-capability-only`,
-`send-agreement-confirmed`, or `receive-admitted`. None establishes remote
-consumption, live graph insertion, native availability or physical delivery.
+`send-agreement-confirmed`, `send-operation-in-flight`,
+`different-plan-admitted`, or `receive-admitted`. An in-flight send does not
+confirm the requested plan, and an admitted different plan has not been replaced
+by the edited intent. None establishes remote consumption, live graph insertion,
+native availability or physical delivery.
 Fixture evidence remains prominently labelled fixture even if its report says
 available or receive-admitted. Imported config/backup cannot create evidence.
 

@@ -15,6 +15,12 @@ test('frozen config keeps full-u64 strings and every explicit encoding boundary'
   for (const id of ['0', '01', '-1', '1.0', '1e3', '18446744073709551616', ' 1', '١']) assert.throws(() => readCodecConfig({ ...rawIntent, streamId: id }))
   for (const encoding of [{ mode: 'raw', level: 1 }, { mode: 'zstd', level: 0 }, { mode: 'zstd', level: 4 }, { mode: 'zstd', level: 1.5 }, { mode: 'flac' }, { mode: 'opus', bitrate: 5999, complexity: 1, vbr: true, conversion: 'normalized-f32-clamp-v1' }, { mode: 'opus', bitrate: 512001, complexity: 1, vbr: true, conversion: 'normalized-f32-clamp-v1' }]) assert.throws(() => readCodecConfig({ ...rawIntent, encoding, allowLossy: true }))
   const opus = cases[2]!
+  for (const encoding of [{ mode: 'raw' }, { mode: 'zstd', level: 1 }, { mode: 'zstd', level: 3 }]) {
+    assert.throws(() => readCodecConfig({ ...rawIntent, encoding, allowLossy: true }), /Raw and Zstd require/)
+    const s = new CodecWorkspace(); s.selected.form = formFromConfig({ ...rawIntent, encoding, allowLossy: true } as CodecConfig)
+    assert.equal(s.validation.config, null)
+    assert.throws(() => configFromForm(s.selected.form), /Raw and Zstd require/)
+  }
   for (const patch of [{ allowLossy: false }, { allowLossy: 'true' }, { streamId: 1 }, { generation: '0' }, { version: 2 }, { extra: true }, { encoding: { ...opus.encoding, vbr: 1 } }, { encoding: { ...opus.encoding, complexity: 11 } }, { encoding: { ...opus.encoding, conversion: 'automatic' } }]) assert.throws(() => readCodecConfig({ ...opus, ...patch }))
 })
 
@@ -49,6 +55,12 @@ test('qualified reports preserve exact provenance, request, cursor, metrics and 
   assert.equal(readCodecEvidence(fixture, codecBinding, rawIntent).capability.available, true)
   const noMeasurements = codecFixture(); noMeasurements.capability.measurements = null; noMeasurements.capability.measurementUnavailableReason = 'No completed operation'; noMeasurements.timeline = null
   assert.equal(readCodecEvidence(noMeasurements, codecBinding, rawIntent).timeline, null)
+  for (const state of ['send-operation-in-flight', 'different-plan-admitted'] as const) {
+    const f = codecFixture(); f.direction = 'send'; f.capability.agreementState = state
+    f.capability.measurements = null; f.capability.measurementUnavailableReason = 'No completed exact-plan operation'; f.timeline = null
+    assert.equal(readCodecEvidence(f, codecBinding, rawIntent).capability.agreementState, state)
+    f.direction = 'receive'; assert.throws(() => readCodecEvidence(f, codecBinding, rawIntent), /Agreement direction mismatch/)
+  }
   const edits: ((f: ReturnType<typeof codecFixture>) => void)[] = [f => { f.binding.revision++ }, f => { f.capability.request = { ...rawIntent, generation: '2' } }, f => { f.originalSpec.stream = '2' }, f => { f.capability.measurements!.cpuUnavailableReason = null }, f => { f.capability.maxWorkWallNanos = Number.MAX_SAFE_INTEGER + 1 }, f => { f.timeline!.nextSourceSampleFrame = '01' }, f => { f.timeline!.bitPreserving = false }, f => { f.timeline!.sourceSpec = { ...f.originalSpec, channels: ['FR', 'FL'] } }, f => { f.capability.available = false }, f => { f.direction = 'send' }]
   for (const edit of edits) { const f = copy(codecFixture()); edit(f); assert.throws(() => readCodecEvidence(f, codecBinding, rawIntent)) }
 })
