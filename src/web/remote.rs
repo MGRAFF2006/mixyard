@@ -85,7 +85,7 @@ fn redact_diagnostics(value: &mut serde_json::Value) {
                 );
                 if !public_validation {
                     eprintln!("Remote canonical {code}: {message}");
-                    fields.insert("message".into(), Value::String("The owning device cannot complete this operation. Inspect its local diagnostics; local files and state were not replaced automatically.".into()));
+                    fields.insert("message".into(), Value::String("The owning device cannot confirm this operation's outcome. A write may already have completed; inspect local diagnostics and reread authoritative state before retrying.".into()));
                 }
             }
             // Read-only runtime status uses a plain error string rather than a
@@ -110,6 +110,22 @@ fn redact_diagnostics(value: &mut serde_json::Value) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn uncertain_writes_remain_explicitly_uncertain_after_redaction() {
+        let mut reply = serde_json::json!({"error":{"code":"commit-uncertain","message":"Replacement occurred but sync /private/account/profiles failed"}});
+        super::redact_diagnostics(&mut reply);
+        assert_eq!(reply["error"]["code"], "commit-uncertain");
+        assert!(reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("may already have completed"));
+        assert!(reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("reread authoritative state"));
+        assert!(!reply.to_string().contains("/private/account"));
+    }
+
     #[test]
     fn nested_failures_hide_private_paths_without_changing_validation() {
         let mut reply = serde_json::json!({"status":{"blocked":{"code":"context-unavailable","message":"read /private/account/context: denied"}},"error":"IPC /private/account/runtime failed","validation":{"code":"invalid-policy","message":"Microphone monitoring requires explicit consent"}});

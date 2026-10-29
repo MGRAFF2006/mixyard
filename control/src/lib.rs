@@ -4,7 +4,8 @@ mod server;
 #[path = "../../src/store_fs.rs"]
 mod store_fs;
 #[path = "../../src/web/mod.rs"]
-#[allow(dead_code)]
+// Retain the root web-service's existing allowance for bounded HTTP replies.
+#[allow(dead_code, clippy::result_large_err)]
 mod web;
 
 pub use identity::{AudioIdentityMaterial, IdentityStore, Permission, Trust};
