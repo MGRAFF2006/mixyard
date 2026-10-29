@@ -39,7 +39,7 @@ def main():
         target = Path(directory)
         env["TMPDIR"] = directory
         env["MIXYARD_LINUX_TEST_DIR"] = directory
-        common = ["-C", "debuginfo=0", "-C", "codegen-units=1", "--edition=2021", "-L", f"dependency={deps}"]
+        common = ["-C", "debuginfo=0", "-C", "codegen-units=1", "--edition=2021", "--cfg", 'feature="desktop"', "-L", f"dependency={deps}"]
 
         def run(command):
             floors()

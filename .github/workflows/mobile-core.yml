@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - run: cargo test --locked --no-default-features --lib --test audio_core --test audio_precision --test audio_allocations --test dsp_core --test dsp_allocations --test latency --test runtime_worker
+      - run: cargo test --locked --no-default-features --lib --test audio_core --test audio_precision --test audio_allocations --test dsp_core --test dsp_allocations --test latency --test runtime_worker --test native_pipeline
       - run: cargo tree --locked --no-default-features -e normal
   mobile-target:
     strategy:
