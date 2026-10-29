@@ -24,7 +24,11 @@ jobs:
         with:
           node-version: '24.13.1'
           cache: pnpm
-          cache-dependency-path: apps/mobile/controller/pnpm-lock.yaml
+          cache-dependency-path: |
+            apps/mobile/controller/pnpm-lock.yaml
+            apps/web/pnpm-lock.yaml
+      - name: Install locked shared controller dependencies
+        run: pnpm --dir apps/web install --frozen-lockfile
       - run: pnpm --dir apps/mobile/controller install --frozen-lockfile
       - run: pnpm --dir apps/mobile/controller check
       - run: pnpm --dir apps/mobile/controller build

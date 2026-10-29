@@ -21,17 +21,21 @@ change another device's graph.
 ## Portable checks
 
 ```sh
+pnpm --dir apps/web install --frozen-lockfile
 node --test apps/mobile/controller/src/bridge.test.ts
 ```
 
-This runs the actual shared `Api` through the mobile adapter. It needs Node 24,
-not package installation. It does not qualify native TLS, a mobile WebView or audio.
+This runs the actual shared `Api` through the mobile adapter. It needs Node 24
+and the locked sibling web dependencies because `Api` uses Vue for observable
+lifecycle state. Existing compatible dependencies can be reused read-only. It does
+not qualify native TLS, a mobile WebView or audio.
 
 ## Build with existing platform SDKs or hosted CI
 
 From the repository root:
 
 ```sh
+pnpm --dir apps/web install --frozen-lockfile
 pnpm --dir apps/mobile/controller install --frozen-lockfile
 pnpm --dir apps/mobile/controller build
 node apps/mobile/scripts/stage-assets.mjs
