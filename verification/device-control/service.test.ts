@@ -39,9 +39,9 @@ class Device {
     // Keep invitation and credential material in memory, out of logs/artifacts.
     return JSON.parse(execFileSync(executable, ['--state', join(this.directory, 'identity'), ...args], { encoding: 'utf8', maxBuffer: 1024 * 1024 }))
   }
-  async start() {
+  async start(port = '0') {
     assert.equal(this.child, null)
-    const child = spawn(executable, ['--state', join(this.directory, 'identity'), 'serve', '--enable-control', '--bind', '127.0.0.1:0', '--store', join(this.directory, 'profiles'), '--assets', join(this.directory, 'assets'), '--instance', `control-${process.pid}-${this.directory.split('/').at(-1)}`], { stdio: ['ignore', 'pipe', 'inherit'] })
+    const child = spawn(executable, ['--state', join(this.directory, 'identity'), 'serve', '--enable-control', '--bind', `127.0.0.1:${port}`, '--store', join(this.directory, 'profiles'), '--assets', join(this.directory, 'assets'), '--instance', `control-${process.pid}-${this.directory.split('/').at(-1)}`], { stdio: ['ignore', 'pipe', 'inherit'] })
     this.child = child
     const lines = createInterface({ input: child.stdout! })
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -57,6 +57,7 @@ class Device {
       assert.equal(readiness.tls, true)
       assert.equal(readiness.deviceId, this.trust.deviceId)
       assert.match(readiness.address, /^127\.0\.0\.1:\d+$/)
+      if (port !== '0') assert.equal(readiness.address, `127.0.0.1:${port}`)
       this.url = `https://${readiness.address}`
     } finally { clearTimeout(timer); lines.close() }
   }
@@ -174,7 +175,43 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
 
     const authority = await (await a.post('/control/session', {}, ownerA.credential)).json()
     assert.equal((await a.post('/control/request', { deviceId: b.trust.deviceId, authorityId: authority.authorityId, revision: authority.revision, path: '/api/profiles/read', body: {} }, ownerA.credential)).status, 409, 'explicit wrong-host request must fail')
-    await a.stop(); await a.start()
+    const offlineReached = Promise.withResolvers<void>(), offlineRelease = Promise.withResolvers<void>()
+    const offlineTransport = a.fetcher()
+    let holdRead = false, validationDispatches = 0
+    const offlineApi = a.api(ownerA.credential, async (input, init) => {
+      const path = input === '/control/request' ? JSON.parse(String(init?.body)).path : input
+      if (path === '/api/validate') validationDispatches++
+      const response = await offlineTransport(input, init)
+      if (holdRead && path === '/api/profiles/read') { offlineReached.resolve(); await offlineRelease.promise }
+      return response
+    })
+    const offlineConsole = new ConsoleSession(offlineApi)
+    await offlineConsole.refresh(); assert.equal(offlineConsole.canWrite, true)
+    offlineConsole.local!.revision++
+    const offlineDraft = JSON.stringify(offlineConsole.local), offlineEpoch = offlineApi.epoch
+    const offlineEndpoint = a.url
+    holdRead = true
+    const obsolete = offlineApi.post('/api/profiles/read')
+    const obsoleteRejected = assert.rejects(obsolete, 'a transport failure invalidates older real replies')
+    try {
+      await offlineReached.promise
+      await a.stop()
+      await offlineConsole.validate()
+      assert.equal(offlineApi.connected, false, 'fetch-style network failure drops authority')
+      assert.equal(offlineApi.epoch, offlineEpoch + 1)
+      assert.equal(offlineConsole.snapshot, null); assert.equal(offlineConsole.canWrite, false)
+      assert.equal(offlineConsole.needsRefresh, true)
+      assert.equal(JSON.stringify(offlineConsole.local), offlineDraft, 'transport failure retains local edits')
+      assert.equal(validationDispatches, 1, 'offline operations are not replayed')
+    } finally { offlineRelease.resolve(); holdRead = false }
+    await obsoleteRejected
+    // Rebind our own stopped endpoint; a frozen client must never silently
+    // retarget to a newly selected ephemeral port during reconciliation.
+    await a.start(new URL(offlineEndpoint).port)
+    assert.equal(a.url, offlineEndpoint)
+    await offlineConsole.refresh()
+    assert.equal(offlineConsole.canWrite, true, offlineConsole.error || 'explicit refresh restores reconciled authority')
+    assert.equal(JSON.stringify(offlineConsole.local), offlineDraft)
     assert.equal((await a.post('/control/request', { deviceId: authority.deviceId, authorityId: authority.authorityId, revision: authority.revision, path: '/api/profiles/read', body: {} }, ownerA.credential)).status, 409, 'restart invalidates previous authority even with durable credentials')
     const restarted = a.api(ownerA.credential)
     await restarted.connect()

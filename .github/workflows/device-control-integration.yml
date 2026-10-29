@@ -35,14 +35,14 @@ jobs:
       - name: Shared Vue API against two owned TLS identities and stores
         env:
           MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/control/target/debug/mixyard-control
-        run: node --test verification/device-control/service.test.ts
+        run: node --test verification/device-control/*.test.ts
       - name: Prepare isolated Chromium
         run: pnpm --dir apps/web exec playwright install --with-deps chromium
       - name: Rendered shared console against actual owned TLS services
         env:
           MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/control/target/debug/mixyard-control
           MIXYARD_CONTROL_BROWSER: '1'
-        run: node --test verification/device-control/service.test.ts
+        run: node --test verification/device-control/*.test.ts
       - name: Record exact source and executable evidence
         env:
           MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/control/target/debug/mixyard-control
@@ -58,10 +58,14 @@ jobs:
             sourceHead: git('rev-parse', 'HEAD'),
             controlTree: git('rev-parse', 'HEAD:control'),
             apiSha256: hash('apps/web/src/api.ts'),
+            transportHelperSha256: hash('verification/device-control/pinned-fetch.ts'),
+            transportRegressionSha256: hash('verification/device-control/transport.test.ts'),
+            serviceHarnessSha256: hash('verification/device-control/service.test.ts'),
             controlLockSha256: hash('control/Cargo.lock'),
             executableSha256: hash(process.env.MIXYARD_CONTROL_BINARY),
             rustc: execFileSync('rustc', ['--version'], { encoding: 'utf8' }).trim(),
             node: process.version,
+            openssl: execFileSync('openssl', ['version'], { encoding: 'utf8' }).trim(),
             scope: 'owned loopback TLS: shared API and rendered App through a test-only pinned transport binding',
             nativeBridgeQualified: false, physicalNetworkQualified: false, audioQualified: false
           }, null, 2))
