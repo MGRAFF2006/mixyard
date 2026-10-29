@@ -1,0 +1,25 @@
+[package]
+name = "mixyard-host"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Exclusive canonical Mixyard native graph host ABI"
+
+[workspace]
+
+[lib]
+name = "mixyard_host"
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[dependencies]
+mixyard = { path = "../..", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.release]
+debug = 0
+incremental = false
