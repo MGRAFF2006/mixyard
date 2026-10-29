@@ -1,0 +1,60 @@
+name: Mobile host attachment source qualification (unlinked)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['apps/mobile/native/**', 'apps/mobile/android/core/**', 'apps/mobile/ios/Sources/**', 'verification/mobile-host/**', '.github/workflows/mobile-native-host.yml']
+  push:
+    branches: [main]
+    paths: ['apps/mobile/native/**', 'verification/mobile-host/**', '.github/workflows/mobile-native-host.yml']
+permissions:
+  contents: read
+concurrency:
+  group: mobile-host-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  kotlin-jni-source:
+    name: Compile Kotlin and JNI against canonical header (unlinked)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: 60501127a75211bc8546189c9682ef64db18aa53
+          path: .qualification-engine
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile actual worker and linked probe source
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/mobile-host-gradle
+        run: |
+          mkdir -p verification/mobile-host/kotlin/build/production
+          cp apps/mobile/android/core/src/main/kotlin/org/mixyard/mobile/Endpoint.kt verification/mobile-host/kotlin/build/production/
+          gradle --no-daemon -p verification/mobile-host/kotlin installDist
+      - name: Strict native JNI syntax using actual frozen engine ABI
+        run: c++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only -I.qualification-engine/adapters/engine/include -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/linux" apps/mobile/native/jni/host_jni.cpp
+      - if: always()
+        run: echo 'Source compilation only. No Rust library linked or JNI process executed. Audio/backend/applied roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
+  swift-source:
+    name: Compile Swift worker against canonical header (unlinked)
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: 60501127a75211bc8546189c9682ef64db18aa53
+          path: .qualification-engine
+      - name: Typecheck actual Swift worker and linked probe source
+        run: |
+          mkdir -p "$RUNNER_TEMP/mobile-host-modules"
+          swiftc -parse-as-library -emit-module -module-name MobileCore apps/mobile/ios/Sources/MobileCore/*.swift -emit-module-path "$RUNNER_TEMP/mobile-host-modules/MobileCore.swiftmodule"
+          swiftc -parse-as-library -emit-module -module-name NativeHost -I "$RUNNER_TEMP/mobile-host-modules" -I apps/mobile/native/swift/CHost -Xcc -I.qualification-engine/adapters/engine/include apps/mobile/native/swift/NativeHostWorker.swift -emit-module-path "$RUNNER_TEMP/mobile-host-modules/NativeHost.swiftmodule"
+          swiftc -parse-as-library -typecheck -I "$RUNNER_TEMP/mobile-host-modules" -I apps/mobile/native/swift/CHost -Xcc -I.qualification-engine/adapters/engine/include verification/mobile-host/swift/HostQualification.swift
+      - if: always()
+        run: echo 'Swift source/SDK compilation only. No Rust library linked or processing executed. Audio/backend/applied roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
