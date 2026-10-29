@@ -20,10 +20,11 @@ jobs:
         os: [ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/mixyard-windows-linked-host-rust
     steps:
       - uses: actions/checkout@v4
+      - name: Select private disposable Rust target
+        shell: pwsh
+        run: "'CARGO_TARGET_DIR=' + $env:RUNNER_TEMP + '/mixyard-windows-linked-host-rust' >> $env:GITHUB_ENV"
       - name: Require disposable runner reserve before building
         shell: python
         run: |
