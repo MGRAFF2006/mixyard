@@ -89,10 +89,9 @@ public:
     }
 };
 
-// Explicit-UID, read-only format admission followed by owned IOProc registration.
-// It never selects defaults, changes a device format or instantiates a HAL input.
-// A caller must schedule/adapt into this destination's actual sample timeline,
-// prefill the queue, then explicitly start. open() alone does not start playback.
+// Explicit-UID, read-only format admission. Device IOProc activation is gated
+// until input exclusion and start/revoke ownership have native qualification.
+// No IOProc is created or started through this API.
 class OutputWorker {
     Queue& queue_;
     Renderer renderer_;
@@ -246,7 +245,6 @@ public:
         worker->listen(worker->device_, kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput);
         worker->listen(worker->stream_, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal);
         worker->listen(worker->stream_, kAudioStreamPropertyStartingChannel, kAudioObjectPropertyScopeGlobal);
-        checked(AudioDeviceCreateIOProcID(worker->device_, render, worker.get(), &worker->io_), "create owned output IOProc");
         worker->validate(); // Close the property-read/listener-registration window.
         if (queue.fault() != Fault::None) throw std::runtime_error("Output changed during admission");
         return worker;
@@ -254,15 +252,11 @@ public:
     OutputWorker(const OutputWorker&) = delete;
     OutputWorker& operator=(const OutputWorker&) = delete;
     ~OutputWorker() { if (!close()) std::terminate(); }
-    // startTime is caller-scheduled in this output's actual hardware timeline.
-    // HAL may adjust it; a mismatching queued timeline fails silent in render.
-    void startAt(AudioTimeStamp& startTime) {
-        uint64_t frame = 0;
-        if (started_ || !samplePosition(&startTime, frame) || queue_.fault() != Fault::None)
-            throw std::invalid_argument("Fresh output and explicit scheduled sample position required");
-        validate();
-        checked(AudioDeviceStartAtTime(device_, io_, &startTime, 0), "start explicit owned output");
-        started_ = true;
+    // Fail before any native activation, even for an otherwise valid binding.
+    // A separate output-only implementation must prove that topology changes
+    // cannot enable capture; silencing a device IOProc is insufficient.
+    void startAt(AudioTimeStamp&) {
+        throw std::runtime_error("macOS output activation unsupported: input exclusion and serialized start/revoke are unqualified");
     }
     // Control thread only. False requires retaining all callback storage (or
     // process exit); never free a possibly live IOProc/listener context.

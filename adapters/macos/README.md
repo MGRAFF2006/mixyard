@@ -167,7 +167,7 @@ callbacks cannot be recalled. There is no retry/spin loop on the audio path.
   Capture stamps use the tap's **source clock**, not a fabricated common clock.
 - `OutputWorker::open(explicitDeviceUid, adaptedQueue)` admits exactly one current
   output stream by unique UID, alive state, actual virtual ASBD and ordered native
-  positions `CA:1`, `CA:2`, etc. It registers an owned IOProc but starts nothing.
+  positions `CA:1`, `CA:2`, etc. It creates no IOProc and starts nothing.
   Native positions do not imply speaker labels; the host must explicitly map its
   semantic channels per destination. Unsupported multistream/integer formats
   reject. Devices advertising any input stream also reject before IOProc
@@ -176,8 +176,14 @@ callbacks cannot be recalled. There is no retry/spin loop on the audio path.
   deliberately limits output to devices with no input streams until that
   privacy gate is proved. It never changes device rate/format, defaults or
   another IOProc.
-- The caller must adapt/schedule PCM into that destination's clock, prefill the
-  queue, and explicitly call `startAt(AudioTimeStamp&)`. `Renderer` requires exact
+- **Native output activation is unsupported in this revision.** `startAt`
+  unconditionally rejects before creating or starting native I/O. Rejecting
+  initially duplex devices and silencing a queue do not prevent later topology
+  changes from delivering inputs to a running device IOProc. A separate
+  output-only implementation must prove input I/O suppression and serialized
+  start/revoke/stop before activation can be exposed.
+- A future qualified caller must adapt/schedule PCM into the destination clock
+  and prefill the queue. The synthetic `Renderer` requires exact
   destination frame positions, supports partial/multiple producer blocks per
   callback and outputs silence on mismatch/underflow. HAL may adjust a requested
   start; mismatched queued positions fail silent. This is not clock adaptation.
@@ -193,7 +199,10 @@ The `OutputWorker` API is callable native code compiled by hosted SDK checks;
 the CLI does not invoke it. A linked live Rust engine/render graph, native clock
 adaptation/scheduling, actual output callback lifecycle/teardown, TCC revoke,
 hardware format changes and physical PCM/quality remain **unexecuted gates**.
-The source-to-WAV path is integrated; this does not establish a finished router.
+The selected native tap callback is wired to the WAV writer in source. Local
+execution evidence is owned synthetic producer/renderer data reaching the writer;
+no native input, microphone, selected-app capture or physical output was executed.
+This does not establish a finished router.
 
 `input-broker/packet.hpp` extracts the existing 56-byte fixed-48-kHz-stereo fixture
 wire descriptor and admission predicates used by `broker.mm`. Linux tests now
