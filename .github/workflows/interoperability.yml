@@ -1,0 +1,27 @@
+name: Optional interoperability adapters
+
+on:
+  pull_request:
+    paths: ['interoperability/**', 'docs/protocol-*.md', 'docs/network-interoperability.md', '.github/workflows/interoperability.yml']
+  push:
+    branches: [main]
+    paths: ['interoperability/**', 'docs/protocol-*.md', 'docs/network-interoperability.md', '.github/workflows/interoperability.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  loopback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: interoperability
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run bounded policy and protocol loopback proofs
+        run: python -m unittest discover -s interoperability/tests -v
