@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # Independent frozen service implementation. Never alter or build the local shared cache.
-          ref: 812eee1479702635dc51994dc795ca9f8a655351
+          ref: b3731ce51af02cfbcd0ad6fb7080694f08b6a0bd
           path: qualification-service
       - uses: actions/setup-python@v5
         with:

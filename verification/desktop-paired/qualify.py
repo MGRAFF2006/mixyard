@@ -202,7 +202,9 @@ def tls_fixture(root, identity, handler):
 
 def qualify(args):
     results = []
-    with tempfile.TemporaryDirectory(prefix='mixyard-desktop-paired-') as tmp:
+    # Resolve only the existing trusted OS temporary base (/var aliases on macOS).
+    # Caller-supplied identity paths still go literally through strict admission.
+    with tempfile.TemporaryDirectory(prefix='mixyard-desktop-paired-', dir=Path(tempfile.gettempdir()).resolve(strict=True)) as tmp:
         root = Path(tmp)
         harness = Harness(str(Path(args.harness).resolve()))
         services = []
