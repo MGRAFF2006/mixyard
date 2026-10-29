@@ -22,6 +22,7 @@
 #include "private_modules.h"
 #include "native_format.h"
 #include "native_diagnostics.h"
+#include "consumer_copy.h"
 
 #define ROUTES 3
 #define FRAMES 128
@@ -60,6 +61,15 @@ struct app {
     struct endpoint nodes[3];
     struct format_report formats[3][2][ROUTES];
     struct mx_native_first_failure chunk_failure, mismatch_failure;
+    struct mx_consumer_copy consumers[ROUTES]; // exclusive DataLoop, never native pointers
+    char bound_outputs[ROUTES][192]; // control-prepared immutable compiled endpoint IDs
+    uint64_t native_frame, warming_generation, control_generation;
+    bool ever_admitted;
+    _Atomic bool source_headers_ready;
+    _Atomic uint64_t consumer_epochs[ROUTES], consumer_dropped[ROUTES], consumer_closed[ROUTES];
+    _Atomic uint64_t consumer_prior_epoch[ROUTES];
+    unsigned prior_in_epoch[ROUTES];
+    _Atomic uint64_t startup_empty[3][ROUTES];
     struct global globals[MAX_GLOBALS];
     size_t global_count;
     struct pw_proxy *links[ROUTES * 2];
@@ -77,7 +87,7 @@ struct app {
     uint64_t quiet_silence[ROUTES];
     _Atomic uint32_t role_clock[3];
     unsigned ticks, stage, last_ack;
-    uint64_t baseline[ROUTES];
+    uint64_t baseline[ROUTES], stall_closed, stall_dropped;
     bool quiet_started;
     bool topology_written, linked, expected_loss, cancelled;
     const char *directory;
@@ -182,6 +192,117 @@ static double *samples(struct endpoint *e, unsigned port, struct pw_buffer *b,
     }
     return b->buffer->datas[0].data;
 }
+static void return_input(struct app *a, void *port, struct pw_buffer *b) {
+    if (pw_filter_queue_buffer(port, b) < 0) fail(a, 85);
+}
+static void consume_owned(struct endpoint *e, unsigned route, const struct spa_io_position *pos) {
+    struct app *a = e->app;
+    struct mx_consumer_copy *q = &a->consumers[route];
+    const struct mx_consumer_packet *packet = NULL;
+    enum mx_consumer_result result = mx_consumer_front(q, q->epoch, a->generation,
+        pos->clock.id, pos->clock.nsec, &packet);
+    if (result == MX_COPY_EMPTY || result == MX_COPY_CLOSED) return;
+    if (result != MX_COPY_OK || !packet) { fail(a, 87); return; }
+    if (packet->metadata.silent) {
+        for (unsigned i = 0; i < 2*FRAMES; ++i) if (packet->pcm[i] != 0.0) fail(a, 22);
+        atomic_fetch_add_explicit(&a->silence[route], 1, memory_order_relaxed);
+    } else {
+        for (unsigned f = 0; f < FRAMES; ++f) for (unsigned ch = 0; ch < 2; ++ch) {
+            double expected = oracle(a, route, packet->metadata.native_frame+f, ch);
+            double actual = packet->pcm[2*f+ch];
+            if (actual != expected) {
+                struct mx_native_observation observation = { .role = e->role, .port = route,
+                    .direction = PW_DIRECTION_INPUT, .frames = FRAMES, .n_datas = 1,
+                    .size = LIMIT, .stride = STRIDE, .chunk_present = true, .header_present = true, .owned_copy = true,
+                    .data_type = SPA_DATA_MemPtr, .maxsize = LIMIT,
+                    .clock_id = pos->clock.id, .clock_frame = pos->clock.position,
+                    .clock_ns = pos->clock.nsec, .clock_duration = pos->clock.duration,
+                    .rate_num = pos->clock.rate.num, .rate_denom = pos->clock.rate.denom,
+                    .phase = atomic_load_explicit(&a->phase, memory_order_relaxed),
+                    .command = atomic_load_explicit(&a->command, memory_order_relaxed),
+                    .header_flags = packet->metadata.header_flags,
+                    .header_seq = packet->metadata.native_frame,
+                    .header_pts = (int64_t)packet->metadata.stamp.captured_ns, .sample_index = 2*f+ch };
+                memcpy(&observation.actual_bits, &actual, sizeof(actual));
+                memcpy(&observation.expected_bits, &expected, sizeof(expected));
+                mx_native_record_first(&a->mismatch_failure, &observation);
+                atomic_fetch_add_explicit(&a->mismatches, 1, memory_order_relaxed);
+            }
+        }
+        atomic_fetch_add_explicit(&a->delivered[route], 1, memory_order_relaxed);
+    }
+    if (!mx_consumer_pop(q, packet->metadata.consumer_epoch)) fail(a, 88);
+}
+static void receive_consumer(struct endpoint *e, const struct spa_io_position *pos) {
+    struct app *a = e->app;
+    unsigned command = atomic_load_explicit(&a->command, memory_order_acquire);
+    for (unsigned r = 0; r < ROUTES; ++r) {
+        struct mx_consumer_copy *q = &a->consumers[r];
+        bool admitted = a->host && command == 1 && !atomic_load_explicit(&a->error, memory_order_relaxed);
+        if (!admitted && (q->active || q->count)) mx_consumer_close(q);
+        struct pw_buffer *b = pw_filter_dequeue_buffer(e->in[r]);
+        if (!b) continue;
+        if (mx_native_startup_empty(!a->ever_admitted, b->buffer, pos->clock.duration)) {
+            atomic_fetch_add_explicit(&a->startup_empty[e->role][r], 1, memory_order_relaxed);
+            return_input(a, e->in[r], b); continue; // unavailable, never PCM/scheduled silence
+        }
+        double *pcm = samples(e, r, b, true, pos->clock.duration, pos);
+        struct spa_meta_header *h = header(b);
+        if (!h) fail(a, 21);
+        if (pcm && h) {
+            bool silent = h->flags == SPA_META_HEADER_FLAG_GAP;
+            if (h->flags && !silent) fail(a, 89);
+            if (silent) for (unsigned i = 0; i < 2*FRAMES; ++i) if (pcm[i] != 0.0) fail(a, 22);
+            if (atomic_load_explicit(&a->error, memory_order_acquire)) {
+                mx_consumer_close(q);
+            } else if (!admitted) {
+                if (silent) atomic_fetch_add_explicit(&a->silence[r], 1, memory_order_relaxed);
+            } else if (!q->active) {
+                atomic_fetch_add_explicit(&a->consumer_dropped[r], 1, memory_order_relaxed);
+            } else {
+                uint64_t epoch_frame = atomic_load_explicit(&a->epoch_frame, memory_order_acquire);
+                if (h->pts < 0 || h->offset || h->dts_offset ||
+                    (uint64_t)h->pts > UINT64_MAX-100000000) fail(a, 90);
+                else if (silent && epoch_frame == UINT64_MAX) {
+                    // Actual initialized native GAP before the new host's first
+                    // processed frame: audit zero, never attach new host authority.
+                    atomic_fetch_add_explicit(&a->silence[r], 1, memory_order_relaxed);
+                } else if (h->seq < q->minimum_frame) {
+                    // Explicit epoch admission rejects already-in-flight native
+                    // packets from BEFORE that boundary, never their PCM as new.
+                    if (++a->prior_in_epoch[r] > 8) fail(a, 93);
+                    atomic_fetch_add_explicit(&a->consumer_prior_epoch[r], 1, memory_order_relaxed);
+                } else if (epoch_frame == UINT64_MAX || h->seq < epoch_frame ||
+                    (h->seq-epoch_frame) % FRAMES) fail(a, 90);
+                else {
+                    struct mx_consumer_metadata metadata = { .stamp = {
+                        .generation = a->generation, .revision = 1, .clock_id = pos->clock.id,
+                        .sequence = (h->seq-epoch_frame)/FRAMES, .first_frame = h->seq-epoch_frame,
+                        .captured_ns = (uint64_t)h->pts, .deadline_ns = (uint64_t)h->pts+100000000 },
+                        .consumer_epoch = q->epoch, .native_frame = h->seq, .header_flags = h->flags,
+                        .header_offset = h->offset, .header_dts_offset = h->dts_offset, .silent = silent };
+                    unsigned retained = q->count;
+                    enum mx_consumer_result result = mx_consumer_push(q, pos->clock.nsec, &metadata, pcm, 2*FRAMES);
+                    if (result == MX_COPY_FULL) {
+                        atomic_fetch_add_explicit(&a->consumer_dropped[r], retained+1, memory_order_relaxed);
+                        atomic_fetch_add_explicit(&a->consumer_closed[r], 1, memory_order_relaxed);
+                    } else if (result != MX_COPY_OK) fail(a, 91);
+                }
+            }
+        }
+        // Every native input token is returned in this callback, even on fault.
+        // No native buffer/header/chunk/data pointer is stored in the app queue.
+        return_input(a, e->in[r], b);
+        // Cancellation/error acknowledgement is checked again at the actual
+        // owned-copy commit, after the native token return. It cannot be inferred
+        // from the admission snapshot taken before validation.
+        bool commit = admitted && atomic_load_explicit(&a->command, memory_order_acquire) == 1 &&
+            !atomic_load_explicit(&a->error, memory_order_acquire);
+        if (!commit && (q->active || q->count)) mx_consumer_close(q);
+        if (commit && !(r == 2 && atomic_load_explicit(&a->phase, memory_order_relaxed) == 1))
+            consume_owned(e, r, pos);
+    }
+}
 static void submit(void *port, struct pw_buffer *b, uint32_t frames,
                    const struct spa_io_position *pos, bool silent) {
     struct spa_data *d = &b->buffer->datas[0];
@@ -197,6 +318,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
     struct endpoint *e = userdata;
     struct app *a = e->app;
     uint32_t n = pos->clock.duration;
+    if (e->role == 1) a->native_frame = pos->clock.position;
     atomic_store_explicit(&a->role_clock[e->role], pos->clock.id, memory_order_release);
     if (pos->clock.duration != FRAMES || pos->clock.rate.num != 1 || pos->clock.rate.denom != 48000 ||
         pos->clock.id == SPA_ID_INVALID || pos->clock.nsec > INT64_MAX) { fail(a, 20); return; }
@@ -216,34 +338,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
         }
         return;
     }
-    if (e->role == 2) {
-        for (unsigned r = 0; r < ROUTES; ++r) {
-            // Deliberately stop draining one route. Other native ports must progress.
-            if (r == 2 && atomic_load_explicit(&a->phase, memory_order_relaxed) == 1) continue;
-            struct pw_buffer *b = pw_filter_dequeue_buffer(e->in[r]);
-            if (!b) continue;
-            double *p = samples(e, r, b, true, n, pos);
-            struct spa_meta_header *h = header(b);
-            if (!h) fail(a, 21);
-            else if (p && (h->flags & SPA_META_HEADER_FLAG_GAP)) {
-                for (unsigned f = 0; f < 2*n; ++f) if (p[f] != 0.0) fail(a, 22);
-                atomic_fetch_add_explicit(&a->silence[r], 1, memory_order_relaxed);
-            } else if (p && h) {
-                for (unsigned f = 0; f < n; ++f) for (unsigned ch = 0; ch < 2; ++ch) {
-                    double expected = oracle(a, r, h->seq+f, ch);
-                    // Canonical mixing may normalize signed zero. Nonzero low bits must survive.
-                    if (p[2*f+ch] != expected) {
-                        observe_failure(e, r, true, b, n, pos, 0, &a->mismatch_failure,
-                            2*f+ch, p[2*f+ch], expected);
-                        atomic_fetch_add_explicit(&a->mismatches, 1, memory_order_relaxed);
-                    }
-                }
-                atomic_fetch_add_explicit(&a->delivered[r], 1, memory_order_relaxed);
-            }
-            pw_filter_queue_buffer(e->in[r], b);
-        }
-        return;
-    }
+    if (e->role == 2) { receive_consumer(e, pos); return; }
     atomic_store_explicit(&a->clock_id, pos->clock.id, memory_order_release);
     unsigned command = atomic_load_explicit(&a->command, memory_order_acquire);
     if (command != a->last_ack) {
@@ -261,25 +356,36 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
             !atomic_load_explicit(&out_port->format_ok, memory_order_acquire)) fresh = false;
     }
     mx_stamp stamp = {0};
-    if (a->host && command == 1 && fresh && !mx_graph_stamp(&a->timeline,
-        pos->clock.id, pos->clock.position, pos->clock.nsec, n, a->generation, &stamp)) {
-        fresh = false; fail(a, 25);
-    }
+    bool warming = a->warming_generation != 0;
+    bool admitted = a->host && command == 1;
     for (unsigned s = 0; s < ROUTES; ++s) {
         inputs[s] = (mx_input){ .encoding = MX_F64LE, .sample_rate_hz = 48000, .channels = 2, .stamp = stamp };
         if (s == 0 && atomic_load_explicit(&a->source_missing, memory_order_acquire)) {
             if (atomic_load(&a->loss_frame) == UINT64_MAX) atomic_store_explicit(&a->loss_frame, pos->clock.position, memory_order_release);
+            if (warming) fresh = false;
             continue;
         }
         input[s] = pw_filter_dequeue_buffer(e->in[s]);
         if (!input[s]) { fresh = false; continue; }
+        if (!admitted && !warming) { fresh = false; continue; } // revoked: drain/ack only
+        if (mx_native_startup_empty(!admitted && warming, input[s]->buffer, n)) {
+            atomic_fetch_add_explicit(&a->startup_empty[e->role][s], 1, memory_order_relaxed);
+            fresh = false; continue; // unavailable, not admitted PCM or concealment
+        }
         double *p = samples(e, s, input[s], true, n, pos);
         struct spa_meta_header *h = header(input[s]);
-        if (!h || h->flags || h->seq != pos->clock.position || h->pts != (int64_t)pos->clock.nsec || !p) {
+        if (!p || !mx_native_header_current(h, pos->clock.position, pos->clock.nsec)) {
             fresh = false; continue;
         }
         inputs[s].bytes = (const uint8_t *)p; inputs[s].byte_count = n * STRIDE;
     }
+    atomic_store_explicit(&a->source_headers_ready,
+        fresh && !atomic_load_explicit(&a->source_missing, memory_order_acquire), memory_order_release);
+    if (admitted && fresh && !mx_graph_stamp(&a->timeline,
+        pos->clock.id, pos->clock.position, pos->clock.nsec, n, a->generation, &stamp)) {
+        fresh = false; fail(a, 25);
+    }
+    for (unsigned s = 0; s < ROUTES; ++s) inputs[s].stamp = stamp;
     bool rendered = false;
     if (a->host && command == 1 && !fresh) {
         mx_host_revoke(a->host);
@@ -305,7 +411,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
         if (!header(b)) fail(a, 21);
         submit(e->out[r], b, n, pos, silent);
     }
-    for (unsigned s = 0; s < ROUTES; ++s) if (input[s]) pw_filter_queue_buffer(e->in[s], input[s]);
+    for (unsigned s = 0; s < ROUTES; ++s) if (input[s]) return_input(a, e->in[s], input[s]);
 }
 static void process(void *userdata, struct spa_io_position *pos) {
     struct endpoint *e = userdata;
@@ -481,17 +587,89 @@ static void write_topology(struct app *a) {
     json_object_put(root);
     a->topology_written = true;
 }
+struct warm_request { struct app *a; uint64_t generation; bool ready; };
+static int begin_warm(struct spa_loop *loop, bool async, uint32_t seq, const void *data, size_t size, void *userdata) {
+    (void)loop; (void)async; (void)seq; (void)data; (void)size;
+    struct warm_request *r = userdata;
+    struct app *a = r->a;
+    if (r->generation <= a->generation || atomic_load(&a->error) ||
+        (a->host && atomic_load_explicit(&a->command, memory_order_acquire) == 1)) return -EINVAL;
+    // Explicit control admission of a NEW candidate; the old host stays revoked.
+    if (a->warming_generation != r->generation) {
+        a->warming_generation = r->generation;
+        atomic_store_explicit(&a->source_headers_ready, false, memory_order_release);
+    }
+    r->ready = atomic_load_explicit(&a->source_headers_ready, memory_order_acquire);
+    return 0;
+}
 struct replacement { struct app *a; mx_host *next, *old; uint64_t generation; };
 static int replace_host(struct spa_loop *loop, bool async, uint32_t seq, const void *data, size_t size, void *userdata) {
     (void)loop; (void)async; (void)seq; (void)data; (void)size;
     struct replacement *r = userdata;
-    r->old = r->a->host; r->a->host = r->next;
-    r->a->generation = r->generation; r->a->last_ack = 0;
-    atomic_store_explicit(&r->a->epoch_frame, UINT64_MAX, memory_order_release);
-    r->a->timeline = (mx_graph_timeline){ .clock_id = atomic_load_explicit(&r->a->clock_id, memory_order_acquire) };
-    atomic_store_explicit(&r->a->command_done, 0, memory_order_release);
-    atomic_store_explicit(&r->a->command, r->next ? 1 : 0, memory_order_release);
+    struct app *a = r->a;
+    uint64_t clock_id = atomic_load_explicit(&a->clock_id, memory_order_acquire);
+    if (r->next) {
+        if (!clock_id || clock_id == SPA_ID_INVALID || atomic_load(&a->error) || a->warming_generation != r->generation || r->generation <= a->generation ||
+            !atomic_load_explicit(&a->source_headers_ready, memory_order_acquire)) return -EAGAIN;
+        for (unsigned i = 0; i < ROUTES; ++i) {
+            struct port *source = a->nodes[0].out[i], *sink = a->nodes[2].in[i];
+            if (!source || !sink || !atomic_load_explicit(&source->format_ok, memory_order_acquire) ||
+                !atomic_load_explicit(&sink->format_ok, memory_order_acquire) ||
+                a->consumers[i].epoch == UINT64_MAX || a->native_frame > UINT64_MAX-FRAMES) return -EAGAIN;
+        }
+    }
+    for (unsigned i = 0; i < ROUTES; ++i) {
+        mx_consumer_close(&a->consumers[i]);
+        if (r->next) {
+            if (!mx_consumer_open(&a->consumers[i], a->consumers[i].epoch+1,
+                    r->generation, clock_id, a->native_frame+FRAMES)) return -EINVAL;
+            a->prior_in_epoch[i] = 0;
+            atomic_store_explicit(&a->consumer_epochs[i], a->consumers[i].epoch, memory_order_release);
+        }
+    }
+    r->old = a->host; a->host = r->next;
+    a->generation = r->generation; a->last_ack = 0; a->warming_generation = 0;
+    if (r->next) a->ever_admitted = true;
+    atomic_store_explicit(&a->epoch_frame, UINT64_MAX, memory_order_release);
+    a->timeline = (mx_graph_timeline){ .clock_id = atomic_load_explicit(&a->clock_id, memory_order_acquire) };
+    atomic_store_explicit(&a->command_done, 0, memory_order_release);
+    atomic_store_explicit(&a->command, r->next ? 1 : 0, memory_order_release);
     return 0;
+}
+struct consumer_admission {
+    struct app *a; unsigned route; uint64_t generation, epoch, clock_id;
+    char observed[192]; bool admitted;
+};
+static int admit_consumer(struct spa_loop *loop, bool async, uint32_t seq, const void *data, size_t size, void *userdata) {
+    (void)loop; (void)async; (void)seq; (void)data; (void)size;
+    struct consumer_admission *r = userdata;
+    struct app *a = r->a;
+    struct port *native = a->nodes[2].in[r->route];
+    if (!a->host || atomic_load(&a->command) != 1 || atomic_load(&a->error) ||
+        r->generation != a->generation || r->clock_id != a->timeline.clock_id ||
+        !atomic_load_explicit(&a->source_headers_ready, memory_order_acquire) ||
+        !native || !atomic_load_explicit(&native->format_ok, memory_order_acquire) ||
+        strcmp(r->observed, a->bound_outputs[r->route]) || a->native_frame > UINT64_MAX-FRAMES)
+        return -EINVAL;
+    r->admitted = mx_consumer_open(&a->consumers[r->route], r->epoch, r->generation,
+        r->clock_id, a->native_frame+FRAMES);
+    if (!r->admitted) return -EINVAL;
+    a->prior_in_epoch[r->route] = 0;
+    atomic_store_explicit(&a->consumer_epochs[r->route], r->epoch, memory_order_release);
+    return 0;
+}
+static bool restart_consumer(struct app *a, unsigned route) {
+    if (route >= ROUTES) return false;
+    uint64_t epoch = atomic_load_explicit(&a->consumer_epochs[route], memory_order_acquire);
+    if (epoch == UINT64_MAX) return false;
+    struct consumer_admission request = { .a = a, .route = route,
+        .generation = a->control_generation, .epoch = epoch+1,
+        .clock_id = atomic_load_explicit(&a->clock_id, memory_order_acquire) };
+    // Main-loop registry observation is compared with the exact immutable
+    // compiled binding before the exclusive owner may admit a new local epoch.
+    observed(a, 2, "in", route, request.observed, sizeof(request.observed));
+    if (strcmp(request.observed, a->bound_outputs[route])) return false;
+    return pw_data_loop_invoke(a->data_loop, admit_consumer, 0, NULL, 0, true, &request) == 0 && request.admitted;
 }
 static bool compiled_spec(mx_host *host, bool output, size_t index, json_object *expected) {
     uint8_t text[1024]; size_t needed = 0;
@@ -505,6 +683,11 @@ static bool compiled_spec(mx_host *host, bool output, size_t index, json_object 
     return valid;
 }
 static bool install_host(struct app *a, uint64_t generation) {
+    struct warm_request warm = { .a = a, .generation = generation };
+    if (pw_data_loop_invoke(a->data_loop, begin_warm, 0, NULL, 0, true, &warm) < 0) {
+        fail(a, 55); return false;
+    }
+    if (!warm.ready) return false; // no host/authority from startup EMPTY or stale headers
     char path[512]; snprintf(path, sizeof(path), "%s/request.json", a->directory);
     json_object *request = json_object_from_file(path);
     if (!request) return false;
@@ -519,6 +702,7 @@ static bool install_host(struct app *a, uint64_t generation) {
         valid = json_object_object_get_ex(port, "observedId", &value) && !strcmp(json_object_get_string(value), id);
         struct port *native_port = side ? a->nodes[2].in[r] : a->nodes[0].out[r];
         valid = valid && atomic_load_explicit(&native_port->format_ok, memory_order_acquire);
+        if (valid && side) snprintf(a->bound_outputs[r], sizeof(a->bound_outputs[r]), "%s", id);
     }
     if (!valid) { json_object_put(request); fail(a, 52); return false; }
     const char *text = json_object_to_json_string_ext(request, JSON_C_TO_STRING_PLAIN);
@@ -538,8 +722,13 @@ static bool install_host(struct app *a, uint64_t generation) {
     json_object_put(request);
     struct replacement replacement = { .a = a, .next = host, .generation = generation };
     int rc = pw_data_loop_invoke(a->data_loop, replace_host, 0, NULL, 0, true, &replacement);
-    if (rc < 0) { mx_host_destroy(host); fail(a, 55); return false; }
+    if (rc < 0) {
+        mx_host_destroy(host);
+        if (rc != -EAGAIN) fail(a, 55);
+        return false;
+    }
     if (replacement.old) mx_host_destroy(replacement.old);
+    a->control_generation = generation;
     return true;
 }
 static void baseline(struct app *a) {
@@ -621,12 +810,20 @@ static void timer(void *userdata, uint64_t expirations) {
                 atomic_store_explicit(&a->phase, 3, memory_order_release); a->stage = 11;
             } else if (a->mode == TAIL_LOSS) {
                 if (remove_program_port(a)) a->stage = 12;
-            } else { atomic_store(&a->phase, 1); a->stage = 3; }
+            } else {
+                a->stall_closed = atomic_load_explicit(&a->consumer_closed[2], memory_order_acquire);
+                a->stall_dropped = atomic_load_explicit(&a->consumer_dropped[2], memory_order_acquire);
+                atomic_store(&a->phase, 1); a->stage = 3;
+            }
         }
         break;
     case 3:
         if (a->ticks < 10) break;
-        if (!progressed(a, 0, 32) || !progressed(a, 1, 32) || !atomic_load(&a->dropped)) { fail(a, 70); break; }
+        if (!progressed(a, 0, 32) || !progressed(a, 1, 32) ||
+            atomic_load(&a->consumer_closed[2]) <= a->stall_closed ||
+            atomic_load(&a->consumer_dropped[2]) <= a->stall_dropped ||
+            atomic_load(&a->consumer_closed[0]) || atomic_load(&a->consumer_closed[1])) { fail(a, 70); break; }
+        if (!restart_consumer(a, 2)) { fail(a, 92); break; }
         atomic_store(&a->phase, 0); baseline(a); a->stage = 4;
         break;
     case 4:
@@ -692,6 +889,17 @@ static void print_format_reports(const struct app *a) {
             printf("]}");
         }
     printf("]");
+    printf(",\"consumerEpochs\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"consumerDropped\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"consumerTerminalClosures\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"startupEmpty\":[",
+        atomic_load(&a->consumer_epochs[0]), atomic_load(&a->consumer_epochs[1]), atomic_load(&a->consumer_epochs[2]),
+        atomic_load(&a->consumer_dropped[0]), atomic_load(&a->consumer_dropped[1]), atomic_load(&a->consumer_dropped[2]),
+        atomic_load(&a->consumer_closed[0]), atomic_load(&a->consumer_closed[1]), atomic_load(&a->consumer_closed[2]));
+    for (unsigned role = 0; role < 3; ++role) {
+        printf("%s[", role ? "," : "");
+        for (unsigned r = 0; r < ROUTES; ++r) printf("%s%" PRIu64, r ? "," : "", atomic_load(&a->startup_empty[role][r]));
+        printf("]");
+    }
+    printf("],\"consumerRejectedPriorEpoch\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "]",
+        atomic_load(&a->consumer_prior_epoch[0]), atomic_load(&a->consumer_prior_epoch[1]), atomic_load(&a->consumer_prior_epoch[2]));
     mx_native_print_first_failure("firstChunkFailure", &a->chunk_failure);
     mx_native_print_first_failure("firstSampleMismatch", &a->mismatch_failure);
     printf("}\n");
@@ -705,7 +913,7 @@ int main(int argc, char **argv) {
     }
     struct stat info;
     if (lstat(argv[1], &info) || !S_ISDIR(info.st_mode) || info.st_uid != getuid() || (info.st_mode & 077)) return 2;
-    struct app a = { .directory = argv[1], .removed_source_port = SPA_ID_INVALID };
+    struct app a = { .directory = argv[1], .removed_source_port = SPA_ID_INVALID, .warming_generation = 1 };
     if (!strcmp(argv[2], "normal")) a.mode = NORMAL;
     else if (!strcmp(argv[2], "output-failure")) a.mode = OUTPUT_FAILURE;
     else if (!strcmp(argv[2], "tail-loss")) a.mode = TAIL_LOSS;

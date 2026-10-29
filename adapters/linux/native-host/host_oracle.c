@@ -6,6 +6,7 @@
 #include <string.h>
 #include "timeline.h"
 #include "destination.h"
+#include "consumer_copy.h"
 
 static bool callback;
 static size_t heap_ops;
@@ -28,6 +29,8 @@ int main(int argc, char **argv) {
     if (rc) { fprintf(stderr, "create %d: %s\n", rc, error); return 1; }
     assert(mx_host_source_count(host) == 3 && mx_host_output_count(host) == 3);
     mx_graph_timeline timeline = {.clock_id = 42};
+    struct mx_consumer_copy consumers[3] = {0};
+    for (unsigned r = 0; r < 3; ++r) assert(mx_consumer_open(&consumers[r], 1, 1, 42, 987654));
     double pcm[3][256];
     for (size_t f = 0; f < 128; ++f) {
         pcm[0][2*f] = 0.25 + 0x1p-42; pcm[0][2*f+1] = -0.125;
@@ -51,6 +54,12 @@ int main(int argc, char **argv) {
             int result = mx_destination_copy(host, r, true, output, 256, &silent);
             bool inactive = failure && seq >= 4 && r == 1;
             assert(result == (inactive ? MX_INACTIVE : MX_OK) && silent == inactive);
+            struct mx_consumer_metadata metadata = { .stamp = stamp, .consumer_epoch = 1,
+                .native_frame = 987654+128*seq, .silent = silent };
+            assert(mx_consumer_push(&consumers[r], now, &metadata, output, 256) == MX_COPY_OK);
+            memset(output, 0x7f, sizeof(output)); // native staging bytes are immediately reusable
+            const struct mx_consumer_packet *owned = NULL;
+            assert(mx_consumer_front(&consumers[r], 1, 1, 42, now, &owned) == MX_COPY_OK);
             for (size_t f = 0; f < 128; ++f) for (size_t ch = 0; ch < 2; ++ch) {
                 double a = pcm[0][2*f+ch];
                 double expected = r == 0 ? a : r == 1 ? a * 0.25 + pcm[1][2*f+ch] * 0.125 : a * 0.5;
@@ -59,8 +68,9 @@ int main(int argc, char **argv) {
                     if (seq == 0 || seq == 4) expected = 0.0;
                     else if (seq > 4) expected = r == 1 ? pcm[1][2*f+ch] * 0.125 : 0.0;
                 }
-                assert(output[2*f+ch] == expected);
+                assert(owned->pcm[2*f+ch] == expected);
             }
+            assert(mx_consumer_pop(&consumers[r], 1));
         }
         callback = false;
     }
@@ -75,7 +85,9 @@ int main(int argc, char **argv) {
     mx_stamp ignored;
     assert(!mx_graph_stamp(&timeline, 43, timeline.next_native_frame, 3000000000, 128, 1, &ignored));
     assert(!mx_graph_stamp(&timeline, 42, timeline.next_native_frame+128, 3000000000, 128, 1, &ignored));
-    callback = true; mx_host_revoke(host);
+    callback = true;
+    for (unsigned r = 0; r < 3; ++r) mx_consumer_close(&consumers[r]);
+    mx_host_revoke(host);
     const double *out = (double *)1; size_t count = 1;
     assert(mx_host_output(host, 0, &out, &count) == MX_INACTIVE && out == NULL && count == 0);
     for (size_t r = 0; r < 3; ++r) {
@@ -86,5 +98,5 @@ int main(int argc, char **argv) {
     callback = false;
     assert(heap_ops == 0);
     mx_host_destroy(host);
-    printf("PASS %s: 512 actual host blocks, destination copy/GAP, sibling/tail samples, epoch/clock/gap/revoke, zero callback heap operations\n", argv[2]);
+    printf("PASS %s: 512 actual host blocks, owned destination copy/GAP, reusable staging, sibling/tail samples, epoch/clock/gap/revoke, zero callback heap operations\n", argv[2]);
 }

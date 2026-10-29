@@ -26,6 +26,17 @@ def private_snapshot():
 
 
 class Isolation(unittest.TestCase):
+    def test_owned_consumer_boundary_has_no_native_pointer_retention(self):
+        base = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory(prefix="mixyard-owned-copy-", dir="/dev/shm") as root:
+            binary = Path(root) / "owned-copy"
+            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                            "-I", str(base.parents[1] / "engine/include"),
+                            str(base / "consumer_copy_check.c"), "-o", str(binary)],
+                           env=dict(os.environ, TMPDIR=root), check=True, capture_output=True)
+            result = subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+            self.assertIn("full scrub passed", result.stdout)
+
     def test_first_native_failure_retains_exact_chunk_timeline_and_sample_bits(self):
         base = Path(__file__).resolve().parent
         program = r'''#include <assert.h>

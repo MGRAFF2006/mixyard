@@ -2,6 +2,7 @@
 // SDK-only POD build/parse regression. No context, device, server or native I/O.
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include "native_format.h"
 static void check(struct spa_audio_info_raw info, uint32_t parameter_id, bool expected) {
     uint8_t storage[2048];
@@ -44,6 +45,24 @@ int main(void) {
     assert(negative < 0 && !mx_native_format_matches(negative, &invalid));
     invalid = exact;
     assert(!mx_native_format_matches(-EINVAL, &invalid));
-    puts("actual SPA request/negotiated-format POD contract passed (no native I/O)");
+    double untouched[256]; memset(untouched, 0x7f, sizeof(untouched));
+    struct spa_meta_header h = {0};
+    struct spa_meta meta = { .type = SPA_META_Header, .size = sizeof(h), .data = &h };
+    struct spa_chunk chunk = { .size = sizeof(untouched), .stride = 16, .flags = SPA_CHUNK_FLAG_EMPTY };
+    struct spa_data data = { .type = SPA_DATA_MemPtr, .maxsize = sizeof(untouched),
+        .data = untouched, .chunk = &chunk };
+    struct spa_buffer buffer = { .n_datas = 1, .datas = &data, .n_metas = 1, .metas = &meta };
+    assert(mx_native_startup_empty(true, &buffer, 128));
+    assert(!mx_native_startup_empty(false, &buffer, 128)); // admitted/revoked: no startup exception
+    assert(!mx_native_header_current(&h, 123, 456)); // unavailable is not fresh clock evidence
+    chunk.size--; assert(!mx_native_startup_empty(true, &buffer, 128)); chunk.size++;
+    chunk.offset = 16; assert(!mx_native_startup_empty(true, &buffer, 128)); chunk.offset = 0;
+    chunk.stride = 8; assert(!mx_native_startup_empty(true, &buffer, 128)); chunk.stride = 16;
+    chunk.flags |= SPA_CHUNK_FLAG_CORRUPTED; assert(!mx_native_startup_empty(true, &buffer, 128));
+    chunk.flags = SPA_CHUNK_FLAG_EMPTY; buffer.n_metas = 0;
+    assert(!mx_native_startup_empty(true, &buffer, 128)); buffer.n_metas = 1;
+    h.seq = 123; h.pts = 456; assert(mx_native_header_current(&h, 123, 456));
+    h.flags = SPA_META_HEADER_FLAG_GAP; assert(!mx_native_header_current(&h, 123, 456));
+    puts("actual SPA request/parser and strictly unadmitted EMPTY/header contract passed (no native I/O)");
     return 0;
 }

@@ -4,6 +4,10 @@ set -euo pipefail
 : "${MIXYARD_NATIVE_BUILD:?set a private build directory}"
 root=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
 pkg-config --modversion libpipewire-0.3
+cc -std=c11 -Wall -Wextra -Werror -pedantic -O2 -g0 \
+  -I"$root/adapters/engine/include" "$root/adapters/linux/native-host/consumer_copy_check.c" \
+  -o "$MIXYARD_NATIVE_BUILD/consumer-copy-check"
+"$MIXYARD_NATIVE_BUILD/consumer-copy-check"
 # Exercise the actual SPA request/parser contract before creating any native context.
 cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
   $(pkg-config --cflags libpipewire-0.3) \

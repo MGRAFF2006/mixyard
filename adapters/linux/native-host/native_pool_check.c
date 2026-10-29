@@ -12,6 +12,7 @@
 #include <spa/node/command.h>
 #include <spa/utils/names.h>
 #include "native_format.h"
+#include "consumer_copy.h"
 #define SAMPLES 256
 struct block {
     struct spa_buffer buffer;
@@ -78,6 +79,12 @@ int main(int argc, char **argv) {
     assert(held->datas[0].chunk == &input[0].chunk && held->datas[0].data == input[0].pcm);
     double copied[SAMPLES]; memcpy(copied, held->datas[0].data, sizeof(copied));
     struct spa_meta_header copied_header = *(struct spa_meta_header *)held->metas[0].data;
+    struct mx_consumer_copy owned = {0};
+    assert(mx_consumer_open(&owned, 1, 7, 11, 100));
+    struct mx_consumer_metadata metadata = { .stamp = { .generation = 7, .revision = 1,
+        .clock_id = 11, .captured_ns = 100000, .deadline_ns = 100100000 },
+        .consumer_epoch = 1, .native_frame = 100 };
+    assert(mx_consumer_push(&owned, 100000, &metadata, held->datas[0].data, SAMPLES) == MX_COPY_OK);
     // Hold both downstream tokens. The plugin nevertheless acknowledges each
     // source input as reusable and aliases its complete buffer into the output.
     out.status = SPA_STATUS_NEED_DATA; out.buffer_id = SPA_ID_INVALID;
@@ -92,12 +99,17 @@ int main(int argc, char **argv) {
     assert(((double *)held->datas[0].data)[0] == 0.875);
     assert(copied_header.seq == 100);
     for (unsigned i = 0; i < SAMPLES; ++i) assert(copied[i] == 0.25);
+    const struct mx_consumer_packet *owned_packet = NULL;
+    assert(mx_consumer_front(&owned, 1, 7, 11, 100001, &owned_packet) == MX_COPY_OK);
+    assert(owned_packet->metadata.native_frame == 100);
+    for (unsigned i = 0; i < SAMPLES; ++i) assert(owned_packet->pcm[i] == 0.25);
+    mx_consumer_close(&owned);
     out.status = SPA_STATUS_NEED_DATA; out.buffer_id = SPA_ID_INVALID;
     in.status = SPA_STATUS_HAVE_DATA; in.buffer_id = 0;
     int exhausted = spa_node_process(node);
     assert(exhausted == -EPIPE && in.status == SPA_STATUS_NEED_DATA);
     // This expected counterexample is diagnostic evidence, never a graph PASS.
-    printf("{\"actualSpaPlugin\":true,\"singleInputBufferAlias\":true,\"heldMetadataChanged\":true,\"heldPcmChanged\":true,\"ownedCopyStable\":true,\"poolBuffers\":2,\"exhaustedResult\":%d}\n", exhausted);
+    printf("{\"actualSpaPlugin\":true,\"singleInputBufferAlias\":true,\"heldMetadataChanged\":true,\"heldPcmChanged\":true,\"ownedCopyStable\":true,\"ownedConsumerCopyStable\":true,\"poolBuffers\":2,\"exhaustedResult\":%d}\n", exhausted);
     assert(pw_unload_spa_handle(handle) == 0);
     pw_loop_leave(loop); pw_loop_destroy(loop); pw_deinit();
     return 0;

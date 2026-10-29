@@ -9,7 +9,7 @@
 struct mx_native_observation {
     unsigned error, role, port, direction, phase, command;
     uint32_t frames, n_datas, data_type, data_flags, maxsize, mapoffset;
-    bool chunk_present, header_present;
+    bool chunk_present, header_present, owned_copy;
     uint32_t offset, size, flags;
     int32_t stride;
     uint64_t buffer_frames;
@@ -38,10 +38,10 @@ static inline void mx_native_print_first_failure(const char *name, const struct 
     printf(",\"%s\":", name);
     if (atomic_load_explicit(&failure->state, memory_order_acquire) != 2) { printf("null"); return; }
     const struct mx_native_observation *r = &failure->value;
-    printf("{\"error\":%u,\"role\":%u,\"port\":%u,\"direction\":%u,\"phase\":%u,\"command\":%u,\"frames\":%u,\"nDatas\":%u,\"dataType\":%u,\"dataFlags\":%u,\"maxsize\":%u,\"mapoffset\":%u,\"bufferFrames\":%" PRIu64
+    printf("{\"error\":%u,\"ownedCopy\":%s,\"role\":%u,\"port\":%u,\"direction\":%u,\"phase\":%u,\"command\":%u,\"frames\":%u,\"nDatas\":%u,\"dataType\":%u,\"dataFlags\":%u,\"maxsize\":%u,\"mapoffset\":%u,\"bufferFrames\":%" PRIu64
         ",\"chunkPresent\":%s,\"offset\":%u,\"size\":%u,\"stride\":%" PRId32 ",\"flags\":%u,\"clockId\":%u,\"clockFrame\":%" PRIu64 ",\"clockNs\":%" PRIu64 ",\"clockDuration\":%" PRIu64
         ",\"rateNum\":%u,\"rateDenom\":%u,\"headerPresent\":%s,\"headerFlags\":%u,\"headerSeq\":%" PRIu64 ",\"headerPts\":%" PRId64 ",\"sampleIndex\":%u,\"actualBits\":%" PRIu64 ",\"expectedBits\":%" PRIu64 "}",
-        r->error, r->role, r->port, r->direction, r->phase, r->command, r->frames,
+        r->error, r->owned_copy ? "true" : "false", r->role, r->port, r->direction, r->phase, r->command, r->frames,
         r->n_datas, r->data_type, r->data_flags, r->maxsize, r->mapoffset, r->buffer_frames,
         r->chunk_present ? "true" : "false", r->offset, r->size, r->stride, r->flags,
         r->clock_id, r->clock_frame, r->clock_ns, r->clock_duration, r->rate_num, r->rate_denom,

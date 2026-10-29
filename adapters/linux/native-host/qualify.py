@@ -212,6 +212,11 @@ def run(binary, env, directory, cancel=False, server_loss=None, mode="normal"):
     if report["error"] or report["sampleMismatches"]:
         raise RuntimeError("native sample oracle/lifecycle failed: " + repr(report))
     if not cancel:
+        if mode == "normal" and (report["consumerTerminalClosures"][2] < 1 or
+                report["consumerDropped"][2] < 1 or
+                report["consumerTerminalClosures"][:2] != [0, 0] or
+                report["consumerEpochs"][2] <= report["consumerEpochs"][0]):
+            raise RuntimeError("owned consumer overflow/explicit fresh epoch/isolation not proved: " + repr(report))
         if report["stage"] != 10 or min(report["delivered"]) < (64 if mode == "output-failure" else 128):
             raise RuntimeError("insufficient actual native delivery")
         if mode == "output-failure" and (report["inactiveOutputs"][1] < 128 or

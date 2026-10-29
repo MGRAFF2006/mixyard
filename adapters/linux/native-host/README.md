@@ -78,8 +78,13 @@ The consumer checks actual delivered samples for three independent destinations:
 Call = program; Record = 0.25 program + 0.125 return (canonical destination DSP);
 Monitor = 0.5 program. The private source has no sends; return is excluded from
 Call. Low Float64 bits and ordered channels are observable in the oracle.
-Lifecycle stages withhold one consumer port to exercise native backpressure
-while siblings progress, revoke, create fresh generations, inject a NaN,
+Lifecycle stages stall one application consumer's bounded owned-copy queue while
+all native input tokens are returned within their process callbacks. Overflow
+terminally closes only that consumer and clears its retained PCM. Siblings must
+progress; the control owner then explicitly admits a fresh consumer epoch after
+rechecking the actual observed endpoint, exact format and current host binding
+on the same serialized DataLoop. Old-epoch data cannot resume. The stages also
+revoke, create fresh host generations, inject a NaN,
 remove the source endpoint and cancel an actively delivering owned client. The
 whole test repeats after an actual owned server restart and requires a clean
 client failure after server loss. Late native buffers are
@@ -152,3 +157,42 @@ reuse and pool exhaustion, and compares an independent owned copy. Its expected
 counterexample is diagnostic evidence about dynamic buffer ownership, never a
 passing full private graph. Hosted execution is required; the SDK and plugin are
 absent locally. Current graph chunk/sample/warning checks remain unchanged.
+
+Ownership repair after the actual SPA counterexample: a `pw_buffer` output token
+can alias upstream header/chunk/data when the upstream input is acknowledged
+reusable. The adapter therefore retains **no native or borrowed Rust pointers**
+between callbacks. `consumer_copy.h` owns eight fixed 128-frame Float64 stereo
+slots per destination, including scalar host/consumer binding, native frame,
+clock/deadline and header data. This queue has one exclusive DataLoop owner;
+it is not SPSC or an interthread transport. Every native input is acknowledged
+in the same callback on valid, rejected, cancelled and fault paths. Application
+stalling affects only these owned copies, never PipeWire's borrowed buffer pool.
+
+Overflow closes that application consumer, clears all its slots and stops its
+commits. A controller request explicitly rechecks the live registry ID/serial,
+negotiated format and immutable compiled output identity, then the graph owner
+admits a strictly newer local epoch at a serialized quiescent boundary. The
+host/source generation is never reopened by this operation. Old-epoch captures
+before the new native-frame boundary are explicitly rejected/counted, with the
+existing eight-native-buffer in-flight bound; within-epoch gaps/replay, expiry,
+nonfinite PCM and malformed descriptors remain faults. No timestamps are fitted
+or source frames shifted to make the oracle pass.
+
+Startup is separate: only an explicitly warming, unadmitted candidate can
+classify a full valid descriptor with the named `SPA_CHUNK_FLAG_EMPTY` as
+unavailable, without reading PCM or calling it scheduled silence. All actual
+source headers and the common native clock must be fresh before publication of
+a host. An admitted EMPTY/partial/corrupt input still fails closed. A revoked
+host drains/acknowledges inputs without processing them; only an explicit new
+host-generation admission may start another metadata-warming candidate.
+Native GAP observations are counted only after actual zero-buffer verification,
+and are not attributed to a new host before its first processed frame.
+
+Local actual Rust linkage now exercises 512 blocks **per each of three scenarios**
+through these owned consumer copies, overwrites reusable staging storage before
+checking the oracle, and observes zero wrapped callback heap operations. The
+standalone production-copy test covers exact Float64 bits, full-slot scrubbing,
+binding/epoch replay rejection, expiry, terminal overflow and sibling isolation.
+The actual distro SPA probe also exercises the same copy helper after upstream
+reuse. These new SDK and full private-graph paths must still execute on the
+hosted runner; local portable results are not native-graph qualification.
