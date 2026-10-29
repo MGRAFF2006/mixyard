@@ -94,6 +94,7 @@ jobs:
           set -euo pipefail
           python ../../verification/desktop-native/evidence.py --guard
           pnpm install --frozen-lockfile 2>&1 | tee ../../evidence/pnpm-install.log
+          pnpm --dir ../web install --frozen-lockfile 2>&1 | tee ../../evidence/shared-pnpm-install.log
           pnpm check 2>&1 | tee ../../evidence/frontend-check.log
           pnpm tauri info 2>&1 | tee ../../evidence/tauri-info.txt
           cargo fmt --check --manifest-path src-tauri/Cargo.toml

@@ -51,7 +51,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
       - name: Install locked local desktop dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir ../web install --frozen-lockfile
       - name: Strict TypeScript, shared console and desktop bridge checks
         run: pnpm check
       - name: Production frontend build

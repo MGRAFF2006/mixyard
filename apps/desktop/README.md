@@ -54,6 +54,10 @@ autostart, OS-default, service installation or runtime shutdown side effect.
 
 ## Build and installer qualification
 
+Install locked dependencies in both `apps/desktop` and `apps/web` before running
+`pnpm check` in the desktop directory; shared Node regressions resolve Vue from
+the web package. Hosted checks install both locks without downloading browsers.
+
 The hosted desktop workflows install ephemeral SDKs, build locked release shells,
 run the std-only native HTTP boundary tests on each OS, then generate unsigned
 packages. `tauri bundle --no-sign --no-binary-patching` preserves the previously

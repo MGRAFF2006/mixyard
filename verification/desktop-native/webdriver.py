@@ -230,7 +230,7 @@ def connected_status(driver, instance):
     assert event['resync'] is True and event['historyAvailable'] is False
     assert event['lifecycle'] == 'running'
     assert_unavailable(event['availability'])
-    wait_for(lambda: driver.script("return document.querySelector('#runtime-status').textContent.toLowerCase().includes('connected · audio unavailable') && document.querySelector('#runtime-detail').textContent.toLowerCase().includes('unavailable')"),
+    wait_for(lambda: driver.script("return document.querySelector('#runtime-status').textContent.toLowerCase().includes('connected · audio unavailable') && document.querySelector('#runtime-detail').textContent.includes('backendAvailable: false')"),
              'connected UI honestly reports unavailable audio backend')
     assert driver.script("return ['IPC v1', 'snapshot sequence 1', 'backendAvailable: false', 'audioRevision: null', 'appliedRevision: null', 'desiredRevision: null'].every(text => document.querySelector('#runtime-detail').textContent.includes(text))"), 'Versioned snapshot and null revisions must be visible'
     assert driver.script("return !document.querySelector('#runtime-status').matches('input, select, textarea, [contenteditable=true]')"), 'Connection status is read-only'
