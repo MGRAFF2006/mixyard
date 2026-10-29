@@ -40,7 +40,10 @@ impl Canonical {
             .store
             .read_bounded(MAX_RESPONSE)
             .map(|s| s.store_revision)
-            .map_err(|e| e.to_string())
+            .map_err(|e| {
+                eprintln!("Remote profile store: {e}");
+                "Profile store unavailable. Inspect local diagnostics on the owning device.".into()
+            })
     }
 
     /// Call only after identity/session/role admission. No HTTP CSRF token is auth.
@@ -52,9 +55,70 @@ impl Canonical {
             .into_body()
             .into_inner()
             .expect("canonical JSON body");
-        (
-            status,
-            serde_json::from_slice(&bytes).expect("canonical JSON reply"),
-        )
+        let mut body = serde_json::from_slice(&bytes).expect("canonical JSON reply");
+        redact_diagnostics(&mut body);
+        (status, body)
+    }
+}
+
+/// Local APIs intentionally describe private store/IPC paths. Keep their codes
+/// remotely, while retaining infrastructure details only in local diagnostics.
+fn redact_diagnostics(value: &mut serde_json::Value) {
+    use serde_json::Value;
+    match value {
+        Value::Object(fields) => {
+            if let (Some(Value::String(code)), Some(Value::String(message))) =
+                (fields.get("code"), fields.get("message"))
+            {
+                let public_validation = matches!(
+                    code.as_str(),
+                    "invalid-json"
+                        | "invalid-policy"
+                        | "invalid-settings"
+                        | "invalid-name"
+                        | "invalid-observer-options"
+                        | "store-conflict"
+                        | "profile-not-found"
+                        | "no-undo"
+                        | "revision-exhausted"
+                        | "inspection-too-large"
+                );
+                if !public_validation {
+                    eprintln!("Remote canonical {code}: {message}");
+                    fields.insert("message".into(), Value::String("The owning device cannot complete this operation. Inspect its local diagnostics; local files and state were not replaced automatically.".into()));
+                }
+            }
+            // Read-only runtime status uses a plain error string rather than a
+            // structured failure, and may include a private IPC endpoint.
+            if let Some(Value::String(message)) = fields.get_mut("error") {
+                eprintln!("Remote runtime status: {message}");
+                *message =
+                    "Runtime unavailable. Inspect local diagnostics on the owning device.".into();
+            }
+            for nested in fields.values_mut() {
+                redact_diagnostics(nested);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                redact_diagnostics(nested);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn nested_failures_hide_private_paths_without_changing_validation() {
+        let mut reply = serde_json::json!({"status":{"blocked":{"code":"context-unavailable","message":"read /private/account/context: denied"}},"error":"IPC /private/account/runtime failed","validation":{"code":"invalid-policy","message":"Microphone monitoring requires explicit consent"}});
+        super::redact_diagnostics(&mut reply);
+        assert!(!reply.to_string().contains("/private/account"));
+        assert_eq!(reply["status"]["blocked"]["code"], "context-unavailable");
+        assert_eq!(
+            reply["validation"]["message"],
+            "Microphone monitoring requires explicit consent"
+        );
     }
 }

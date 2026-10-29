@@ -78,6 +78,24 @@ async fn request(
     body: Value,
     extra: &[(&str, &str)],
 ) -> (u16, Value) {
+    request_raw(
+        tls,
+        addr,
+        path,
+        credential,
+        &serde_json::to_vec(&body).unwrap(),
+        extra,
+    )
+    .await
+}
+async fn request_raw(
+    tls: &TlsConnector,
+    addr: SocketAddr,
+    path: &str,
+    credential: Option<&str>,
+    body: &[u8],
+    extra: &[(&str, &str)],
+) -> (u16, Value) {
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let stream = tls
         .connect(ServerName::try_from("mixyard-control").unwrap(), tcp)
@@ -102,16 +120,160 @@ async fn request(
     }
     let response = sender
         .send_request(
-            req.body(Full::<Bytes>::new(
-                serde_json::to_vec(&body).unwrap().into(),
-            ))
-            .unwrap(),
+            req.body(Full::<Bytes>::new(Bytes::copy_from_slice(body)))
+                .unwrap(),
         )
         .await
         .unwrap();
     let status = response.status().as_u16();
     let body = response.into_body().collect().await.unwrap().to_bytes();
     (status, serde_json::from_slice(&body).unwrap())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn raw_canonical_validation_and_remote_private_errors() {
+    let fixture = Fixture::new();
+    let mut identity = fixture.initialize();
+    let id = identity.device_id().to_owned();
+    let tls = connector(&identity.trust().certificate_pem);
+    let invite = identity
+        .invite(vec![Permission::View, Permission::Settings], 300)
+        .unwrap();
+    let control = Control::bind(identity, fixture.options()).await.unwrap();
+    let address = control.address();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(control.serve_until(async {
+        let _ = stop_rx.await;
+    }));
+    let (_, paired) = request(
+        &tls,
+        address,
+        "/control/pair",
+        None,
+        json!({"deviceId":id,"invitation":invite["invitation"],"name":"raw regression"}),
+        &[],
+    )
+    .await;
+    let credential = paired["credential"].as_str().unwrap();
+    let (_, session) = request(
+        &tls,
+        address,
+        "/control/session",
+        Some(credential),
+        json!({}),
+        &[],
+    )
+    .await;
+    let (_, settings) = request(
+        &tls,
+        address,
+        "/control/request",
+        Some(credential),
+        envelope(&session, "/api/automation/settings/read", json!({})),
+        &[],
+    )
+    .await;
+    let settings_json = settings["body"]["settings"].to_string();
+    assert!(settings_json.contains("\"applications\":{}"));
+    let ambiguous = settings_json.replace("\"applications\":{}", "\"applications\":{\"/not-executed/example\":\"first\",\"/not-executed/example\":\"second\"}");
+    let wire = format!(
+        r#"{{"deviceId":{},"authorityId":{},"revision":{},"path":"/api/automation/settings/write","body":{{"expectedSettingsRevision":0,"settings":{ambiguous}}}}}"#,
+        session["deviceId"], session["authorityId"], session["revision"]
+    );
+    let (status, rejected) = request_raw(
+        &tls,
+        address,
+        "/control/request",
+        Some(credential),
+        wire.as_bytes(),
+        &[],
+    )
+    .await;
+    assert!(
+        status >= 400,
+        "ambiguous mappings must reach canonical duplicate-key rejection"
+    );
+    assert!(rejected["body"]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("duplicate"));
+    let (_, after) = request(
+        &tls,
+        address,
+        "/control/request",
+        Some(credential),
+        envelope(&session, "/api/automation/settings/read", json!({})),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        after["body"]["settingsRevision"], 0,
+        "rejected write cannot persist settings"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir_all(fixture.path.join("profiles")).unwrap();
+        fs::set_permissions(
+            fixture.path.join("profiles"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let (status, error) = request(
+            &tls,
+            address,
+            "/control/session",
+            Some(credential),
+            json!({}),
+            &[],
+        )
+        .await;
+        assert_eq!(status, 503);
+        assert!(
+            !error.to_string().contains(fixture.path.to_str().unwrap()),
+            "session errors cannot disclose private store paths"
+        );
+        fs::set_permissions(
+            fixture.path.join("profiles"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        let (status, _) = request(
+            &tls,
+            address,
+            "/control/request",
+            Some(credential),
+            envelope(
+                &session,
+                "/api/automation/settings/write",
+                json!({"expectedSettingsRevision":0,"settings":settings["body"]["settings"]}),
+            ),
+            &[],
+        )
+        .await;
+        assert_eq!(status, 200);
+        let settings_path = fixture.path.join("situation-settings/settings.json");
+        fs::set_permissions(&settings_path, fs::Permissions::from_mode(0o644)).unwrap();
+        let (status, error) = request(
+            &tls,
+            address,
+            "/control/request",
+            Some(credential),
+            envelope(&session, "/api/automation/settings/read", json!({})),
+            &[],
+        )
+        .await;
+        assert_eq!(status, 500);
+        assert_eq!(error["body"]["error"]["code"], "unsafe-store-path");
+        assert!(
+            !error.to_string().contains(fixture.path.to_str().unwrap()),
+            "canonical errors cannot disclose private store paths"
+        );
+        fs::set_permissions(settings_path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    stop_tx.send(()).unwrap();
+    task.await.unwrap().unwrap();
 }
 fn envelope(session: &Value, path: &str, body: Value) -> Value {
     json!({"deviceId":session["deviceId"],"authorityId":session["authorityId"],"revision":session["revision"],"path":path,"body":body})

@@ -14,7 +14,7 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, value::RawValue, Value};
 use std::{
     convert::Infallible,
     net::SocketAddr,
@@ -62,7 +62,7 @@ struct Envelope {
     authority_id: String,
     revision: u64,
     path: Option<String>,
-    body: Value,
+    body: Box<RawValue>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -159,9 +159,10 @@ impl Inner {
                 .as_deref()
                 .ok_or_else(|| fail(400, "invalid-json", "Request requires path"))?;
             permission(&credential, route_permission(route)?)?;
-            // Preserve canonical expectedRevision, settings validation and policy checks.
-            let body = serde_json::to_vec(&envelope.body).expect("JSON body");
-            self.canonical.dispatch(route, &body)
+            // The canonical parser must see duplicate fields and the original
+            // number representation. Value would normalize them before validation.
+            self.canonical
+                .dispatch(route, envelope.body.get().as_bytes())
         } else {
             if envelope.path.is_some() {
                 return Err(fail(
@@ -171,21 +172,21 @@ impl Inner {
                 ));
             }
             permission(&credential, Permission::Settings)?;
-            let body = serde_json::to_vec(&envelope.body).expect("JSON body");
+            let body = envelope.body.get().as_bytes();
             (
                 200,
                 match path {
                     "/control/credentials" => {
-                        let _: Empty = parse(&body)?;
+                        let _: Empty = parse(body)?;
                         json!({"credentials":self.identity.credentials()})
                     }
                     "/control/revoke" => {
-                        let body: Revoke = parse(&body)?;
+                        let body: Revoke = parse(body)?;
                         self.identity.revoke(&body.credential_id)?;
                         json!({"revoked":true})
                     }
                     "/control/rotate" => {
-                        let _: Empty = parse(&body)?;
+                        let _: Empty = parse(body)?;
                         self.identity.rotate(bearer)?
                     }
                     _ => return Err(fail(422, "unsupported-route", "Unknown control operation")),
@@ -329,7 +330,11 @@ fn reply(status: u16, body: Value) -> Reply {
     }
     response
 }
-fn failure(error: Failure) -> Reply {
+fn failure(mut error: Failure) -> Reply {
+    if error.status >= 500 {
+        eprintln!("Remote control {}: {}", error.code, error.message);
+        error.message = "The owning device could not complete this operation. Inspect its local diagnostics before retrying.".into();
+    }
     reply(error.status, json!({"error":error}))
 }
 async fn handle(
