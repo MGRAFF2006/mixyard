@@ -181,7 +181,7 @@ impl SecureEndpoint {
                 self.permissions.clone(),
                 self.limits.clone(),
             )?),
-            outgoing: tokio::sync::Mutex::new(Outbox::new(self.limits.packets_per_stream)),
+            outgoing: Mutex::new(Outbox::new(self.limits.packets_per_stream)),
             admission: tokio::sync::Mutex::new(()),
             running: AtomicBool::new(false),
             probe_slot: Semaphore::new(1),
@@ -196,11 +196,11 @@ impl SecureEndpoint {
 
 /// Network/codec worker boundary. No devices, mixing, resampling or realtime callbacks.
 pub struct Session {
-    connection: Connection,
+    pub(crate) connection: Connection,
     permissions: Permissions,
     limits: Limits,
     receiver: Mutex<Receiver>,
-    outgoing: tokio::sync::Mutex<Outbox>,
+    outgoing: Mutex<Outbox>,
     admission: tokio::sync::Mutex<()>,
     running: AtomicBool,
     probe_slot: Semaphore,
@@ -303,7 +303,7 @@ impl Session {
             .lock()
             .expect("receiver poisoned")
             .disconnect();
-        self.outgoing.lock().await.clear();
+        self.outgoing.lock().expect("outgoing poisoned").clear();
         result
     }
 
@@ -385,7 +385,7 @@ impl Session {
     /// Allocating, locking network-worker snapshot. Never call from a realtime callback.
     /// The two queues are observed separately; this is not an atomic audio-path measurement.
     pub async fn timing_snapshot(&self) -> SessionTiming {
-        let mut outgoing = self.outgoing.lock().await;
+        let mut outgoing = self.outgoing.lock().expect("outgoing poisoned");
         let mut receiver = self.receiver.lock().expect("receiver poisoned");
         let connected = self.connection.close_reason().is_none();
         if !connected {
@@ -433,7 +433,7 @@ impl Session {
         ensure!(
             self.outgoing
                 .lock()
-                .await
+                .expect("outgoing poisoned")
                 .generation(offer.spec.stream)
                 .is_none_or(|g| offer.generation > g),
             "generation must increase"
@@ -458,7 +458,10 @@ impl Session {
         .await;
         match result {
             Ok(Ok(())) => {
-                self.outgoing.lock().await.admit(offer);
+                self.outgoing
+                    .lock()
+                    .expect("outgoing poisoned")
+                    .admit(offer);
                 admission_guard.confirmed = true;
                 Ok(())
             }
@@ -478,7 +481,10 @@ impl Session {
             self.connection.close_reason().is_none(),
             "disconnected: no replay/fallback"
         );
-        self.outgoing.lock().await.enqueue(id, payload)
+        self.outgoing
+            .lock()
+            .expect("outgoing poisoned")
+            .enqueue(id, payload)
     }
 
     pub async fn enqueue_pcm(&self, id: u64, pcm: &[u8]) -> Result<usize> {
@@ -486,13 +492,16 @@ impl Session {
             self.connection.close_reason().is_none(),
             "disconnected: no replay/fallback"
         );
-        self.outgoing.lock().await.enqueue_pcm(id, pcm)
+        self.outgoing
+            .lock()
+            .expect("outgoing poisoned")
+            .enqueue_pcm(id, pcm)
     }
 
     /// A fair, nonblocking round. Caller paces by negotiated sample rate; this is not an audio clock.
     pub async fn flush_round(&self) -> Result<usize> {
         ensure!(self.connection.close_reason().is_none(), "disconnected");
-        let mut outgoing = self.outgoing.lock().await;
+        let mut outgoing = self.outgoing.lock().expect("outgoing poisoned");
         let frames = outgoing.round();
         let mut count = 0;
         let mut errors = Vec::new();
@@ -520,8 +529,124 @@ impl Session {
         Ok(count)
     }
 
+    pub(crate) fn claim_pacer(&self, offer: &Offer) -> Result<()> {
+        self.outgoing
+            .lock()
+            .expect("outgoing poisoned")
+            .claim_pacer(offer)
+    }
+    pub(crate) fn cancel_sender(&self, offer: &Offer) {
+        self.outgoing
+            .lock()
+            .expect("outgoing poisoned")
+            .cancel_sender(offer);
+    }
+
+    /// Absolute source slots; never drains or changes an undued sibling stream.
+    pub async fn flush_due(&self, due: &[(Offer, u64)]) -> Result<usize> {
+        ensure!(self.connection.close_reason().is_none(), "disconnected");
+        ensure!(
+            due.len() <= self.limits.max_streams,
+            "paced stream budget exceeded"
+        );
+        let mut streams = std::collections::BTreeSet::new();
+        ensure!(
+            due.iter()
+                .all(|(offer, _)| streams.insert(offer.spec.stream)),
+            "duplicate stream in paced round"
+        );
+        let mut outgoing = self.outgoing.lock().expect("outgoing poisoned");
+        let mut sent = 0;
+        let mut error = None;
+        for (offer, sequence) in due {
+            // Keep attempting valid siblings after one stream's restart or send error.
+            let frame = match outgoing.due(offer, *sequence) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => continue,
+                Err(e) => {
+                    error = Some(e);
+                    continue;
+                }
+            };
+            let bytes = frame.encode(self.limits.max_datagram)?;
+            if bytes.len() > self.connection.datagram_send_buffer_space() {
+                outgoing.congestion_drop(frame.stream);
+                continue;
+            }
+            match self.connection.send_datagram(bytes.into()) {
+                Ok(()) => sent += 1,
+                Err(e) => {
+                    outgoing.send_error(frame.stream);
+                    error = Some(e.into());
+                }
+            }
+        }
+        if let Some(error) = error {
+            return Err(error);
+        }
+        Ok(sent)
+    }
+
+    pub async fn sender_offer(&self, id: u64) -> Option<Offer> {
+        self.outgoing
+            .lock()
+            .expect("outgoing poisoned")
+            .sender_offer(id)
+    }
+
+    pub async fn paced_expired(&self, id: u64) -> u64 {
+        self.outgoing
+            .lock()
+            .expect("outgoing poisoned")
+            .paced_expired(id)
+    }
+
+    pub(crate) fn worker_stream_limit(&self) -> usize {
+        self.limits.max_streams
+    }
+
+    pub(crate) fn worker_packet_limit(&self) -> usize {
+        self.limits.packets_per_stream
+    }
+
+    pub(crate) fn create_worker_playout(
+        &self,
+        offer: &Offer,
+        config: crate::PlayoutConfig,
+    ) -> Result<crate::Playout> {
+        let mut receiver = self.receiver.lock().expect("receiver poisoned");
+        if self.connection.close_reason().is_some() {
+            receiver.disconnect();
+        }
+        receiver.create_playout_for(offer, config)
+    }
+
+    pub(crate) fn cancel_receive_generation(&self, offer: &Offer) {
+        self.receiver
+            .lock()
+            .expect("receiver poisoned")
+            .cancel_generation(offer);
+    }
+
+    pub fn arrival_observation(
+        &self,
+        id: u64,
+        generation: u64,
+    ) -> Option<crate::worker::ArrivalObservation> {
+        if self.connection.close_reason().is_some() {
+            return None;
+        }
+        self.receiver
+            .lock()
+            .expect("receiver poisoned")
+            .arrival_observation(id, generation)
+    }
+
     pub async fn sender_counters(&self, id: u64) -> Result<crate::Counters> {
-        self.outgoing.lock().await.counters(id)
+        self.outgoing
+            .lock()
+            .expect("outgoing poisoned")
+            .counters(id)
     }
 
     pub fn pull(&self, id: u64) -> Result<Vec<u8>> {
@@ -567,6 +692,7 @@ impl Session {
 
     pub fn close(&self) {
         self.connection.close(0u32.into(), b"session closed");
+        self.outgoing.lock().expect("outgoing poisoned").clear();
         self.receiver
             .lock()
             .expect("receiver poisoned")

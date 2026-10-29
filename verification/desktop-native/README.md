@@ -30,6 +30,16 @@ artifacts. Installation, upgrades, rollback, autostart, signing/notarization,
 physical desktop hosts, Windows/macOS GUI behavior and audio are unqualified.
 The [desktop matrix](../../apps/desktop/README.md) records these boundaries.
 
+On native-window discovery failure, the harness records exact-title visible/all
+search results and timings, X11 tree/properties (including unnamed and hidden
+windows), root window-manager/focus state, and the harness-owned process tree.
+An independent ImageMagick root capture is restricted to the wrapper-owned Xvfb;
+WebDriver screenshot failure cannot erase this native evidence. The event-driven
+`x11-events.log` records root mapping/property changes without adding a readiness
+wait. These diagnostics never substitute for the visible native window, trusted
+input, real WebKit or kernel runtime-PID checks, and do not increase their timeouts.
+
+
 **The 2026-10-14 results below are historical prototype evidence. They do not
 qualify the shared console or the changed harness. Only a passing current-HEAD
 `linux-webview.json` and current per-runner artifacts establish current checks.**
