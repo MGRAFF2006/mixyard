@@ -33,6 +33,18 @@ native delivery have distinct qualification boundaries. The complete updated
 acceptance and remaining gaps are tracked in
 [#29](https://github.com/MGRAFF2006/mixyard/issues/29).
 
+### Interoperability scope update (2026-10-29)
+
+Implement broad bidirectional audio interoperability: send to supported devices
+and advertise Mixyard as a destination where each ecosystem permits it. This
+includes UPnP AV/DLNA, Google Cast, AirPlay/RAOP, Spotify Connect and optional
+browser Remote Playback controls, plus open live-media and professional targets.
+The [interoperability roadmap](network-interoperability.md) records sender,
+receiver/advertisement and platform goals, capability/quality boundaries, vendor
+gates, staged priorities and actual-device acceptance. These are planned adapters,
+not implemented compatibility or a universal casting promise. Preserve the shared
+precision, privacy and explicit-conversion requirements in every direction.
+
 ## Product contract
 
 Create arbitrary user-defined mixes that applications can select as audio inputs
