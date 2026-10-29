@@ -55,4 +55,5 @@ jobs:
         run: cargo test --locked --test runtime_lifecycle --test runtime_readonly --test runtime_inventory --test runtime_native_inventory
       - name: Record qualification boundary
         shell: bash
-        run: echo 'Real local IPC lifecycle, simulated failure/cancellation fixtures and installed Windows/CoreAudio read-only helper invocation. Hosted SDK/OS proof only: physical audio quality and native audio apply remain unverified.' >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo 'Real local IPC lifecycle, simulated failure/cancellation fixtures and installed Windows/CoreAudio read-only helper invocation. Hosted SDK/OS proof only: physical audio quality and native audio apply remain unverified.' >> "$GITHUB_STEP_SUMMARY"

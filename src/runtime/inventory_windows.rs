@@ -202,6 +202,8 @@ fn open(
 }
 // Retain handles without FILE_SHARE_DELETE for every ancestor. Reparse rejection
 // alone is insufficient if a directory can be exchanged after validation.
+// FILE_LIST_DIRECTORY is required: metadata-only handles are exempt from the
+// sharing checks and therefore do not prevent rename (hosted kernel regression).
 fn pin_ancestors(path: &Path) -> Result<Vec<Handle>> {
     let mut current = PathBuf::new();
     let mut pins = Vec::new();
@@ -223,7 +225,7 @@ fn pin_ancestors(path: &Path) -> Result<Vec<Handle>> {
         }
         let directory = open(
             &current,
-            FILE_READ_ATTRIBUTES | READ_CONTROL,
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             OPEN_EXISTING,
             ptr::null(),
@@ -266,7 +268,7 @@ pub(super) fn state_directory(instance: &str) -> Result<PathBuf> {
         }
         let file = open(
             &path,
-            FILE_READ_ATTRIBUTES | READ_CONTROL,
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             OPEN_EXISTING,
             ptr::null(),
