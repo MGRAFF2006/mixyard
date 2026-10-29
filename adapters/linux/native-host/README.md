@@ -36,8 +36,12 @@ There is no interthread PCM queue or use of the Rust exclusive worker queue as
 SPSC. Native transport queues are owned by libpipewire. Callback work uses fixed
 stack structs, preallocated host memory and atomic numeric status; no callback
 JSON, allocation, file I/O, control-thread lock or subprocess PCM transport.
-Control admission/destruction occurs outside callbacks. Pointer replacement is
-serialized by an acknowledged invocation on the actual PipeWire data loop.
+Control admission/destruction occurs outside callbacks. On the Ubuntu 24.04
+PipeWire 1.0 SDK, pointer replacement uses acknowledged `pw_data_loop_invoke`
+on `pw_context_get_data_loop`. Every process callback checks
+`pw_data_loop_in_thread` before touching the Rust host, enforcing that this
+single-context lane actually runs on that owner. No 1.1-only filter accessor is
+required. The hosted build logs the installed SDK version.
 
 The consumer checks actual delivered samples for three independent destinations:
 Call = program; Record = 0.25 program + 0.125 return (canonical destination DSP);
@@ -82,3 +86,28 @@ rejection and revoke, with zero wrapped callback malloc/calloc/realloc/free
 operations. The private generated files occupied 7,891,978 bytes at link
 (16 MiB budget) and were deleted; the parent's library was read read-only.
 This does not replace the hosted native SDK and private graph checks.
+
+Review repair at the followup revision adds two real graph scenarios. An
+explicit destination gain of 16 overflows only Record when the native generator
+switches to finite `0x1p1023` program samples. The same `destination.h` helper used
+by the portable oracle emits zeroed GAP buffers for `MX_INACTIVE`, while Call and
+Monitor must deliver another 128 blocks with correct samples. Malformed active
+output/counts still fail; inactive output never sets a global error.
+
+The retained-tail lane primes actual 128-frame Record mix and Call/Monitor output
+delays. It acknowledges source cancellation on the owner loop, removes only the
+program generator port, requires its real registry-removal event, and feeds the
+host terminal missing-source input. The native consumer checks cleared Call and
+Monitor histories, the empty first delayed Record block and then the surviving
+return-only Record signal for 128 blocks. Native timestamps, quantum, exact
+format checks and existing deadlines remain unchanged. These new graph cases
+are prepared for hosted execution; they are not claimed to have passed locally.
+
+The unchanged read-only parent static host passes the extended portable oracle
+for 512 blocks **per scenario** (normal, actual destination overflow, retained
+mix/output tails with surviving source and rejected lost-source resume), using
+the production destination-copy helper and zero wrapped callback heap operations.
+The followup's private generated files occupied 2,270,602 logical bytes at link
+within the 16 MiB cap and were deleted. Run the linked executable with
+`python3 -B adapters/linux/native-host/check_host.py PATH/host-oracle PRIVATE_DIR`.
+This injected evidence remains separate from the SDK/native graph lane.

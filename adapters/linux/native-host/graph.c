@@ -12,11 +12,13 @@
 #include <sys/stat.h>
 #include <pipewire/pipewire.h>
 #include <pipewire/filter.h>
+#include <pipewire/data-loop.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/buffer/meta.h>
 #include <json-c/json.h>
 #include "mixyard_host.h"
 #include "timeline.h"
+#include "destination.h"
 
 #define ROUTES 3
 #define FRAMES 128
@@ -24,6 +26,7 @@
 #define LIMIT (FRAMES * STRIDE)
 #define MAX_GLOBALS 256
 
+enum test_mode { NORMAL, OUTPUT_FAILURE, TAIL_LOSS };
 struct app;
 struct endpoint {
     struct app *app;
@@ -37,6 +40,7 @@ struct global { uint32_t id, node; uint64_t serial; char type[32], name[96], dir
 struct app {
     struct pw_main_loop *loop;
     struct pw_context *context;
+    struct pw_data_loop *data_loop;
     struct pw_core *core;
     struct pw_registry *registry;
     struct spa_hook registry_hook, core_hook;
@@ -46,6 +50,11 @@ struct app {
     size_t global_count;
     struct pw_proxy *links[ROUTES * 2];
     struct mx_host *host; // exclusively accessed by graph data-loop owner
+    enum test_mode mode;
+    _Atomic bool source_missing, source_removed;
+    uint32_t removed_source_port;
+    _Atomic uint64_t epoch_frame, overflow_frame, loss_frame, inactive[ROUTES];
+    uint64_t failure_silence;
     _Atomic uint32_t clock_id;
     _Atomic unsigned command, command_done, phase, error;
     _Atomic uint64_t delivered[ROUTES], silence[ROUTES], mismatches, rendered, dropped, heap_ops;
@@ -84,12 +93,24 @@ static double source_value(unsigned source, uint64_t frame, unsigned channel) {
     }
     return source == 1 ? (channel ? 0.375 : 0.5) : 0.875;
 }
-static double oracle(unsigned route, uint64_t frame, unsigned channel) {
-    double a = source_value(0, frame, channel);
+static double program_value(struct app *a, uint64_t frame, unsigned channel) {
+    return frame >= atomic_load_explicit(&a->overflow_frame, memory_order_acquire) ? 0x1p1023 : source_value(0, frame, channel);
+}
+static double oracle(struct app *a, unsigned route, uint64_t frame, unsigned channel) {
+    if (a->mode == TAIL_LOSS) {
+        uint64_t epoch = atomic_load_explicit(&a->epoch_frame, memory_order_acquire);
+        uint64_t loss = atomic_load_explicit(&a->loss_frame, memory_order_acquire);
+        if (frame >= loss) {
+            return route == 1 && frame - loss >= FRAMES ? source_value(1, frame-FRAMES, channel) * 0.125 : 0.0;
+        }
+        if (frame < epoch || frame - epoch < FRAMES) return 0.0;
+        frame -= FRAMES;
+    }
+    double program = program_value(a, frame, channel);
     // Private source has no sends. Call-return excluded from Call by policy.
-    if (route == 0) return a;
-    if (route == 1) return a * 0.25 + source_value(1, frame, channel) * 0.125;
-    return a * 0.5;
+    if (route == 0) return program;
+    if (route == 1) return (program * 0.25 + source_value(1, frame, channel) * 0.125) * (a->mode == OUTPUT_FAILURE ? 16.0 : 1.0);
+    return program * 0.5;
 }
 static void fail(struct app *a, unsigned error) {
     unsigned zero = 0;
@@ -126,16 +147,19 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
     struct app *a = e->app;
     uint32_t n = pos->clock.duration;
     atomic_store_explicit(&a->role_clock[e->role], pos->clock.id, memory_order_release);
-    if (n != FRAMES || pos->clock.rate.num != 1 || pos->clock.rate.denom != 48000 ||
+    if (pos->clock.duration != FRAMES || pos->clock.rate.num != 1 || pos->clock.rate.denom != 48000 ||
         pos->clock.id == SPA_ID_INVALID || pos->clock.nsec > INT64_MAX) { fail(a, 20); return; }
     if (e->role == 0) {
+        if (atomic_load_explicit(&a->phase, memory_order_relaxed) == 3 && atomic_load(&a->overflow_frame) == UINT64_MAX)
+            atomic_store_explicit(&a->overflow_frame, pos->clock.position, memory_order_release);
         for (unsigned s = 0; s < ROUTES; ++s) {
+            if (s == 0 && atomic_load_explicit(&a->source_missing, memory_order_acquire)) continue;
             struct pw_buffer *b = pw_filter_dequeue_buffer(e->out[s]);
             if (!b) continue;
             double *p = samples(a, b, false, n);
             if (!p) { pw_filter_queue_buffer(e->out[s], b); continue; }
             if (p) for (unsigned f = 0; f < n; ++f)
-                for (unsigned ch = 0; ch < 2; ++ch) p[2*f+ch] = s == 0 && atomic_load_explicit(&a->phase, memory_order_relaxed) == 2 ? NAN : source_value(s, pos->clock.position+f, ch);
+                for (unsigned ch = 0; ch < 2; ++ch) p[2*f+ch] = s == 0 && atomic_load_explicit(&a->phase, memory_order_relaxed) == 2 ? NAN : s == 0 ? program_value(a, pos->clock.position+f, ch) : source_value(s, pos->clock.position+f, ch);
             if (!header(b)) fail(a, 21);
             submit(e->out[s], b, n, pos, !p);
         }
@@ -155,7 +179,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
                 atomic_fetch_add_explicit(&a->silence[r], 1, memory_order_relaxed);
             } else if (p && h) {
                 for (unsigned f = 0; f < n; ++f) for (unsigned ch = 0; ch < 2; ++ch) {
-                    double expected = oracle(r, h->seq+f, ch);
+                    double expected = oracle(a, r, h->seq+f, ch);
                     // Canonical mixing may normalize signed zero. Nonzero low bits must survive.
                     if (p[2*f+ch] != expected) atomic_fetch_add_explicit(&a->mismatches, 1, memory_order_relaxed);
                 }
@@ -177,7 +201,8 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
     bool fresh = atomic_load_explicit(&a->role_clock[0], memory_order_acquire) == pos->clock.id;
     for (unsigned r = 0; r < ROUTES; ++r) {
         struct port *in_port = e->in[r], *out_port = e->out[r];
-        if (!atomic_load_explicit(&in_port->format_ok, memory_order_acquire) ||
+        if ((!atomic_load_explicit(&in_port->format_ok, memory_order_acquire) &&
+             !(r == 0 && atomic_load_explicit(&a->source_missing, memory_order_acquire))) ||
             !atomic_load_explicit(&out_port->format_ok, memory_order_acquire)) fresh = false;
     }
     mx_stamp stamp = {0};
@@ -187,6 +212,10 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
     }
     for (unsigned s = 0; s < ROUTES; ++s) {
         inputs[s] = (mx_input){ .encoding = MX_F64LE, .sample_rate_hz = 48000, .channels = 2, .stamp = stamp };
+        if (s == 0 && atomic_load_explicit(&a->source_missing, memory_order_acquire)) {
+            if (atomic_load(&a->loss_frame) == UINT64_MAX) atomic_store_explicit(&a->loss_frame, pos->clock.position, memory_order_release);
+            continue;
+        }
         input[s] = pw_filter_dequeue_buffer(e->in[s]);
         if (!input[s]) { fresh = false; continue; }
         double *p = samples(a, input[s], true, n);
@@ -203,6 +232,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
     }
     if (a->host && command == 1 && fresh && !atomic_load_explicit(&a->error, memory_order_relaxed)) {
         if (mx_host_process(a->host, pos->clock.nsec, stamp, n, inputs, ROUTES) == 0) {
+            if (atomic_load(&a->epoch_frame) == UINT64_MAX) atomic_store_explicit(&a->epoch_frame, a->timeline.epoch_frame, memory_order_release);
             rendered = true; atomic_fetch_add_explicit(&a->rendered, 1, memory_order_relaxed);
         } else if (atomic_load_explicit(&a->phase, memory_order_relaxed) == 2) {
             mx_host_revoke(a->host); atomic_store_explicit(&a->command, 3, memory_order_release);
@@ -213,19 +243,20 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
         if (!b) { atomic_fetch_add_explicit(&a->dropped, 1, memory_order_relaxed); continue; }
         double *p = samples(a, b, false, n);
         if (!p) { pw_filter_queue_buffer(e->out[r], b); continue; }
-        const double *out = NULL; size_t count = 0;
-        if (rendered && (mx_host_output(a->host, r, &out, &count) != 0 || count != 2*n)) fail(a, 24);
-        if (p) {
-            if (rendered && out && count == 2*n) memcpy(p, out, n * STRIDE);
-            else memset(p, 0, n * STRIDE);
-        }
+        bool silent;
+        int result = mx_destination_copy(a->host, r, rendered, p, 2*n, &silent);
+        if (result == MX_INACTIVE) atomic_fetch_add_explicit(&a->inactive[r], 1, memory_order_relaxed);
+        else if (result != MX_OK) fail(a, 24);
         if (!header(b)) fail(a, 21);
-        submit(e->out[r], b, n, pos, !rendered);
+        submit(e->out[r], b, n, pos, silent);
     }
     for (unsigned s = 0; s < ROUTES; ++s) if (input[s]) pw_filter_queue_buffer(e->in[s], input[s]);
 }
 static void process(void *userdata, struct spa_io_position *pos) {
     struct endpoint *e = userdata;
+    // PipeWire 1.0 has one context data loop. Check the actual callback owner
+    // before touching Rust state; replacement invokes this same loop with ack.
+    if (!pw_data_loop_in_thread(e->app->data_loop)) { fail(e->app, 77); return; }
     callback_owner = e->app;
     process_inner(userdata, pos);
     callback_owner = NULL;
@@ -306,9 +337,10 @@ static void global_added(void *userdata, uint32_t id, uint32_t permissions, cons
 static void global_removed(void *userdata, uint32_t id) {
     struct app *a = userdata;
     for (size_t i = 0; i < a->global_count; ++i) if (a->globals[i].id == id) {
-        if (a->linked && !a->expected_loss) fail(a, 45);
+        if (a->linked && !a->expected_loss && id != a->removed_source_port) fail(a, 45);
         a->globals[i].id = SPA_ID_INVALID;
-        if (a->linked) atomic_store_explicit(&a->command, 4, memory_order_release);
+        if (id == a->removed_source_port) atomic_store_explicit(&a->source_removed, true, memory_order_release);
+        if (a->linked && id != a->removed_source_port) atomic_store_explicit(&a->command, 4, memory_order_release);
     }
 }
 static const struct pw_registry_events registry_events = {
@@ -388,6 +420,7 @@ static int replace_host(struct spa_loop *loop, bool async, uint32_t seq, const v
     struct replacement *r = userdata;
     r->old = r->a->host; r->a->host = r->next;
     r->a->generation = r->generation; r->a->last_ack = 0;
+    atomic_store_explicit(&r->a->epoch_frame, UINT64_MAX, memory_order_release);
     r->a->timeline = (mx_graph_timeline){ .clock_id = atomic_load_explicit(&r->a->clock_id, memory_order_acquire) };
     atomic_store_explicit(&r->a->command_done, 0, memory_order_release);
     atomic_store_explicit(&r->a->command, r->next ? 1 : 0, memory_order_release);
@@ -437,7 +470,7 @@ static bool install_host(struct app *a, uint64_t generation) {
     }
     json_object_put(request);
     struct replacement replacement = { .a = a, .next = host, .generation = generation };
-    int rc = pw_loop_invoke(pw_filter_get_data_loop(a->nodes[1].filter), replace_host, 0, NULL, 0, true, &replacement);
+    int rc = pw_data_loop_invoke(a->data_loop, replace_host, 0, NULL, 0, true, &replacement);
     if (rc < 0) { mx_host_destroy(host); fail(a, 55); return false; }
     if (replacement.old) mx_host_destroy(replacement.old);
     return true;
@@ -466,6 +499,32 @@ static bool verify_quiet(struct app *a) {
     a->quiet_started = false;
     return true;
 }
+static int mark_program_lost(struct spa_loop *loop, bool async, uint32_t seq, const void *data, size_t size, void *userdata) {
+    (void)loop; (void)async; (void)seq; (void)data; (void)size;
+    struct app *a = userdata;
+    atomic_store_explicit(&a->source_missing, true, memory_order_release);
+    return 0;
+}
+static bool remove_program_port(struct app *a) {
+    struct global *port = find_port(a, pw_filter_get_node_id(a->nodes[0].filter), "out", 0);
+    if (!port) { fail(a, 78); return false; }
+    a->removed_source_port = port->id;
+    // Acknowledge that no callback can touch this port before removing it.
+    if (pw_data_loop_invoke(a->data_loop, mark_program_lost, 0, NULL, 0, true, a) < 0) { fail(a, 79); return false; }
+    if (pw_filter_remove_port(a->nodes[0].out[0]) < 0) { fail(a, 80); return false; }
+    a->nodes[0].out[0] = NULL;
+    return true;
+}
+static bool publish_marker(struct app *a, const char *name) {
+    char staging[512], complete[512];
+    snprintf(staging, sizeof(staging), "%s/%s.new", a->directory, name);
+    snprintf(complete, sizeof(complete), "%s/%s", a->directory, name);
+    FILE *f = fopen(staging, "wx");
+    if (!f) return false;
+    bool ok = fputs("true\n", f) >= 0;
+    if (fclose(f)) ok = false;
+    return ok && rename(staging, complete) == 0;
+}
 static void timer(void *userdata, uint64_t expirations) {
     (void)expirations;
     struct app *a = userdata;
@@ -484,15 +543,18 @@ static void timer(void *userdata, uint64_t expirations) {
             if (atomic_load_explicit(&a->role_clock[node], memory_order_acquire) != atomic_load_explicit(&a->clock_id, memory_order_acquire)) return;
         if (!a->topology_written) write_topology(a);
         if (install_host(a, 1)) { a->stage = 2; baseline(a);
-            char admitted[512]; snprintf(admitted, sizeof(admitted), "%s/admitted", a->directory);
-            FILE *f = fopen(admitted, "wx"); if (!f || fputs("true\n", f) < 0 || fclose(f)) fail(a, 57); }
+            if (!publish_marker(a, "admitted")) fail(a, 57); }
         break;
     case 2:
         if (progressed(a, 0, 64) && progressed(a, 1, 64) && progressed(a, 2, 64)) {
-            char flowing[512]; snprintf(flowing, sizeof(flowing), "%s/flowing", a->directory);
-            FILE *f = fopen(flowing, "wx");
-            if (!f || fputs("true\n", f) < 0 || fclose(f)) { fail(a, 58); break; }
-            baseline(a); atomic_store(&a->phase, 1); a->stage = 3;
+            if (!publish_marker(a, "flowing")) { fail(a, 58); break; }
+            baseline(a);
+            if (a->mode == OUTPUT_FAILURE) {
+                a->failure_silence = atomic_load(&a->silence[1]);
+                atomic_store_explicit(&a->phase, 3, memory_order_release); a->stage = 11;
+            } else if (a->mode == TAIL_LOSS) {
+                if (remove_program_port(a)) a->stage = 12;
+            } else { atomic_store(&a->phase, 1); a->stage = 3; }
         }
         break;
     case 3:
@@ -527,21 +589,41 @@ static void timer(void *userdata, uint64_t expirations) {
         if (atomic_load_explicit(&a->command_done, memory_order_acquire) != 4 || !verify_quiet(a)) break;
         a->stage = 10; pw_main_loop_quit(a->loop);
         break;
+    case 11:
+        if (!progressed(a, 0, 128) || !progressed(a, 2, 128) || atomic_load(&a->inactive[1]) < 128 ||
+            atomic_load(&a->silence[1]) < a->failure_silence + 128) break;
+        if (progressed(a, 1, 9) || atomic_load(&a->inactive[0]) || atomic_load(&a->inactive[2])) { fail(a, 81); break; }
+        a->stage = 10; pw_main_loop_quit(a->loop);
+        break;
+    case 12:
+        if (!progressed(a, 0, 128) || !progressed(a, 1, 128) || !progressed(a, 2, 128) ||
+            atomic_load_explicit(&a->loss_frame, memory_order_acquire) == UINT64_MAX ||
+            !atomic_load_explicit(&a->source_removed, memory_order_acquire)) break;
+        if (atomic_load(&a->inactive[0]) || atomic_load(&a->inactive[1]) || atomic_load(&a->inactive[2])) { fail(a, 82); break; }
+        a->stage = 10; pw_main_loop_quit(a->loop);
+        break;
     }
 }
 static void quit(void *userdata, int signal) {
     (void)signal; struct app *a = userdata; a->cancelled = true; pw_main_loop_quit(a->loop);
 }
 int main(int argc, char **argv) {
-    if (argc != 2 || !getenv("MIXYARD_PRIVATE_GRAPH") || strcmp(getenv("MIXYARD_PRIVATE_GRAPH"), "hosted-owned-only")) {
+    if (argc != 3 || !getenv("MIXYARD_PRIVATE_GRAPH") || strcmp(getenv("MIXYARD_PRIVATE_GRAPH"), "hosted-owned-only")) {
         fprintf(stderr, "requires disposable hosted private graph and private control directory\n"); return 2;
     }
     struct stat info;
     if (lstat(argv[1], &info) || !S_ISDIR(info.st_mode) || info.st_uid != getuid() || (info.st_mode & 077)) return 2;
-    struct app a = { .directory = argv[1] };
+    struct app a = { .directory = argv[1], .removed_source_port = SPA_ID_INVALID };
+    if (!strcmp(argv[2], "normal")) a.mode = NORMAL;
+    else if (!strcmp(argv[2], "output-failure")) a.mode = OUTPUT_FAILURE;
+    else if (!strcmp(argv[2], "tail-loss")) a.mode = TAIL_LOSS;
+    else return 2;
+    atomic_init(&a.epoch_frame, UINT64_MAX); atomic_init(&a.overflow_frame, UINT64_MAX); atomic_init(&a.loss_frame, UINT64_MAX);
     pw_init(&argc, &argv);
     a.loop = pw_main_loop_new(NULL);
     a.context = pw_context_new(pw_main_loop_get_loop(a.loop), NULL, 0);
+    a.data_loop = pw_context_get_data_loop(a.context);
+    if (!a.data_loop) return 2;
     a.core = pw_context_connect(a.context, pw_properties_new(PW_KEY_REMOTE_NAME, "mixyard-private", NULL), 0);
     if (!a.core) return 2;
     pw_core_add_listener(a.core, &a.core_hook, &core_events, &a);
@@ -573,7 +655,7 @@ int main(int argc, char **argv) {
     pw_main_loop_run(a.loop);
     // Serialize pointer withdrawal on the owning data loop before destroying Rust state.
     struct replacement replacement = { .a = &a };
-    if (pw_loop_invoke(pw_filter_get_data_loop(a.nodes[1].filter), replace_host, 0, NULL, 0, true, &replacement) < 0) return 2;
+    if (pw_data_loop_invoke(a.data_loop, replace_host, 0, NULL, 0, true, &replacement) < 0) return 2;
     if (replacement.old) mx_host_destroy(replacement.old);
     a.expected_loss = true;
     for (unsigned l = 0; l < ROUTES*2; ++l) if (a.links[l]) pw_proxy_destroy(a.links[l]);
@@ -581,9 +663,10 @@ int main(int argc, char **argv) {
     pw_proxy_destroy((struct pw_proxy *)a.registry);
     pw_core_disconnect(a.core); pw_context_destroy(a.context); pw_main_loop_destroy(a.loop); pw_deinit();
     printf("{\"stage\":%u,\"error\":%u,\"sampleMismatches\":%" PRIu64 ",\"rendered\":%" PRIu64
-        ",\"delivered\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"dropped\":%" PRIu64 ",\"cancelled\":%s,\"callbackHeapOperations\":%" PRIu64 "}\n",
+        ",\"delivered\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"dropped\":%" PRIu64 ",\"cancelled\":%s,\"callbackHeapOperations\":%" PRIu64 ",\"inactiveOutputs\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"lossFrame\":%" PRIu64 "}\n",
         a.stage, atomic_load(&a.error), atomic_load(&a.mismatches), atomic_load(&a.rendered),
         atomic_load(&a.delivered[0]), atomic_load(&a.delivered[1]), atomic_load(&a.delivered[2]),
-        atomic_load(&a.dropped), a.cancelled ? "true" : "false", atomic_load(&a.heap_ops));
+        atomic_load(&a.dropped), a.cancelled ? "true" : "false", atomic_load(&a.heap_ops),
+        atomic_load(&a.inactive[0]), atomic_load(&a.inactive[1]), atomic_load(&a.inactive[2]), atomic_load(&a.loss_frame));
     return (a.stage == 10 || a.cancelled) && !atomic_load(&a.error) && !atomic_load(&a.mismatches) ? 0 : 1;
 }

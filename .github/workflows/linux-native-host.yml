@@ -28,6 +28,8 @@ jobs:
           export MIXYARD_NATIVE_BUILD="$RUNNER_TEMP/mixyard-native-build"
           mkdir -m 700 "$MIXYARD_NATIVE_BUILD"
           bash adapters/linux/native-host/build.sh
+      - name: Verify real linked adapter failure and tail oracles
+        run: python3 -B adapters/linux/native-host/check_host.py "$RUNNER_TEMP/mixyard-native-build/host-oracle" "$RUNNER_TEMP"
       - name: Exercise isolated native source to engine to consumer
         run: python3 -B adapters/linux/native-host/qualify.py "$RUNNER_TEMP/mixyard-native-build/native-graph" "$RUNNER_TEMP/native-evidence.json"
       - uses: actions/upload-artifact@v4

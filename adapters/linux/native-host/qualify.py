@@ -108,16 +108,23 @@ def atomic_json(path, value):
     staging.rename(path)
 
 
-def run(binary, env, directory, cancel=False, server_loss=None):
+def client_log(path):
+    with path.open("r", errors="replace") as file:
+        text = file.read(65536)
+        return text + (" [truncated]" if file.read(1) else "")
+
+
+def run(binary, env, directory, cancel=False, server_loss=None, mode="normal"):
     directory.mkdir(mode=0o700)
     stderr = directory / "stderr.log"
     stdout = directory / "stdout.log"
     with stderr.open("xb") as err, stdout.open("xb") as out:
-        process = subprocess.Popen([str(binary), str(directory)], env=env, stdout=out, stderr=err)
+        process = subprocess.Popen([str(binary), str(directory), mode], env=env, stdout=out, stderr=err)
+        failure = None
         try:
             topology = await_file(directory / "topology.json", process)
             active = isolation(snapshot(env), active=True)
-            atomic_json(directory / "request.json", request(topology))
+            atomic_json(directory / "request.json", request(topology, mode))
             if cancel or server_loss:
                 await_file(directory / "flowing", process)
                 if cancel:
@@ -125,20 +132,31 @@ def run(binary, env, directory, cancel=False, server_loss=None):
                 else:
                     stop_owned(server_loss)
             process.wait(timeout=35)
+        except Exception as error:
+            failure = error
         finally:
             stop_owned(process)
+    if failure:
+        raise RuntimeError(f"{mode}: {failure}; native stderr={client_log(stderr)} stdout={client_log(stdout)}") from failure
     if server_loss:
         report = json.loads(stdout.read_text())
         if process.returncode != 1 or report["error"] != 46 or report["sampleMismatches"]:
             raise RuntimeError("server loss failed closed-exit check: " + repr(report))
         return {"topology": topology, "activeIsolation": active, "result": report}
     if process.returncode:
-        raise RuntimeError(f"native client exit {process.returncode}: {stderr.read_text()} {stdout.read_text()}")
+        raise RuntimeError(f"native client exit {process.returncode}: {client_log(stderr)} {client_log(stdout)}")
     report = json.loads(stdout.read_text())
     if report["error"] or report["sampleMismatches"]:
         raise RuntimeError("native sample oracle/lifecycle failed: " + repr(report))
-    if not cancel and (report["stage"] != 10 or min(report["delivered"]) < 128):
-        raise RuntimeError("insufficient actual native delivery")
+    if not cancel:
+        if report["stage"] != 10 or min(report["delivered"]) < (64 if mode == "output-failure" else 128):
+            raise RuntimeError("insufficient actual native delivery")
+        if mode == "output-failure" and (report["inactiveOutputs"][1] < 128 or
+                report["inactiveOutputs"][0] or report["inactiveOutputs"][2] or
+                report["delivered"][0] < 192 or report["delivered"][2] < 192):
+            raise RuntimeError("destination failure did not isolate healthy native siblings")
+        if mode == "tail-loss" and report["lossFrame"] == 2**64-1:
+            raise RuntimeError("no actual native source loss was observed")
     isolation(snapshot(env))
     return {"topology": topology, "activeIsolation": active, "result": report}
 
@@ -185,6 +203,8 @@ context.modules = [
                     initial = isolation(snapshot(env))  # Required before connecting any PCM nodes.
                     result = {"ownedServerPid": server.pid, "initialIsolation": initial,
                               "integrated": run(binary, env, root / f"integrated-{epoch}"),
+                              "outputFailure": run(binary, env, root / f"output-failure-{epoch}", mode="output-failure"),
+                              "retainedTailLoss": run(binary, env, root / f"tail-loss-{epoch}", mode="tail-loss"),
                               "cancelled": run(binary, env, root / f"cancelled-{epoch}", cancel=True)}
                     if epoch == 1:
                         result["serverLoss"] = run(binary, env, root / "server-loss", server_loss=server)

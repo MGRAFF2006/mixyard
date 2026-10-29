@@ -3,6 +3,7 @@ set -euo pipefail
 # Only disposable hosted runners install SDKs. This script never installs any.
 : "${MIXYARD_NATIVE_BUILD:?set a private build directory}"
 root=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
+pkg-config --modversion libpipewire-0.3
 cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
   $(pkg-config --cflags libpipewire-0.3 json-c) \
   -I"$root/adapters/engine/include" \
@@ -16,3 +17,9 @@ cc "$MIXYARD_NATIVE_BUILD/native-graph.o" \
   -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free,--wrap=posix_memalign,--wrap=aligned_alloc \
   $(pkg-config --libs libpipewire-0.3 json-c) -lpthread -ldl -lm -lrt -lutil \
   -o "$MIXYARD_NATIVE_BUILD/native-graph"
+
+cc -std=c11 -Wall -Wextra -Werror -O2 -g0 \
+  -I"$root/adapters/engine/include" "$root/adapters/linux/native-host/host_oracle.c" \
+  "$CARGO_TARGET_DIR/release/libmixyard_host.a" \
+  -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free \
+  -lpthread -ldl -lm -lrt -lutil -o "$MIXYARD_NATIVE_BUILD/host-oracle"

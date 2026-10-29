@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "timeline.h"
+#include "destination.h"
 
 static bool callback;
 static size_t heap_ops;
@@ -16,7 +17,9 @@ void *__wrap_realloc(void *p, size_t n) { if (callback) ++heap_ops; return __rea
 void __wrap_free(void *p) { if (callback) ++heap_ops; __real_free(p); }
 
 int main(int argc, char **argv) {
-    assert(argc == 2);
+    assert(argc == 3);
+    bool failure = !strcmp(argv[2], "output-failure"), tail = !strcmp(argv[2], "tail-loss");
+    assert(failure || tail || !strcmp(argv[2], "normal"));
     char text[32768], error[1024];
     FILE *file = fopen(argv[1], "r"); assert(file);
     size_t len = fread(text, 1, sizeof(text), file); assert(len < sizeof(text)); assert(!ferror(file)); fclose(file);
@@ -38,17 +41,35 @@ int main(int argc, char **argv) {
         assert(stamp.sequence == seq && stamp.first_frame == 128*seq && stamp.captured_ns == now);
         mx_input inputs[3];
         for (size_t s = 0; s < 3; ++s) inputs[s] = (mx_input){ (uint8_t *)pcm[s], sizeof(pcm[s]), MX_F64LE, 48000, 2, stamp };
+        if (failure && seq >= 4) for (size_t f = 0; f < 256; ++f) pcm[0][f] = 0x1p1023;
+        if (tail && seq >= 4) { inputs[0].bytes = NULL; inputs[0].byte_count = 0; }
         callback = true;
         assert(mx_host_process(host, now, stamp, 128, inputs, 3) == MX_OK);
         for (size_t r = 0; r < 3; ++r) {
-            const double *out = NULL; size_t count = 0;
-            assert(mx_host_output(host, r, &out, &count) == MX_OK && count == 256);
+            double output[256]; bool silent = false;
+            for (size_t f = 0; f < 256; ++f) output[f] = 99.0;
+            int result = mx_destination_copy(host, r, true, output, 256, &silent);
+            bool inactive = failure && seq >= 4 && r == 1;
+            assert(result == (inactive ? MX_INACTIVE : MX_OK) && silent == inactive);
             for (size_t f = 0; f < 128; ++f) for (size_t ch = 0; ch < 2; ++ch) {
                 double a = pcm[0][2*f+ch];
                 double expected = r == 0 ? a : r == 1 ? a * 0.25 + pcm[1][2*f+ch] * 0.125 : a * 0.5;
-                assert(out[2*f+ch] == expected);
+                if (failure && r == 1) expected = inactive ? 0.0 : expected * 16.0;
+                if (tail) {
+                    if (seq == 0 || seq == 4) expected = 0.0;
+                    else if (seq > 4) expected = r == 1 ? pcm[1][2*f+ch] * 0.125 : 0.0;
+                }
+                assert(output[2*f+ch] == expected);
             }
         }
+        callback = false;
+    }
+    if (tail) {
+        mx_stamp resumed; assert(mx_graph_stamp(&timeline, 42, timeline.next_native_frame, 3000000000, 128, 1, &resumed));
+        mx_input inputs[3];
+        for (size_t s = 0; s < 3; ++s) inputs[s] = (mx_input){ (uint8_t *)pcm[s], sizeof(pcm[s]), MX_F64LE, 48000, 2, resumed };
+        callback = true;
+        assert(mx_host_process(host, resumed.captured_ns, resumed, 128, inputs, 3) == MX_STALE);
         callback = false;
     }
     mx_stamp ignored;
@@ -57,8 +78,13 @@ int main(int argc, char **argv) {
     callback = true; mx_host_revoke(host);
     const double *out = (double *)1; size_t count = 1;
     assert(mx_host_output(host, 0, &out, &count) == MX_INACTIVE && out == NULL && count == 0);
+    for (size_t r = 0; r < 3; ++r) {
+        double cleared[256]; bool silent = false;
+        assert(mx_destination_copy(host, r, true, cleared, 256, &silent) == MX_INACTIVE && silent);
+        for (size_t f = 0; f < 256; ++f) assert(cleared[f] == 0.0);
+    }
     callback = false;
     assert(heap_ops == 0);
     mx_host_destroy(host);
-    puts("PASS linked canonical host: 512 Float64/DSP/independent-output blocks, explicit native frame epoch, rejected clock/gap, revoke, zero callback heap operations");
+    printf("PASS %s: 512 actual host blocks, destination copy/GAP, sibling/tail samples, epoch/clock/gap/revoke, zero callback heap operations\n", argv[2]);
 }

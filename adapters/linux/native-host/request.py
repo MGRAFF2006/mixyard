@@ -5,7 +5,7 @@ Only the registry-bound observed IDs authorize native buffers in graph.c.
 """
 
 
-def request(topology):
+def request(topology, mode="normal"):
     sources = topology["sources"]
     outputs = topology["outputs"]
     if len(sources) != 3 or len(outputs) != 3 or len(set(sources + outputs)) != 6:
@@ -44,7 +44,7 @@ def request(topology):
     }
     port = lambda p: {"observedId": p, "sampleRateHz": 48000,
                       "channels": ["FL", "FR"], "mapping": ["FL", "FR"]}
-    return {"config": config, "inventory": inventory, "generation": 1,
+    result = {"config": config, "inventory": inventory, "generation": 1,
             "clockId": topology["clockId"], "maxFrames": 128,
             "limits": {"maxSources": 3, "maxMixes": 3, "maxSends": 4, "maxOutputs": 3,
                        "maxBufferSamples": 8192, "maxTotalBytes": 1048576,
@@ -55,3 +55,18 @@ def request(topology):
                              "effect": {"kind": "gain", "gain": 0.5, "invertPolarity": False}}]}, None],
             "sources": [dict(port(p), encoding="f64-le") for p in sources],
             "outputs": [port(p) for p in outputs]}
+
+    def delay(name):
+        return {"name": name, "format": {"sampleRateHz": 48000, "channels": ["FL", "FR"]},
+                "effects": [{"name": "retained-native-tail", "enabled": True,
+                             "effect": {"kind": "delay", "frames": 128, "wet": 1, "dry": 0, "feedback": 0}}]}
+    if mode == "output-failure":
+        result["outputDsp"][1]["effects"].append({"name": "destination-overflow", "enabled": True,
+            "effect": {"kind": "gain", "gain": 16, "invertPolarity": False}})
+    elif mode == "tail-loss":
+        result["mixDsp"] = [None, delay("record-retained-mix"), None]
+        result["outputDsp"][0] = delay("call-retained-output")
+        result["outputDsp"][2] = delay("monitor-retained-output")
+    elif mode != "normal":
+        raise ValueError("unsupported private graph scenario")
+    return result
