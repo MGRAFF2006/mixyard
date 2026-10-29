@@ -170,7 +170,12 @@ callbacks cannot be recalled. There is no retry/spin loop on the audio path.
   positions `CA:1`, `CA:2`, etc. It registers an owned IOProc but starts nothing.
   Native positions do not imply speaker labels; the host must explicitly map its
   semantic channels per destination. Unsupported multistream/integer formats
-  reject. It never changes device rate/format, defaults or another IOProc.
+  reject. Devices advertising any input stream also reject before IOProc
+  registration/start: per-IOProc input suppression on duplex hardware is not
+  qualified. Input-stream topology changes revoke an admitted output. This
+  deliberately limits output to devices with no input streams until that
+  privacy gate is proved. It never changes device rate/format, defaults or
+  another IOProc.
 - The caller must adapt/schedule PCM into that destination's clock, prefill the
   queue, and explicitly call `startAt(AudioTimeStamp&)`. `Renderer` requires exact
   destination frame positions, supports partial/multiple producer blocks per

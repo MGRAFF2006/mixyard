@@ -103,7 +103,7 @@ class OutputWorker {
     AudioDeviceIOProcID io_ = nullptr;
     bool started_ = false, planar_ = false;
     struct Notice { AudioObjectID object; AudioObjectPropertyAddress address; };
-    std::array<Notice, 6> notices_{};
+    std::array<Notice, 7> notices_{};
     size_t noticeCount_ = 0;
     alignas(8) std::array<unsigned char, maxBytes> scratch_{};
 
@@ -130,6 +130,14 @@ class OutputWorker {
     void validate() {
         if (uid(device_) != uid_ || property<UInt32>(device_, kAudioDevicePropertyDeviceIsAlive) != 1)
             throw std::runtime_error("Selected output identity lost");
+        // A device IOProc can receive both directions. Until per-IOProc input
+        // suppression is qualified, never start one on a capture-capable device.
+        const AudioObjectPropertyAddress inputs{kAudioDevicePropertyStreams,
+            kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain};
+        UInt32 inputBytes = 0;
+        checked(AudioObjectGetPropertyDataSize(device_, &inputs, 0, nullptr, &inputBytes), "size input streams");
+        if (inputBytes != 0)
+            throw std::runtime_error("Duplex output unsupported: input stream suppression is unqualified");
         AudioObjectPropertyAddress address{kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput,
                                            kAudioObjectPropertyElementMain};
         UInt32 bytes = 0;
@@ -235,6 +243,7 @@ public:
         worker->listen(worker->device_, kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal);
         worker->listen(worker->device_, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal);
         worker->listen(worker->device_, kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput);
+        worker->listen(worker->device_, kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput);
         worker->listen(worker->stream_, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal);
         worker->listen(worker->stream_, kAudioStreamPropertyStartingChannel, kAudioObjectPropertyScopeGlobal);
         checked(AudioDeviceCreateIOProcID(worker->device_, render, worker.get(), &worker->io_), "create owned output IOProc");
