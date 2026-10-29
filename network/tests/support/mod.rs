@@ -320,10 +320,10 @@ pub async fn playout_proof() -> Result<()> {
     }
     // Retain old-generation bytes, then prove reliable restart invalidates them
     // without a service tick. Sibling generation remains active.
+    b.service_playout(&mut handles[0])?; // Advance ingress before sending/waiting.
     a.enqueue(streams[0].stream, sample_bytes(&streams[0], 4))
         .await?;
     a.flush_round().await?;
-    b.service_playout(&mut handles[0])?; // Advance ingress to the rendered cursor.
     wait_queued(&b, streams[0].stream, 1).await?;
     b.service_playout(&mut handles[0])?;
     assert_eq!(handles[0].snapshot().buffered_frames, 5);
