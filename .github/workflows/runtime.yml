@@ -52,7 +52,7 @@ jobs:
       - name: Existing core and actual Windows kernel DACL checks
         run: cargo test --locked --lib --bins
       - name: Real headless subprocess lifecycle and endpoint security
-        run: cargo test --locked --test runtime_lifecycle --test runtime_readonly --test runtime_inventory --test runtime_native_inventory --test recording
+        run: cargo test --locked --test runtime_lifecycle --test runtime_readonly --test runtime_inventory --test runtime_native_inventory --test recording --test runtime_helper_publication
       - name: Record qualification boundary
         shell: bash
         run: |
