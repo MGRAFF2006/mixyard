@@ -219,6 +219,40 @@ async fn raw_canonical_validation_and_remote_private_errors() {
     )
     .await;
     let settings_json = settings["body"]["settings"].to_string();
+    let inspection_config = json!({"schemaVersion":2,"revision":1,"sources":[{"id":"owned-mic","selector":{"kind":"mic","deviceUid":"owned-missing-mic"}}],"mixes":[],"sends":[],"outputs":[],"mediaControls":[]});
+    let inspection_inventory = json!({"schemaVersion":2,"revision":1,"platform":"linux","evidence":"simulated","sources":[],"outputs":[],"mediaSessions":[],"limits":{"maxExportedMixes":0,"maxOutputRoutes":0,"maxVirtualInputs":0}});
+    let config: mixyard::Config = serde_json::from_value(inspection_config.clone()).unwrap();
+    let inventory: mixyard::Inventory =
+        serde_json::from_value(inspection_inventory.clone()).unwrap();
+    let expected_inspection =
+        serde_json::to_value(mixyard::diagnostics::inspect(&config, &inventory)).unwrap();
+    let (status, inspection) = request(
+        &tls,
+        address,
+        "/control/request",
+        Some(credential),
+        envelope(
+            &session,
+            "/api/inspect",
+            json!({"config":inspection_config,"inventory":inspection_inventory}),
+        ),
+        &[],
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        inspection["body"], expected_inspection,
+        "pure inspection must retain its entire canonical projection"
+    );
+    assert_eq!(
+        inspection["body"]["plan"]["diagnostics"][0]["code"],
+        "missing-target"
+    );
+    assert!(inspection["body"]["plan"]["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("no fallback"));
+    assert_eq!(inspection["revision"], session["revision"]);
     let nodes: Vec<_> = (0..257)
         .map(|i| json!({"id":format!("terminal-{i}"),"kind":"terminal","action":{"kind":"no-change"}}))
         .collect();
