@@ -1,10 +1,11 @@
+import type { ApiClient } from './api.ts'
 import { Api, ApiError } from './api.ts'
 import { copy, object, readConfig, readInspection, readSnapshot, readStatus, signature } from './model.ts'
 import type { Config, Inspection, Inventory, Snapshot, Status } from './model.ts'
 
 export type Edit = { kind: 'draft'; config: Config } | { kind: 'save'; id: string | null; name: string; config: Config } | { kind: 'rename'; id: string; name: string } | { kind: 'load'; id: string } | { kind: 'undo' }
 export class ConsoleSession {
-  api: Api
+  api: ApiClient
   snapshot: Snapshot | null = null
   local: Config | null = null
   baseline: string = signature(null)
@@ -18,22 +19,30 @@ export class ConsoleSession {
   notice = ''
   needsRefresh = true
   simulated = false
-  constructor(api = new Api()) { this.api = api }
+  private operation = 0
+  constructor(api: ApiClient = new Api()) { this.api = api }
   get dirty() { return signature(this.local) !== this.baseline }
-  get canWrite() { return !!this.snapshot && !this.busy && !this.needsRefresh }
+  get canWrite() { return this.api.connected && !!this.snapshot && !this.busy && !this.needsRefresh && (this.api.mode === 'local' || !!this.api.identity?.permissions.includes('control')) }
+  invalidate() {
+    this.operation++; this.busy = false; this.snapshot = null; this.status = null
+    this.needsRefresh = true; this.changed(); this.error = this.api.connectionError
+  }
   changed() { this.inspection = null; this.validated = false; this.notice = '' }
   replace(config: Config, simulated = false) { this.local = copy(readConfig(config)); this.simulated = simulated; this.changed() }
   async run(work: () => Promise<void>) {
     if (this.busy) return
+    const operation = ++this.operation
     this.busy = true; this.error = ''; this.notice = ''
-    try { await work() } catch (error) { this.error = error instanceof Error ? error.message : String(error) }
-    finally { this.busy = false }
+    try { await work() } catch (error) { if (operation === this.operation) this.error = error instanceof Error ? error.message : String(error) }
+    finally { if (operation === this.operation) this.busy = false }
   }
   async refresh() {
+    if (this.busy) return
+    const connection = this.api.connect()
     await this.run(async () => {
       this.needsRefresh = true
       this.status = null; this.statusError = ''
-      await this.api.connect()
+      await connection
       const [store, status] = await Promise.allSettled([this.api.post('/api/profiles/read'), this.api.post('/api/status')])
       if (status.status === 'fulfilled') {
         try { this.status = readStatus(status.value) } catch (error) { this.statusError = String(error) }

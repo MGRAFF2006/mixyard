@@ -31,6 +31,12 @@ export class ActivationSession {
   private reviewDeadline = 0
   private now: () => number
   constructor(api: Pick<Api, 'post'>, now = () => Date.now()) { this.api = api; this.now = now }
+  disconnect() {
+    this.generation++; this.draftGeneration++; this.authorityGeneration++; this.statusGeneration++
+    this.invalidateReview(); this.saved = null; this.status = null; this.live = null
+    this.connected = false; this.needsRead = true; this.busy = false; this.controlBusy = false
+    this.disarming = false; this.refreshing = false; this.statusError = ''; this.notice = ''; this.error = ''
+  }
   fail(error: unknown) { this.error = error instanceof ApiError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : String(error) }
   invalidateReview() { this.review = null; this.reviewDeadline = 0 }
   builderChanged() {

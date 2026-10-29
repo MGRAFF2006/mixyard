@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { Api } from './api.ts'
 import { copyDsp, dspJson } from './dsp-json.ts'
 import { DspDraft, effectKinds, filters, move, newEffect, readChain, starter } from './dsp.ts'
@@ -12,7 +12,7 @@ import DelayTiming from './DelayTiming.vue'
 import DelayMeter from './DelayMeter.vue'
 import { addChannel as addLane, removeChannel as removeLane, renameChannel as renameLane } from './channels.ts'
 
-const props = defineProps<{ api: Pick<Api, 'post'>; ready: boolean }>()
+const props = defineProps<{ api: Pick<Api, 'post'>; ready: boolean; epoch?: number }>()
 const d = reactive(new DspDraft())
 const form = ref<HTMLFormElement | null>(null)
 const generation = ref(0)
@@ -33,6 +33,7 @@ const dynamicsFields: { key: keyof Pick<Dynamics, 'thresholdDb' | 'ratio' | 'kne
   { key: 'releaseMs', label: 'Release (ms)', min: 0 }, { key: 'makeupDb', label: 'Makeup (dB)', min: -6000, max: 6000 },
   { key: 'rangeDb', label: 'Range (dB)', min: 0, max: 6000 },
 ]
+watch(() => props.epoch, () => { d.changed(); busy.value = false; error.value = ''; notice.value = '' }, { flush: 'sync' })
 function changed() { d.changed(); error.value = ''; notice.value = '' }
 function valid() { return form.value?.reportValidity() ?? false }
 function download(value: unknown, name: string) {
@@ -93,7 +94,7 @@ async function applyImport(text: string) {
 async function importFile(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = ''
   if (file && file.size > 1_048_576) { error.value = 'Chain file exceeds the web preview 1 MiB input budget. Use the offline renderer for larger jobs. Current chain kept.'; return }
-  if (file) await run(async () => applyImport(await file.text()))
+  if (file) await run(async () => { const epoch = props.epoch; const text = await file.text(); if (epoch !== props.epoch) return; await applyImport(text) })
 }
 async function render() {
   if (!valid()) return
@@ -206,7 +207,7 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
         <button class="primary dsp-render" type="button" :disabled="busy || !ready" @click="render">{{ busy ? 'Working…' : 'Render and measure' }}</button>
       </fieldset>
     </form>
-    <DelayMeter :api="api" :ready="ready" :config="d.config" :bypassed="d.bypassed" @append="appendAlignment" @export="download($event, 'mixyard-delay.json')" />
+    <DelayMeter :api="api" :epoch="epoch" :ready="ready" :config="d.config" :bypassed="d.bypassed" @append="appendAlignment" @export="download($event, 'mixyard-delay.json')" />
     <div class="dsp-results" aria-live="polite" aria-atomic="false">
       <p v-if="!result" class="empty">Speed unknown. No current preview or timing. Render and measure explicitly after editing.</p>
       <template v-else>
