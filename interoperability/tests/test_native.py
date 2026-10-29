@@ -234,7 +234,7 @@ class ActualNativeHostTests(unittest.TestCase):
                 host.process(blocks(sources, 4), now_ns=1_100_000, deadline_ns=2_000_000)
             self.assertIsNone(host.stop_witness)  # Notification is not completion.
             witness = host.quiesce()
-            self.assertEqual((witness.generation, witness.revision, witness.completed_frames), (7, 1, 4))
+            self.assertEqual((witness.generation, witness.revision, witness.committed_frames), (7, 1, 4))
 
     def test_failed_quiesce_retains_owner_until_actual_worker_and_native_scrub_complete(self):
         value, sources, outputs, _, _ = setup_host()
@@ -258,6 +258,7 @@ class ActualNativeHostTests(unittest.TestCase):
         worker.start()
         try:
             self.assertTrue(entered.wait(1))
+            host.source_lost(1)  # Notification must not wait for the held owner callback.
             with self.assertRaises(RuntimeBusy):
                 host.quiesce(timeout_seconds=0)
             self.assertIsNone(host.stop_witness)
@@ -268,7 +269,7 @@ class ActualNativeHostTests(unittest.TestCase):
             self.assertFalse(worker.is_alive())
             sources[1]._owner_check = original
             witness = host.quiesce()
-            self.assertEqual(witness.completed_frames, 0)
+            self.assertEqual(witness.committed_frames, 0)
             self.assertEqual(host.close(), witness)
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], PermissionError)
@@ -304,7 +305,7 @@ class ActualNativeHostTests(unittest.TestCase):
             destination, _ = lease(spec, "owned-null-http-consumer", "output-0-epoch")
             received = []
             result = StreamReceiver(incoming).receive(stream.resource,
-                     lambda b: destination.accept(b, received.append), check_lease=destination.check,
+                     received.append, accept_block=destination.accept, check_lease=destination.check,
                      block_factory=LeasedBlock)
             self.assertEqual((result.blocks, result.frames), (1, 2))
             self.assertEqual(struct.unpack("<4d", received[0].pcm), (.125, -.5, .25, -.125))
@@ -328,7 +329,7 @@ class ActualNativeHostTests(unittest.TestCase):
             def native_sink(received):
                 processed.append(host.process({1: original[1], 2: received},
                                                now_ns=1_000_000, deadline_ns=2_000_000)[0])
-            StreamReceiver(incoming).receive(stream.resource, lambda b: sources[2].accept(b, native_sink),
+            StreamReceiver(incoming).receive(stream.resource, native_sink, accept_block=sources[2].accept,
                          check_lease=sources[2].check, block_factory=LeasedBlock)
             target = replace(outputs[0].spec, codec="raw-s24-le")
             evidence = convert_processed(processed[0], target, consent=True, rounding="nearest-ties-even")

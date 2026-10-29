@@ -47,7 +47,7 @@ class StopWitness:
     instance_id: int
     generation: int
     revision: int
-    completed_frames: int
+    committed_frames: int
 
 
 def convert_processed(block, target_spec, *, consent=False, rounding):
@@ -58,7 +58,7 @@ def convert_processed(block, target_spec, *, consent=False, rounding):
     """
     if consent is not True:
         raise PermissionError("explicit destination-local integer conversion consent required")
-    if (type(block) is not LeasedBlock or block.spec.codec != "raw-f64-le"
+    if (type(block) is not LeasedBlock or type(target_spec) is not Spec or block.spec.codec != "raw-f64-le"
             or target_spec.codec not in {"raw-s16-le", "raw-s24-le"}
             or target_spec != replace(block.spec, codec=target_spec.codec)
             or rounding != "nearest-ties-even"):

@@ -3,6 +3,7 @@ import unittest
 
 from mixyard_interop import Endpoint, Grant, Session
 from mixyard_interop.control import ManagementScope, RuntimeRegistry, Suggestion
+from mixyard_interop.runtime import RuntimeLease
 from test_runtime import fixture
 
 
@@ -78,6 +79,32 @@ class ControlBoundaryTests(unittest.TestCase):
             self.registry.attach(selection, lease, session)
         snapshot = self.registry.snapshot(dataclasses.replace(self.scope, revision=2))
         self.assertTrue(all(not r["available"] for c in snapshot["capabilities"] for r in c["roles"]))
+
+    def test_owner_callback_revocation_or_config_switch_cannot_start_worker(self):
+        for action in ("revoke", "configure"):
+            with self.subTest(action=action):
+                registry = RuntimeRegistry("device-B", "authority-B")
+                registry.add_suggestion(self.suggestion)
+                spec, binding, _, _ = fixture()
+                holder, workers = {}, []
+                def owner_check():
+                    if holder.get("armed"):
+                        if action == "revoke":
+                            holder["activation"].revoke()
+                        else:
+                            registry.select(dataclasses.replace(self.scope, revision=2),
+                                            "owned-peer", "advertise")
+                    return binding
+                lease = RuntimeLease(spec, observed_id=binding.observed_id, generation=7,
+                    revision=3, source_epoch=binding.source_epoch, clock=binding.clock_evidence,
+                    owner_check=owner_check, consent=True)
+                selected = registry.select(self.scope, "owned-peer", "live-send", spec)
+                session = Session("source", [Grant("live-send", self.endpoint, "receiver", spec)], consent=True)
+                activation = registry.attach(selected, lease, session)
+                holder.update(activation=activation, armed=True)
+                with self.assertRaises(PermissionError):
+                    activation.invoke(workers.append)
+                self.assertEqual(workers, [])
 
     def test_batch_both_directions_and_invalid_batch_is_atomic(self):
         spec, _, _, _ = fixture()

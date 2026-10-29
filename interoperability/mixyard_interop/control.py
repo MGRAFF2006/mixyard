@@ -72,6 +72,12 @@ class MediaActivation:
             raise PermissionError("interop activation revoked")
         self._registry._current_selection(self.selection)
         self.lease.check()
+        # The owner callback can revoke this activation or replace settings.
+        # Recheck both after it returns, before the last directional grant check.
+        if not self._active:
+            raise PermissionError("interop activation revoked during owner observation")
+        self._registry._current_selection(self.selection)
+        self.lease.check_liveness()
         self.session.require(self.selection.role, self.selection.suggestion.endpoint, self.selection.spec)
 
     def invoke(self, worker):
@@ -146,6 +152,7 @@ class RuntimeRegistry:
                 capabilities.append({"protocol": protocol, "roles": states,
                                      "evidence": "owned-loopback", "nativeAvailable": False,
                                      "physicalQualified": False})
+            self._authorize(scope, "view")
             return {"deviceId": self._device_id, "authorityId": self._authority_id,
                     "revision": self._revision, "capabilities": capabilities,
                     "suggestions": [{"suggestionId": s.suggestion_id, "protocol": s.protocol,
