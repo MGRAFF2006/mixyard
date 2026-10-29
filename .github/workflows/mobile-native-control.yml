@@ -1,0 +1,80 @@
+name: Production mobile native control
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['apps/mobile/**', 'verification/mobile-native/**', 'apps/web/src/dsp-json.ts', '.github/workflows/mobile-native-control.yml']
+  push:
+    branches: [main]
+    paths: ['apps/mobile/**', 'verification/mobile-native/**', '.github/workflows/mobile-native-control.yml']
+permissions:
+  contents: read
+concurrency:
+  group: native-mobile-control-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  kotlin-production-tls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      GRADLE_USER_HOME: ${{ runner.temp }}/native-control-gradle
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: 812eee1479702635dc51994dc795ca9f8a655351
+          path: .qualification-control
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.1'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile unchanged shipping Kotlin client with only vault boundary double
+        shell: bash
+        run: |
+          mkdir -p verification/mobile-native/kotlin/build/production
+          cp apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt verification/mobile-native/kotlin/build/production/
+          cp apps/mobile/android/core/src/main/kotlin/org/mixyard/mobile/Endpoint.kt verification/mobile-native/kotlin/build/production/
+          sha256sum apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt verification/mobile-native/kotlin/build/production/PinnedControl.kt
+          gradle --no-daemon -p verification/mobile-native/kotlin installDist
+      - name: Build pinned production control service
+        run: cargo build --locked --manifest-path .qualification-control/control/Cargo.toml --bin mixyard-control --jobs 2
+      - name: Actual Kotlin JSSE and shipping pin/dispatch/serializer against actual TLS services
+        env:
+          MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/.qualification-control/control/target/debug/mixyard-control
+          MIXYARD_NATIVE_COMMAND: '["bash","verification/mobile-native/run-jvm.sh"]'
+        run: node --test verification/mobile-native/control.test.ts
+      - if: always()
+        run: echo 'Production Kotlin client + real JSSE PKI/pin/HTTP. JVM vault platform double, not Android Keystore or physical device qualification. PCM/audio roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
+  swift-production-tls:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: 812eee1479702635dc51994dc795ca9f8a655351
+          path: .qualification-control
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.1'
+      - name: Compile shipping Swift client and platform test driver
+        run: bash verification/mobile-native/build-swift.sh
+      - name: Build pinned production control service
+        run: cargo build --locked --manifest-path .qualification-control/control/Cargo.toml --bin mixyard-control --jobs 2
+      - name: Actual Swift URLSession and shipping Security pin/dispatch/serializer against actual TLS services
+        env:
+          MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/.qualification-control/control/target/debug/mixyard-control
+          MIXYARD_NATIVE_COMMAND: '["python3","verification/mobile-native/run-swift.py"]'
+        run: node --test verification/mobile-native/control.test.ts
+      - if: always()
+        run: echo 'Production Swift client + real URLSession/Security PKI/pin/HTTP in owned hosted keychain trust. Vault platform double, not iPhone Keychain/device-lock or physical qualification. PCM/audio roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
