@@ -177,9 +177,11 @@ access, before writing any key bytes. Existing objects must have that same priva
 owner/DACL, the expected type, no reparse point and (for files) exactly one link.
 Every ancestor's owner and replacement/ACL-changing permissions must belong to
 the current SID, LocalSystem, Administrators or TrustedInstaller; unsafe or
-unsupported ACLs fail closed. A parent may permit reading or unrelated child
-creation, but cannot grant an untrusted principal deletion, child deletion or
-owner/DACL changes. No existing ACL is repaired or broadened automatically.
+unsupported ACLs fail closed. A parent may permit reading or unrelated child-directory
+creation, but cannot grant an untrusted principal deletion, child deletion,
+owner/DACL changes or rights that could install a reparse point (data, attribute
+or extended-attribute writes). The volume root permits unrelated child creation
+because it cannot become a reparse directory. No existing ACL is repaired or broadened automatically.
 
 The Windows store resolves the drive to its volume GUID and holds directory
 handles without delete sharing for every ancestor throughout ownership. It

@@ -225,8 +225,8 @@ fn different_owner_or_unprotected_dacl_is_not_private() {
                 wide(&state).as_ptr(),
                 SE_FILE_OBJECT,
                 DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
-                ptr::null(),
-                ptr::null(),
+                ptr::null_mut(),
+                ptr::null_mut(),
                 dacl,
                 ptr::null()
             ),
@@ -339,5 +339,22 @@ fn unsupported_paths_are_rejected_without_creating_state() {
             IdentityStore::open(Path::new(path), Some("127.0.0.1".parse().unwrap())).is_err(),
             "{path}"
         );
+    }
+}
+
+#[test]
+fn reparse_mutation_rights_without_delete_rights_fail_closed() {
+    let fixture = Fixture::new();
+    for rights in [FILE_WRITE_DATA, FILE_WRITE_ATTRIBUTES, FILE_WRITE_EA] {
+        acl(
+            &fixture.0,
+            &format!("D:P(A;;FA;;;{})(A;;0x{rights:08x};;;WD)", sid().unwrap()),
+            false,
+        );
+        assert!(
+            IdentityStore::open(&fixture.identity(), Some("127.0.0.1".parse().unwrap())).is_err()
+        );
+        assert!(!fixture.identity().exists());
+        restore(&fixture.0);
     }
 }

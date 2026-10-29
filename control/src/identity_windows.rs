@@ -19,7 +19,7 @@ use windows_sys::Win32::{
     Security::{Authorization::*, *},
     Storage::FileSystem::*,
     System::{
-        SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE},
+        SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE, FILE_PERSISTENT_ACLS},
         Threading::*,
     },
 };
@@ -201,7 +201,7 @@ impl TrustedAncestorSids {
     }
 }
 
-fn ancestor_acl(file: HANDLE, trusted: &TrustedAncestorSids) -> Result<()> {
+fn ancestor_acl(file: HANDLE, trusted: &TrustedAncestorSids, volume_root: bool) -> Result<()> {
     unsafe {
         let mut owner = ptr::null_mut();
         let mut acl = ptr::null_mut();
@@ -264,9 +264,15 @@ fn ancestor_acl(file: HANDLE, trusted: &TrustedAncestorSids) -> Result<()> {
             }
             let mut mask = ace.Mask;
             MapGenericMask(&mut mask, &mapping);
-            // Creating an unrelated child or reading a parent cannot replace
-            // the protected leaf. Delete, delete-child and owner/ACL changes can.
-            if mask & (DELETE | FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER) != 0
+            // WRITE_DATA/WRITE_ATTRIBUTES can set a reparse point on an empty
+            // parent during admission. Fail closed even if replacement rights
+            // are absent. A volume root cannot become a reparse directory.
+            let reparse_rights = if volume_root {
+                0
+            } else {
+                FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA
+            };
+            if mask & (DELETE | FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER | reparse_rights) != 0
                 && !trusted.contains(trustee)
             {
                 return Err(unsafe_store("windows-identity-state-insecure-ancestor-acl"));
@@ -341,7 +347,7 @@ fn pin_ancestors(path: &Path) -> Result<Vec<Handle>> {
         )?;
         information(directory.raw(), true)?;
         local_ntfs(directory.raw())?;
-        ancestor_acl(directory.raw(), &trusted)?;
+        ancestor_acl(directory.raw(), &trusted, pins.is_empty())?;
         pins.push(directory);
     }
     if pins.is_empty() {
@@ -532,9 +538,9 @@ impl Store {
     }
     pub(super) fn check(&self) -> Result<()> {
         let trusted = TrustedAncestorSids::new()?;
-        for directory in &self.pins {
+        for (index, directory) in self.pins.iter().enumerate() {
             information(directory.raw(), true)?;
-            ancestor_acl(directory.raw(), &trusted)?;
+            ancestor_acl(directory.raw(), &trusted, index == 0)?;
         }
         private_acl(self.pins.last().unwrap().raw())?;
         information(self.lock.raw(), false)?;
