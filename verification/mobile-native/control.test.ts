@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:https'
 import { createPrivateKey } from 'node:crypto'
 import { join, resolve } from 'node:path'
@@ -145,7 +145,9 @@ function envelope(reply: NativeReply, status = 200) {
 }
 
 test('shipping native pinned control client against owned production TLS services', { timeout: 180_000 }, async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'mixyard-native-control-'))
+  // Resolve only the trusted existing OS temp base (macOS /var is an alias).
+  // Production state input stays literal and must still reject symlink ancestry.
+  const directory = mkdtempSync(join(realpathSync(tmpdir()), 'mixyard-native-control-'))
   const devices: Device[] = []; let native: Native | undefined
   let redirect: ReturnType<typeof createServer> | undefined
   try {
