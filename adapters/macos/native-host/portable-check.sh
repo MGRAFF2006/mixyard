@@ -33,7 +33,7 @@ measure
 g++ "${flags[@]}" -c portable_selfcheck.cpp -o "$scratch/selfcheck.o"
 measure
 g++ -s -Wl,--gc-sections "$scratch/host_link.o" "$scratch/selfcheck.o" "$host_library" \
-  -pthread -ldl -lm -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free -o "$scratch/selfcheck"
+  -pthread -ldl -lm -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free,--wrap=mx_host_revoke -o "$scratch/selfcheck"
 measure
 "$scratch/selfcheck" ../../engine/fixtures/owned-common-clock.json
 echo "Measured generated artifact peak ${peak} KiB; read-only host library unchanged; private artifacts removed."

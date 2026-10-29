@@ -30,18 +30,18 @@ frameworks=(-framework AudioUnit -framework CoreAudio -framework CoreFoundation 
 xcrun --sdk macosx clang++ --version
 # Real production symbols are linked but never executed. No production test
 # override exists, and physical clock admission always rejects.
-for file in host_link.cpp capture.mm ../output-only/output_only.mm; do
+for file in host_link.cpp capture.mm native_output.mm ../output-only/output_only.mm; do
   name=$(basename "$file"); name=${name%.*}
   xcrun --sdk macosx clang++ "${flags[@]}" -c "$file" -o "$scratch/$name.o"
 done
-xcrun --sdk macosx ar rcs "$scratch/libmixyard-macos-host.a" "$scratch/host_link.o" "$scratch/capture.o" "$scratch/output_only.o"
+xcrun --sdk macosx ar rcs "$scratch/libmixyard-macos-host.a" "$scratch/host_link.o" "$scratch/capture.o" "$scratch/native_output.o" "$scratch/output_only.o"
 xcrun --sdk macosx clang++ "${flags[@]}" link_check.cpp \
   -Wl,-force_load,"$scratch/libmixyard-macos-host.a" "$host_library" "${frameworks[@]}" -o "$scratch/link-check"
-rm -- "$scratch/host_link.o" "$scratch/capture.o" "$scratch/output_only.o" "$scratch/libmixyard-macos-host.a" "$scratch/link-check"
+rm -- "$scratch/host_link.o" "$scratch/capture.o" "$scratch/native_output.o" "$scratch/output_only.o" "$scratch/libmixyard-macos-host.a" "$scratch/link-check"
 # Actual Rust policy/mixer/DSP/clock; only native audio SDK functions are replaced.
 xcrun --sdk macosx clang++ "${flags[@]}" -DMIXYARD_NATIVE_HOST_TEST -DMIXYARD_OUTPUT_API_TEST \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
-  host_link.cpp capture.mm ../output-only/output_only.mm selfcheck.mm \
+  host_link.cpp capture.mm native_output.mm ../output-only/output_only.mm selfcheck.mm \
   "$host_library" "${frameworks[@]}" -o "$scratch/selfcheck"
 used=$(du -sk "$scratch" | awk '{print $1}')
 if (( used > 16 * 1024 )); then

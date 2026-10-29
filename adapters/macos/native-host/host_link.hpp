@@ -29,8 +29,19 @@ struct Port {
     std::vector<std::string> mapping;
 };
 
+enum class StepResult { Processed, SourceLoss, Cancelled, HostFailure };
+constexpr const char* stepResultName(StepResult result) noexcept {
+    switch (result) {
+    case StepResult::Processed: return "processed";
+    case StepResult::SourceLoss: return "source_loss";
+    case StepResult::Cancelled: return "cancelled";
+    case StepResult::HostFailure: return "host_failure";
+    }
+    return "host_failure";
+}
+
 // Owns the real Rust host; never supplies an alternate mixer. All construction,
-// info JSON parsing and destruction occur on a quiescent control owner. step()
+// immutable port metadata checks and destruction occur on a quiescent control owner. step()
 // has one exclusive engine owner; source and destination callbacks use SPSC.
 class HostLink {
     struct Impl;
@@ -42,9 +53,12 @@ public:
     ~HostLink();
     HostLink(const HostLink&) = delete;
     HostLink& operator=(const HostLink&) = delete;
-    // No allocation, locks, JSON or I/O. A bad source becomes a missing input;
-    // a lost/slow consumer is isolated to its own output queue.
-    bool step(uint64_t nowNs, mx_stamp engineStamp, uint32_t frames) noexcept;
+    // No allocation, locks, JSON or I/O. Any absent/failed selected native source
+    // returns source_loss and terminally revokes the entire generation. This is
+    // a notification, NOT native-consumer quiescence/teardown acknowledgement.
+    // Expected scheduled silence must arrive as fresh valid PCM, not absence.
+    // Destination-only DSP/queue failures remain isolated to that consumer.
+    StepResult step(uint64_t nowNs, mx_stamp engineStamp, uint32_t frames) noexcept;
     // Concurrent cancellation only revokes queues/sets an atomic flag. Rust
     // host revocation/destruction stays with its exclusive quiescent owner.
     void cancel() noexcept;

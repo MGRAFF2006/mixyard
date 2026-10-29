@@ -23,25 +23,50 @@ Each output has its own `AdaptedEngine` SPSC and output-only `Worker::open(actua
 queue)`. Native ordered labels are `CA:1`, `CA:2`; the explicit engine mapping is
 `FL`, `FR`. Float64 stays Float64 except at an explicitly Float32 destination.
 Float32 overflow fails that sink; it does not clip or change sibling outputs.
-All constructors/info JSON parsing allocate on the control owner. Native capture
+All constructors and immutable JSON metadata comparisons allocate on the control owner. Native capture
 and output callbacks allocate nothing, acquire no locks and perform no I/O. The
 exclusive engine owner borrows source blocks through `mx_host_process`, copies
 borrowed Float64 output to each consumer's bounded queue and retains no host PCM.
 
-`step` currently requires source block lengths/frame positions to match the
-engine period. A missing, expired or malformed source becomes permanent silence
-for that generation. A source revoked during processing cancels the entire
-in-flight generation before outputs publish. A stopped/overflowing/removed sink
-revokes only its queue. `cancel` atomically revokes all transport queues; Rust host
-revoke/destroy remain with the exclusive quiescent owner. Consent/authority
-revocation must first cancel `HostLink` and revoke the associated output workers,
-then stop capture; stopping a source alone is source loss and cannot revoke
-already queued derived PCM. Close source/sink workers
-and quiesce the engine before destroying queue/host storage. A failed native stop,
-destroy or listener removal retains ownership and requires `close` retry; dropping
-an object with live native ownership deliberately terminates rather than freeing
-callback storage. Restart requires fresh queues/host admission and generation.
+`step` requires source block lengths/frame positions to match the engine period.
+Any selected native source that is missing, expired, malformed, revoked or on the
+wrong timeline returns typed `StepResult::SourceLoss` (`source_loss`). The exclusive
+engine owner immediately revokes **all** source/output queues and calls
+`mx_host_revoke`. This conservatively stops the whole generation, including healthy
+call-return and unrelated outputs. It rejects late source publication and future
+native render reads of retained queued or partially consumed PCM. There is no
+healthy-source continuation or implicit source resume. Fresh scheduled silence is
+valid timestamped zero PCM; a missing native block is not ordinary scheduled
+silence or network packet loss.
 
+Destination-only DSP failure, Float32 conversion overflow, queue overflow, removal
+or close still revokes only that destination. No source loss is inferred from an
+inactive output. Contributor/epoch-aware per-output continuation is separately
+tracked in [#104](https://github.com/MGRAFF2006/mixyard/issues/104), under #51 and
+prerequisite #103; it is not implemented here. It must qualify canonical contributor
+unions, native epochs and affected queue/cursor/DSP retirement while preserving
+unaffected outputs, without another policy graph.
+
+`source_loss` and atomic queue revocation are notifications, **not teardown
+completion**. The control owner must stop its engine scheduler and finish the
+exclusive graph owner before calling `finishGeneration`. The helper destroys the
+revoked Rust host, closes the actual owned `Capture` and `NativeOutput` workers,
+and returns `Pending` if any native stop/dispose/listener close failed. It retains
+all transport storage for retry. `NativeOutput` wraps the existing output-only
+worker and retires its private renderer context only after successful native close.
+Once every consumer/capture has closed, the helper retires all contexts and scrubs
+private inline SPSC storage before freeing it; only then does it return `Complete`.
+Any external producers/readers of additional source queues must already be
+quiescent. No live queue/cursor is cleared, no callback acquires an owner lock,
+and no storage is freed while a native close remains pending.
+
+Consent/authority revocation must first call `HostLink::cancel` and revoke/close
+native workers; do not wait for the next source-loss observation to remove
+permission. Already submitted hardware buffers have a separate commit boundary;
+this API does not claim to retract them. Restart requires completed quiescent
+teardown, fresh queues/host, a fresh generation and native admission. Dropping an
+object with live native ownership deliberately terminates rather than freeing its
+callback storage.
 **Physical tap and AUHAL sample timelines remain unqualified.** `Timeline::physical`
 always rejects before native acquisition. Equal nominal rates, mach host time,
 and RTT do not prove a common sample clock. Production has no injected-clock
@@ -55,19 +80,26 @@ doubles and one explicitly injected timestamp/sample timeline. The fixture remai
 `evidence=simulated`; its source/sink IDs are injected observations and prove no
 physical device or application identity. The PCM oracle checks canonical private
 source exclusion, call-return routing, destination-only DSP, Float32/64 source
-precision, explicit sink conversion, independent consumer close, malformed source
-silence, cancel and source SDK failure cleanup. No AudioUnit, tap, device, TCC,
+precision, explicit sink conversion, independent consumer close, terminal source
+loss, queued/partial nonzero DSP PCM discard, pending native-stop retries, final
+queue scrubbing and source SDK failure cleanup. Output callback timestamps use an
+explicit future 100 ms mach-time schedule within the admitted PCM deadline. No AudioUnit, tap, device, TCC,
 personal microphone/speaker, default endpoint or service is activated by tests.
 
 The production portable `HostLink` and actual static Rust library pass 2048
-SPSC/mixer/DSP/consumer blocks on Linux, including Float32/64 sources and sinks,
-stalled-consumer isolation, source-loss silence, identity/order mismatch and
-stale/cancel paths with zero malloc/calloc/realloc/free operations during processing.
-`portable-check.sh READ_ONLY_HOST_STATIC_LIBRARY` reproduces this check without
-building Rust or invoking Apple APIs. Measured generated artifacts peaked at
-2324 KiB and were removed; the parent's library remained read-only. This is
-transport/engine evidence only.
-
+steady-state SPSC/mixer/DSP/consumer blocks on Linux, plus empty/revoked-source
+regressions with nonzero two-frame output delay PCM held wholly queued and half
+consumed in the production native `Renderer`. Both cases reject retained PCM after
+typed whole-generation loss, and instrumentation observes the graph owner's actual
+`mx_host_revoke` call. Additional tests cover destination-only DSP overflow,
+identity/order mismatch, stale/cancel, fresh valid zero PCM and fresh-generation
+restart after teardown. All processing/loss/failure paths make zero
+malloc/calloc/realloc/free calls. Quiescent queue destruction verifies the private
+storage is zero before deallocation. `portable-check.sh READ_ONLY_HOST_STATIC_LIBRARY`
+reproduces these checks without building Rust or invoking Apple APIs. The generated
+artifact peak is 2420 KiB and artifacts are removed; the parent's pinned library
+remains read-only. The queued-DSP source-loss regression was red before this repair
+and passes after it. These are transport/engine results, not native SDK evidence.
 Apple SDK compilation and execution remain pending the hosted check. Physical capture/output,
 permissions, common-clock adaptation, fidelity/latency and native app identities
 remain unqualified even after the injected test passes.

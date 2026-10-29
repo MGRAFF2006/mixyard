@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "capture.hpp"
 #include "capture_api.hpp"
+#include "owned_queue.hpp"
 #include <Block.h>
 #include <algorithm>
 #include <unistd.h>
@@ -22,7 +23,7 @@ struct Capture::Impl {
     AudioDeviceIOProcID io = nullptr;
     bool startAttempted = false, closed = false;
     std::string uid;
-    std::unique_ptr<w::Queue> queue;
+    OwnedQueue queue;
     std::unique_ptr<w::CaptureIngress> ingress;
     dispatch_queue_t control = nullptr;
     struct State { Impl* owner; };
@@ -123,7 +124,7 @@ struct Capture::Impl {
             (actual.mBitsPerChannel != 32 && actual.mBitsPerChannel != 64))
             throw std::invalid_argument("Unsupported exact stereo tap format");
         uid = tapUid();
-        queue = std::make_unique<w::Queue>(w::Format{static_cast<uint32_t>(actual.mSampleRate), {"FL", "FR"},
+        queue = ownQueue(w::Format{static_cast<uint32_t>(actual.mSampleRate), {"FL", "FR"},
             actual.mBitsPerChannel == 64 ? w::Precision::Float64 : w::Precision::Float32}, binding, timeline.id(),
             w::Provenance{w::Origin::ProcessTap, uid});
         ingress = std::make_unique<w::CaptureIngress>(*queue, actual, 1000000000);

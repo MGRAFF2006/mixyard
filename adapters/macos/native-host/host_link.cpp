@@ -62,48 +62,58 @@ struct HostLink::Impl {
     const Timeline timeline;
     const std::vector<Port> sources, outputs;
     std::array<mx_input, portLimit> inputs{};
-    std::array<bool, portLimit> borrowed{};
     alignas(8) std::array<uint8_t, w::maxBytes> converted{};
     std::atomic<uint32_t> cancelled{0};
     bool hostRevoked = false;
+    StepResult stopReason = StepResult::Cancelled;
     explicit Impl(Timeline t, std::vector<Port> in, std::vector<Port> out)
         : timeline(t), sources(std::move(in)), outputs(std::move(out)) {}
-    ~Impl() { if (host) { mx_host_revoke(host); mx_host_destroy(host); } }
+    ~Impl() {
+        if (!host) return;
+        if (!hostRevoked) mx_host_revoke(host);
+        mx_host_destroy(host);
+    }
     void cancel() noexcept {
         cancelled.store(1, std::memory_order_release);
         for (const auto& port : sources) port.queue->revoke();
         for (const auto& port : outputs) port.queue->revoke();
     }
-    bool step(uint64_t now, mx_stamp engine, uint32_t frames) noexcept {
-        if (cancelled.load(std::memory_order_acquire)) {
-            if (!hostRevoked) { mx_host_revoke(host); hostRevoked = true; }
-            return false;
+    StepResult revokeOwned(StepResult reason) noexcept {
+        cancel();
+        if (!hostRevoked) {
+            stopReason = reason;
+            mx_host_revoke(host);
+            hostRevoked = true;
         }
-        if (!frames || frames > w::maxFrames || engine.clock_id != timeline.id()) { cancel(); return false; }
+        return stopReason;
+    }
+    StepResult step(uint64_t now, mx_stamp engine, uint32_t frames) noexcept {
+        if (cancelled.load(std::memory_order_acquire)) return revokeOwned(stopReason);
+        if (!frames || frames > w::maxFrames || engine.clock_id != timeline.id()) return revokeOwned(StepResult::HostFailure);
         for (size_t i = 0; i < sources.size(); ++i) {
             auto& q = *sources[i].queue;
             const auto& f = q.format();
             const auto* b = q.front(now);
-            borrowed[i] = b != nullptr;
-            inputs[i] = {nullptr, 0, f.precision == w::Precision::Float64 ? 2u : 1u,
-                         f.sampleRateHz, static_cast<uint32_t>(f.channels.size()), engine};
-            if (!b) continue;
-            if (b->frames != frames || b->stamp.firstFrame != engine.first_frame ||
-                b->stamp.clockId != engine.clock_id) { q.fail(w::Fault::Clock); continue; }
-            if (q.fault() == w::Fault::None) {
-                inputs[i].bytes = b->pcm.data();
-                inputs[i].byte_count = frames * f.frameBytes();
-                inputs[i].stamp = stamp(b->stamp);
+            // A missing native source is a terminal availability/privacy loss,
+            // not scheduled silence. Native queues/cursors may retain earlier
+            // derived PCM even after a Rust history reset: retire all authority.
+            if (!b) return revokeOwned(StepResult::SourceLoss);
+            if (b->frames != frames || b->stamp.firstFrame != engine.first_frame || b->stamp.clockId != engine.clock_id) {
+                q.fail(w::Fault::Clock);
+                return revokeOwned(StepResult::SourceLoss);
             }
+            if (q.fault() != w::Fault::None) return revokeOwned(StepResult::SourceLoss);
+            inputs[i] = {b->pcm.data(), frames * f.frameBytes(), f.precision == w::Precision::Float64 ? MX_F64LE : MX_F32LE,
+                         f.sampleRateHz, static_cast<uint32_t>(f.channels.size()), stamp(b->stamp)};
         }
         const auto result = mx_host_process(host, now, engine, frames, inputs.data(), sources.size());
-        for (size_t i = 0; i < sources.size(); ++i) if (borrowed[i]) sources[i].queue->release();
-        if (result != 0) { cancel(); return false; }
+        for (const auto& source : sources) source.queue->release();
+        if (result != MX_OK) return revokeOwned(StepResult::HostFailure);
         // A source revoked while Rust borrowed its block cannot authorize the
         // just-computed outputs. Retain no PCM from that in-flight generation.
         for (size_t i = 0; i < sources.size(); ++i)
-            if (inputs[i].bytes && sources[i].queue->fault() != w::Fault::None) { cancel(); return false; }
-        if (cancelled.load(std::memory_order_acquire)) return false;
+            if (sources[i].queue->fault() != w::Fault::None) return revokeOwned(StepResult::SourceLoss);
+        if (cancelled.load(std::memory_order_acquire)) return revokeOwned(stopReason);
         for (size_t i = 0; i < outputs.size(); ++i) {
             auto& q = *outputs[i].queue;
             if (q.fault() != w::Fault::None) continue;
@@ -129,7 +139,10 @@ struct HostLink::Impl {
                                   engine.first_frame, engine.captured_ns, engine.deadline_ns};
             q.push(now, output, frames, buffers, sizes, 1, false);
         }
-        return !cancelled.load(std::memory_order_acquire);
+        for (const auto& source : sources)
+            if (source.queue->fault() != w::Fault::None) return revokeOwned(StepResult::SourceLoss);
+        if (cancelled.load(std::memory_order_acquire)) return revokeOwned(stopReason);
+        return StepResult::Processed;
     }
 };
 HostLink::HostLink(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -166,6 +179,6 @@ std::unique_ptr<HostLink> HostLink::create(const std::string& request, Timeline 
         validatePort(impl->host, i, mx_host_output_info, impl->outputs[i], false);
     return std::unique_ptr<HostLink>(new HostLink(std::move(impl)));
 }
-bool HostLink::step(uint64_t now, mx_stamp s, uint32_t frames) noexcept { return impl_->step(now, s, frames); }
+StepResult HostLink::step(uint64_t now, mx_stamp s, uint32_t frames) noexcept { return impl_->step(now, s, frames); }
 void HostLink::cancel() noexcept { impl_->cancel(); }
 } // namespace mixyard::macos
