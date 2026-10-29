@@ -1,5 +1,9 @@
 # Windows native probe (first batch)
 
+For the separate read-only schema 2 runtime inventory executable, see
+[native inventory helpers](../../docs/platform-native-inventory.md). The capture
+probe below retains its existing v1 envelope and explicit capture commands.
+
 This independent C++17 probe implements MMDevice discovery and explicit shared-mode
 WASAPI capture. It does not implement virtual microphones, per-bus mixing, media
 controls, or recovery. Its snapshot always reports `virtualInputs`,
@@ -14,7 +18,7 @@ Use an x64 Developer PowerShell, from the repository root:
 
 ```powershell
 cmake -S adapters/windows -B adapters/windows/build -A x64
-cmake --build adapters/windows/build --config Release --target mixyard-windows-probe mixyard-windows-model-check
+cmake --build adapters/windows/build --config Release --target mixyard-windows-probe mixyard-windows-model-check mixyard-inventory-check
 ctest --test-dir adapters/windows/build -C Release --output-on-failure
 $probe = '.\adapters\windows\build\Release\mixyard-windows-probe.exe'
 & $probe snapshot
