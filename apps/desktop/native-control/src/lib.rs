@@ -383,8 +383,12 @@ impl<V: Vault> Paired<V> {
         }
         Ok(())
     }
-    pub fn open(&self, id: &str) -> Result<OpenReply, String> {
+    pub fn open(&self, id: &str, credential_id: &str) -> Result<OpenReply, String> {
+        hex_id(credential_id)?;
         let _admission = self.admit()?;
+        if self.stored(id)?.target.credential_id != credential_id {
+            return Err("Saved controller changed; select its new target. Old workspace authority cannot be rebound.".into());
+        }
         let host = self.host(id)?;
         let generation = host.generation.fetch_add(1, Ordering::SeqCst) + 1;
         *host.session.lock().map_err(|_| "Session unavailable")? = None;
@@ -392,6 +396,9 @@ impl<V: Vault> Paired<V> {
         self.fresh(&host, generation)?;
         let result = (|| {
             let record = self.stored(id)?;
+            if record.target.credential_id != credential_id {
+                return Err("Saved controller changed. This cached workspace cannot acquire a newly paired credential; select its new target.".into());
+            }
             let reply = self.send(&record, "/control/session", "{}")?;
             if reply.status == 200 {
                 let session: Session = decode(&reply.body)?;

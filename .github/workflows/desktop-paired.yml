@@ -75,6 +75,21 @@ jobs:
           cargo build --locked --manifest-path verification/desktop-paired/Cargo.toml
       - name: Build actual frozen control CLI separately
         run: cargo build --locked --manifest-path qualification-service/control/Cargo.toml --bin mixyard-control
+      - uses: pnpm/action-setup@v6
+        if: runner.os == 'Linux'
+        with:
+          version: '11.10.0'
+          run_install: false
+      - uses: actions/setup-node@v7
+        if: runner.os == 'Linux'
+        with:
+          node-version: '24.13.1'
+      - name: Hosted isolated rendered onboarding prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          pnpm --dir apps/desktop install --frozen-lockfile
+          pnpm --dir apps/web install --frozen-lockfile
+          pnpm --dir apps/web exec playwright install --with-deps chromium
       - name: Production native code to actual owned TLS service
         env:
           # An absent isolated bus proves Linux platform-vault failure rather than using any runner session.
@@ -84,7 +99,7 @@ jobs:
           mkdir -p apps/web/dist
           python -c "from pathlib import Path; Path('apps/web/dist/index.html').write_text('<!doctype html><title>Owned control API fixture only</title>')"
           extra=()
-          if [[ '${{ runner.os }}' == 'Linux' ]]; then extra+=(--expect-no-secret-service); fi
+          if [[ '${{ runner.os }}' == 'Linux' ]]; then extra+=(--expect-no-secret-service --ui-script verification/desktop-paired/ui.mjs); fi
           python -B verification/desktop-paired/qualify.py \
             --harness "verification/desktop-paired/target/debug/mixyard-desktop-paired-qualification${{ matrix.suffix }}" \
             --service "qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}" \

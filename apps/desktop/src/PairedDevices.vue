@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { nativeInvoke, inDesktopShell } from './bridge.ts'
 import type { PairedTarget } from './paired.ts'
-const props = defineProps<{ targets: readonly PairedTarget[]; canReload: () => boolean }>()
+const props = defineProps<{ targets: readonly PairedTarget[]; canRemove: (id: string) => boolean }>()
 const emit = defineEmits<{ changed: []; disconnected: [id: string] }>()
 const endpoint = ref(''), displayName = ref(''), invitation = ref(''), trusted = ref(false)
 const busy = ref(false), notice = ref('')
@@ -19,20 +19,20 @@ async function pair() {
   busy.value = true; notice.value = ''
   try {
     await nativeInvoke('paired_pair', { endpoint: endpoint.value, displayName: displayName.value, invitation: invitation.value })
-    notice.value = 'Paired credential saved in the platform vault. Refresh the target list after saving or exporting any unsaved drafts.'
-    if (props.canReload()) emit('changed')
+    notice.value = 'Paired credential saved in the platform vault. Existing device drafts stay in their own cached workspaces.'
+    emit('changed')
     endpoint.value = ''; displayName.value = ''
   } catch (error) { notice.value = String(error) }
   finally { invitation.value = ''; trusted.value = false; busy.value = false }
 }
 async function manage(target: PairedTarget, command: 'paired_disconnect' | 'paired_forget' | 'paired_revoke') {
   if (busy.value) return
-  if (command === 'paired_forget' && !props.canReload()) { notice.value = 'Save or export unsaved host drafts before removing a target.'; return }
+  if (command === 'paired_forget' && !props.canRemove(target.deviceId) && !window.confirm('This target has unsaved work. Export it first, or continue removing the native credential and retain a disconnected workspace for export. Continue?')) return
   if (command !== 'paired_disconnect' && !window.confirm(command === 'paired_revoke' ? `Revoke this desktop controller on ${target.displayName}? Other controllers keep their rights. A timeout needs reconciliation on the owning service.` : `Delete this app’s saved credential for ${target.displayName}? This does not revoke it on the server.`)) return
   busy.value = true; notice.value = ''
   emit('disconnected', target.deviceId)
   try {
-    await nativeInvoke(command, { targetId: target.deviceId })
+    await nativeInvoke(command, { targetId: target.deviceId, credentialId: target.credentialId })
     notice.value = command === 'paired_disconnect' ? 'Disconnected. Use Refresh in that device’s controls to open a fresh session.' : command === 'paired_forget' ? 'Native credential removed from this app.' : 'Controller revoked on the owning device. Its saved record remains removable here.'
     if (command === 'paired_forget') emit('changed')
   } catch (error) { notice.value = String(error) }
@@ -53,7 +53,7 @@ async function manage(target: PairedTarget, command: 'paired_disconnect' | 'pair
       <button :disabled="busy || !trusted || !inDesktopShell">Pair and save in secure vault</button>
     </form>
     <p role="status">{{ notice }}</p>
-    <button :disabled="busy || !canReload()" @click="emit('changed')">Refresh saved target list (requires saved/exported drafts)</button>
+    <button :disabled="busy" @click="emit('changed')">Refresh saved target list</button>
     <ul>
       <li v-for="device in targets" :key="device.deviceId">
         <strong>{{ device.displayName }}</strong> · {{ device.endpoint }} · Device {{ device.deviceId }} · Rights: {{ device.permissions.join(', ') }}

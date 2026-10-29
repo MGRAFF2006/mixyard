@@ -58,9 +58,8 @@ fn main() {
                 )
                 .map_err(|e| e.to_string()),
                 "list" => serde_json::to_value(client.list()?).map_err(|e| e.to_string()),
-                "open" => {
-                    serde_json::to_value(client.open(text("id")?)?).map_err(|e| e.to_string())
-                }
+                "open" => serde_json::to_value(client.open(text("id")?, text("credentialId")?)?)
+                    .map_err(|e| e.to_string()),
                 "request" => serde_json::to_value(client.request(
                     text("id")?,
                     value["generation"].as_u64().ok_or("Missing generation")?,

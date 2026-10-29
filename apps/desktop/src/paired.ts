@@ -29,7 +29,7 @@ export function pairedApi(invoke: Invoke, target: PairedTarget): Api {
     try {
       if (input === '/control/session') {
         if (init.body !== '{}') throw new Error('Session discovery requires an empty object.')
-        reply = await invoke<Reply>('paired_open', { targetId: target.deviceId })
+        reply = await invoke<Reply>('paired_open', { targetId: target.deviceId, credentialId: target.credentialId })
         if (!Number.isSafeInteger(reply.generation) || reply.generation! < 1) throw new Error('Invalid native session generation.')
         if (epoch !== lifecycle || init.signal?.aborted) {
           await invoke('paired_disconnect', { targetId: target.deviceId, expectedGeneration: reply.generation })

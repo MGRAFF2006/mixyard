@@ -16,26 +16,25 @@ const api = new Api(inDesktopShell ? desktopFetcher(nativeInvoke) : undefined)
 const paired = ref<PairedTarget[]>([])
 let targetApis: DeviceTarget[] = [{ id: 'local', displayName: 'This device · loopback service', api }]
 const targets = shallowRef<readonly DeviceTarget[]>(targetApis)
-const targetVersion = ref(0)
 let loadingTargets = false
 const ready = ref(!inDesktopShell)
-function canReload() { return !(consoleView.value?.hasUnsavedDrafts() ?? false) }
+const targetKey = (target: PairedTarget) => `paired:${target.deviceId}:${target.credentialId}`
+function canRemove(id: string) {
+  const target = paired.value.find(target => target.deviceId === id)
+  return !target || !(consoleView.value?.hasUnsavedDrafts(targetKey(target)) ?? false)
+}
 async function loadTargets() {
   if (loadingTargets) return
-  if (!canReload()) { notice.value = 'Save or export unsaved host drafts before refreshing saved targets.'; return }
   loadingTargets = true
   try {
     const saved = await nativeInvoke<PairedTarget[]>('paired_list')
-    // Vault IPC can wait for an unlock; edits made during that wait still belong to the current workspaces.
-    if (!canReload()) { notice.value = 'Saved devices loaded. Save or export new unsaved drafts before rebuilding the target list.'; return }
-    for (const target of targetApis) target.api.disconnect()
     paired.value = saved
-    targetApis = [{ id: 'local', displayName: 'This device · loopback service', api }, ...saved.map(target => ({ id: target.deviceId, displayName: target.displayName, api: pairedApi(nativeInvoke, target) }))]
-    targets.value = targetApis; targetVersion.value++
+    targetApis = [{ id: 'local', displayName: 'This device · loopback service', api }, ...saved.map(target => ({ id: targetKey(target), displayName: target.displayName, api: targetApis.find(old => old.id === targetKey(target))?.api ?? pairedApi(nativeInvoke, target) }))]
+    targets.value = targetApis
   } catch (error) { notice.value = `Saved paired devices unavailable: ${String(error)}` }
   finally { ready.value = true; loadingTargets = false }
 }
-function disconnectedTarget(id: string) { targetApis.find(target => target.id === id)?.api.disconnect('Disconnected through native device management; refresh to reconnect.') }
+function disconnectedTarget(id: string) { targetApis.find(target => target.id.startsWith(`paired:${id}:`))?.api.disconnect('Disconnected through native device management; refresh to reconnect.') }
 const consoleView = ref<InstanceType<typeof Console> | null>(null)
 const connection = ref(disconnected())
 const instance = ref('default')
@@ -111,8 +110,8 @@ onUnmounted(() => { mounted = false; generation++; clearTimeout(timer); for (con
     <p class="desktop-boundary">Window controls leave the independent runtime alone. Choose the local loopback service or an explicitly paired TLS device. Management targets are independent of audio destinations.</p>
     <p class="desktop-boundary">{{ trayCreated ? 'Tray object created; visibility is unverified.' : 'Tray unavailable or disabled.' }} Full and compact windows work without a tray host or desktop extension. Linux/Windows Close exits the UI; macOS Close hides it for Dock reopen. Quit UI exits the interface.</p>
 
-    <PairedDevices :targets="paired" :can-reload="canReload" @changed="loadTargets" @disconnected="disconnectedTarget" />
-    <Console v-if="ready" :key="targetVersion" ref="consoleView" :targets="targets" @session-state="sessionState" />
+    <PairedDevices :targets="paired" :can-remove="canRemove" @changed="loadTargets" @disconnected="disconnectedTarget" />
+    <Console v-if="ready" ref="consoleView" :targets="targets" @session-state="sessionState" />
 
     <section class="desktop-runtime" aria-label="Separate local lifecycle diagnostics" :aria-busy="checking">
       <h2>Separate local runtime diagnostics</h2>

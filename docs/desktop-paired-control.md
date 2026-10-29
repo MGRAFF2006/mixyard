@@ -31,9 +31,11 @@ outside the window lifecycle.
    Other grants/controllers remain independent. A view-only controller must ask
    the owner to revoke its displayed controller ID locally. **Remove saved
    credential** deletes this app's native credential; it does not revoke the
-   server-side record. The UI refuses removal/list rebuilding while any cached
-   workspace has unsaved drafts: save or export them first. Newly paired records
-   can wait in the vault until those drafts are settled.
+   server-side record. Refreshing the saved list and adding a trusted device keep
+   all existing API/workspace owners. Removing a target with unsaved work requires
+   an explicit guard and retains a disconnected target in the selector for export.
+   Re-pairing creates a credential-specific new target; old workspaces cannot
+   acquire that new native credential, even if the device ID is unchanged.
 
 Invitation contents live only in the onboarding form and are cleared on submission.
 The bearer is returned directly to native Rust and never appears in JS, localStorage,

@@ -29,10 +29,13 @@ def receive(stream, timeout=20):
 
 class Harness:
     def __init__(self, binary):
+        self.targets = {}
         self.process = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, text=True, bufsize=1)
 
     def call(self, op, **args):
+        if op == 'open' and 'credentialId' not in args:
+            args['credentialId'] = self.targets[args['id']]['credentialId']
         self.process.stdin.write(json.dumps({'op': op, **args}) + '\n')
         self.process.stdin.flush()
         return receive(self.process.stdout)
@@ -40,6 +43,8 @@ class Harness:
     def ok(self, op, **args):
         result = self.call(op, **args)
         assert 'ok' in result, result
+        if op == 'pair':
+            self.targets[result['ok']['deviceId']] = result['ok']
         return result['ok']
 
     def close(self):
@@ -192,6 +197,7 @@ def qualify(args):
                     {'expectedRevision': 0, 'edit': {'kind': 'draft', 'config': config}}, 403)
             assert request(harness, target_b, gb, sb, '/api/profiles/read', {})['storeRevision'] == 0
             assert 'error' in harness.call('revoke', id=target_b['deviceId'], generation=gb)
+            assert 'error' in harness.call('open', id=target_b['deviceId'], credentialId='0' * 64)
             request(harness, target_b, gb, sb, '/api/profiles/read', {})
             results.append('stored write on A never changes B; independent view right survives write/revoke denial')
             # Client restart reads persisted vault-double records, service restart invalidates old authority.
@@ -256,6 +262,17 @@ def qualify(args):
             results.append('exact certificate mismatch before secret HTTP; native raw request/reply -0 and finite bits; redirect denied without retry')
             harness.ok('forget', id=target_a['deviceId'])
             assert [t['deviceId'] for t in harness.ok('list')] == [target_b['deviceId']]
+            if args.ui_script:
+                ui = Service(args.service, root / 'ui', args.assets); services.append(ui)
+                result = subprocess.run(['node', args.ui_script], input=json.dumps({
+                    'harness': str(Path(args.harness).resolve()), 'endpoint': ui.endpoint, 'invitation': ui.invite,
+                    'cache': str(root / 'owned-vite-cache'), 'screenshot': str(Path(args.output).parent / 'desktop-paired-ui.png'),
+                }), capture_output=True, text=True, timeout=90)
+                assert result.returncode == 0, result.stderr
+                rendered = json.loads(result.stdout)
+                assert rendered['status'] == 'passed'
+                results.extend(rendered['checks'])
+                results.append(rendered['boundary'])
             if os.name != 'nt' and args.expect_no_secret_service:
                 harness.ok('platform-vault-unavailable')
                 results.append('actual platform vault unavailable fails closed (no production fallback)')
@@ -279,4 +296,5 @@ if __name__ == '__main__':
     parser.add_argument('--assets', type=Path, required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--expect-no-secret-service', action='store_true')
+    parser.add_argument('--ui-script')
     qualify(parser.parse_args())

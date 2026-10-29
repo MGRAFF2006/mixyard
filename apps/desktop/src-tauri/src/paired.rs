@@ -33,10 +33,11 @@ pub async fn paired_pair(
 #[tauri::command]
 pub async fn paired_open(
     target_id: String,
+    credential_id: String,
     client: State<'_, Client>,
 ) -> Result<OpenReply, String> {
     let client = client.inner().clone();
-    worker(move || client.open(&target_id)).await
+    worker(move || client.open(&target_id, &credential_id)).await
 }
 #[tauri::command]
 pub async fn paired_request(
@@ -65,10 +66,14 @@ pub async fn paired_forget(target_id: String, client: State<'_, Client>) -> Resu
     worker(move || client.forget(&target_id)).await
 }
 #[tauri::command]
-pub async fn paired_revoke(target_id: String, client: State<'_, Client>) -> Result<(), String> {
+pub async fn paired_revoke(
+    target_id: String,
+    credential_id: String,
+    client: State<'_, Client>,
+) -> Result<(), String> {
     let client = client.inner().clone();
     worker(move || {
-        let session = client.open(&target_id)?;
+        let session = client.open(&target_id, &credential_id)?;
         if session.status != 200 {
             return Err(format!(
                 "Cannot refresh controller before revocation (HTTP {}).",
