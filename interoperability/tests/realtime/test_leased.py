@@ -19,7 +19,7 @@ from mixyard_interop.realtime import PacketRejected, RtpClockSample, RtpProfile,
 
 HAS_RUNTIME = importlib.util.find_spec("mixyard_interop.runtime") is not None
 if HAS_RUNTIME:
-    from mixyard_interop.runtime import ClockEvidence, LeaseBinding, LeasedBlock, RuntimeLease
+    from mixyard_interop.runtime import ClockEvidence, LeaseBinding, LeasedBlock, RuntimeBusy, RuntimeLease
     from mixyard_interop.realtime.leased import LeasedRtpReceiver, LeasedRtpSender
 
 
@@ -74,6 +74,57 @@ def pair(stack, spec, *, epoch="epoch-1", clock=11, frame=8, ssrc=7):
 
 @unittest.skipUnless(HAS_RUNTIME, "requires parent runtime lease concern (actual RuntimeLease, no stub)")
 class LeasedRtpTests(unittest.TestCase):
+    def test_session_revoked_by_post_receive_owner_check_never_invokes_sink(self):
+        with ExitStack() as stack:
+            spec = owned_media()
+            sender, receiver, _, _, rx, state = pair(stack, spec)
+            consumed = []
+            def owner():
+                if receiver.received:
+                    receiver.session.revoke()
+                return state[0]
+            rx._owner_check = owner
+            wrapped = LeasedRtpReceiver(receiver, rx, consumed.append, timestamp=0xFFFFFFFF, **binding())
+            sender.send(block(spec).pcm)
+            with self.assertRaises(PermissionError):
+                wrapped.receive()
+            self.assertEqual(consumed, [])
+
+    def test_receive_reentry_rejects_before_udp_and_next_queued_packet_remains_usable(self):
+        with ExitStack() as stack:
+            spec = owned_media()
+            sender, receiver, _, _, rx, _ = pair(stack, spec)
+            frames = []
+            def sink(admitted):
+                frames.append(admitted.base_frame)
+                with self.assertRaises(RuntimeBusy):
+                    wrapped.receive()
+            wrapped = LeasedRtpReceiver(receiver, rx, sink, timestamp=0xFFFFFFFF, **binding())
+            sender.send(block(spec).pcm)
+            sender.send(block(spec, 10).pcm)
+            wrapped.receive()
+            self.assertEqual(receiver.received, 1)
+            wrapped.receive()
+            self.assertEqual((frames, receiver.received), ([8, 10], 2))
+            sender.send(block(spec, 12).pcm)
+            wrapped.receive()
+            self.assertEqual(frames, [8, 10, 12])
+
+    def test_source_reentry_rejects_before_reading_or_sending_next_block(self):
+        with ExitStack() as stack:
+            spec = owned_media()
+            sender, receiver, tx, _, _, _ = pair(stack, spec)
+            reads = []
+            def source():
+                reads.append(1)
+                with self.assertRaises(RuntimeBusy):
+                    wrapped.send()
+                return block(spec)
+            wrapped = LeasedRtpSender(sender, tx, source, **binding())
+            wrapped.send()
+            self.assertEqual((reads, sender.sent_packets), ([1], 1))
+            self.assertEqual(receiver.receive().pcm, block(spec).pcm)
+
     def test_actual_leases_send_receive_exact_bytes_across_rollover_and_distinct_f64_processing(self):
         for codec in ("raw-s16-le", "raw-s24-le"):
             with self.subTest(codec=codec), ExitStack() as stack:

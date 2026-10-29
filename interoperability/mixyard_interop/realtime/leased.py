@@ -1,11 +1,23 @@
 """Synchronous owned-runtime callbacks over separately admitted cleartext RTP."""
 
 from dataclasses import dataclass
+from contextlib import contextmanager
+import threading
 
-from ..runtime import LeasedBlock
+from ..runtime import LeasedBlock, RuntimeBusy
 from ..core import _identifier
 from .rtp import RtpReceiver, RtpSender, _integer
 from .rtcp import RtpClockSample
+
+
+@contextmanager
+def _exclusive(lock):
+    if not lock.acquire(blocking=False):
+        raise RuntimeBusy("leased RTP operation busy; no packet/source callback consumed")
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 @dataclass(frozen=True)
@@ -55,26 +67,28 @@ class LeasedRtpSender:
         self.sender, self.lease, self.source = sender, lease, source
         self._frame, self._timestamp, self._ssrc = base_frame, sender.timestamp, sender.ssrc
         self._sequence = sender.sequence
+        self._operation = threading.Lock()
         self.binding.check_lease(lease, sender.profile.spec)
 
     def send(self):
-        self.lease.check()
-        block = self.source()
-        if type(block) is not LeasedBlock:
-            raise ValueError("source must return an immutable runtime LeasedBlock")
-        self.lease.validate(block)
-        self.binding.validate(block, self._frame)
-        if block.spec != self.sender.profile.spec or len(block.pcm) != self.sender.profile.payload_bytes:
-            raise ValueError("exact RTP Spec and full packet PCM required")
-        expected = (self._timestamp + self._frame - self.binding.base_frame) & 0xFFFFFFFF
-        if (self.sender.ssrc != self._ssrc or self.sender.timestamp != expected
-                or self.sender.sequence != self._sequence):
-            raise PermissionError("RTP sender was changed outside its runtime epoch")
-        self.lease.check()
-        sequence = self.lease.accept(block, lambda admitted: self.sender.send(admitted.pcm))
-        self._frame += block.frames
-        self._sequence = (sequence + 1) & 0xFFFF
-        return sequence
+        with _exclusive(self._operation):
+            self.lease.check()
+            block = self.source()
+            if type(block) is not LeasedBlock:
+                raise ValueError("source must return an immutable runtime LeasedBlock")
+            self.lease.validate(block)
+            self.binding.validate(block, self._frame)
+            if block.spec != self.sender.profile.spec or len(block.pcm) != self.sender.profile.payload_bytes:
+                raise ValueError("exact RTP Spec and full packet PCM required")
+            expected = (self._timestamp + self._frame - self.binding.base_frame) & 0xFFFFFFFF
+            if (self.sender.ssrc != self._ssrc or self.sender.timestamp != expected
+                    or self.sender.sequence != self._sequence):
+                raise PermissionError("RTP sender was changed outside its runtime epoch")
+            self.lease.check()
+            sequence = self.lease.accept(block, lambda admitted: self.sender.send(admitted.pcm))
+            self._frame += block.frames
+            self._sequence = (sequence + 1) & 0xFFFF
+            return sequence
 
     def send_report(self, rtcp, sample: RtpClockSample):
         """Report only an explicitly supplied current common-clock observation."""
@@ -108,24 +122,31 @@ class LeasedRtpReceiver:
         self._timestamp, self._ssrc = timestamp, receiver.ssrc
         self._first_extended = None
         self._frame = base_frame
+        self._operation = threading.Lock()
         self.binding.check_lease(lease, receiver.profile.spec)
 
     def receive(self):
-        self.lease.check()
-        if self.receiver.ssrc != self._ssrc:
-            raise PermissionError("RTP SSRC changed outside its runtime epoch")
-        packet = self.receiver.receive()
-        self.lease.check()
-        if self._first_extended is None:
-            if packet.timestamp != self._timestamp:
-                raise PermissionError("first RTP timestamp differs from admitted epoch")
-            self._first_extended = packet.extended_timestamp
-        frame = self.binding.base_frame + packet.extended_timestamp - self._first_extended
-        b = self.binding
-        block = LeasedBlock(packet.spec, packet.pcm, b.generation, b.revision,
-                            b.source_epoch, frame, b.clock_id)
-        self.lease.validate(block)
-        b.validate(block, self._frame)
-        self.lease.accept(block, self.sink)
-        self._frame += block.frames
-        return block
+        with _exclusive(self._operation):
+            self.lease.check()
+            if self.receiver.ssrc != self._ssrc:
+                raise PermissionError("RTP SSRC changed outside its runtime epoch")
+            packet = self.receiver.receive()
+            self.lease.check()
+            if self._first_extended is None:
+                if packet.timestamp != self._timestamp:
+                    raise PermissionError("first RTP timestamp differs from admitted epoch")
+                self._first_extended = packet.extended_timestamp
+            frame = self.binding.base_frame + packet.extended_timestamp - self._first_extended
+            b = self.binding
+            block = LeasedBlock(packet.spec, packet.pcm, b.generation, b.revision,
+                                b.source_epoch, frame, b.clock_id)
+            self.lease.validate(block)
+            b.validate(block, self._frame)
+            def deliver(admitted):
+                # Runtime owner callbacks may revoke the independent network
+                # grant. Check it after lease validation, at sink admission.
+                self.receiver.session.require(self.receiver.role, self.receiver.peer, self.receiver.profile.spec)
+                return self.sink(admitted)
+            self.lease.accept(block, deliver)
+            self._frame += block.frames
+            return block
