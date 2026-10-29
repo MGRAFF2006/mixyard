@@ -259,7 +259,7 @@ test('real processing import, slow warning, full FIR export and offline recovery
   await page.screenshot({ path: 'test-results/integration-processing-mobile.png', fullPage: true })
   await service.stop()
   await page.getByRole('button', { name: 'Render and measure', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText('Local service offline')
+  await expect(page.getByRole('region', { name: 'Processing workbench', exact: true }).getByRole('alert')).toContainText('Local service offline')
   await expect(page.getByLabel('Chain name', { exact: true })).toHaveValue('Retained FIR')
   await service.start()
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
