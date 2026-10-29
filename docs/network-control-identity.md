@@ -6,8 +6,10 @@ endpoint using the actual local-owner
 `IdentityStore::audio_identity_material(expected_local_device_id)` export.
 Control and network do not depend on the bridge; enabling management does not
 open an audio endpoint. This work depends on the production control export in
-[PR #76](https://github.com/MGRAFF2006/mixyard/pull/76), which is a stack
-prerequisite, not a claim that it has been accepted into main.
+[PR #76](https://github.com/MGRAFF2006/mixyard/pull/76), accepted at
+`b3731ce51af02cfbcd0ad6fb7080694f08b6a0bd` and included through a normal merge
+of main `89f25bd488f95e7fc7c21f614718bb04c6353154`. Acceptance of that store
+does not approve this bridge or grant audio authority.
 
 The caller supplies all of:
 
@@ -69,20 +71,18 @@ being converted into audio permissions. The proof checks:
   Temporary stores are removed on exit; their keys and invitations are never
   printed or committed.
 
-The bounded local check on 2026-10-29 used Rust 1.99.0
-(`b940084d7eb6a299eb4bfeb8e34901bc051e7ac4`), exact raw network source at
-`cccddcd1ae00d5544ab68813c6245b9cb36cd873`, and the read-only actual control
-rlib produced from that commit, SHA-256
-`b2c1f098a00fbab177a4c3106812e4a71c93cfbc7c0595657d223a7251ae15e3`.
-The independently compiled caches had incompatible internal hashes despite
-some matching filenames. Seven network-specific cached dependencies were
-retargeted in private outputs to the frozen control artifact's shared dependency
-graph before compiling the actual raw network source, bridge and integration
-test. Linux dependency versions/checksums match the existing locks, while the
-standalone graph also unifies features and resolves some WebAssembly dependencies
-differently. This direct compiler/socket check does not compile that entire
-standalone Cargo feature graph and is not a full Cargo workspace build or the
-hosted cross-platform checks. See the PR for final revision verification.
+Current composition uses the accepted persisted-store implementation, including
+its Windows private-store admission and current validation/completion handling,
+plus the accepted raw network implementation. The bridge's production API and
+fixture are unchanged by the prerequisite refresh. The standalone lock is
+retained unchanged; local offline full metadata resolution reached an uncached
+registry-source fetch (`atomic-waker`) and could not complete. Local no-dependency
+metadata and formatting checks pass, but do not replace full locked validation.
+
+Historical direct compiler/socket evidence used an older control source and
+now-retired compiled artifacts. Those artifacts are not reused or credited to
+this current composition. Fresh exact-head review and actual locked Linux,
+Windows and macOS checks remain required; consult the PR's current evidence.
 
 The dedicated `network-control-identity.yml` workflow runs the locked standalone
 Cargo format, Clippy and test commands on Linux, Windows and macOS. It places
