@@ -70,6 +70,12 @@ impl Daemon {
             .args(["serve", "--instance", &instance])
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
+        // Keep lifecycle tests independent of the host's live PipeWire session.
+        #[cfg(target_os = "linux")]
+        command.args([
+            "--inventory-fixture-helper",
+            "/nonexistent/mixyard-test-helper",
+        ]);
         for name in [
             "DISPLAY",
             "WAYLAND_DISPLAY",
@@ -655,7 +661,7 @@ fn inventory_rejects_bad_envelopes_oversize_and_is_cancellable_with_total_deadli
                 2=>reply["error"]=json!({"code":"both","message":"ambiguous"}),
                 3=>reply["result"]=Value::Null,
                 4=>reply["result"]["schemaVersion"]=json!(1),
-                5=>reply["result"]["extra"]=json!("x".repeat(MAX_FRAME)),
+                5=>reply["result"]["extra"]=json!("x".repeat(runtime::MAX_INVENTORY_FRAME)),
                 6=>return format!("{{\"ipcVersion\":1,\"ipcVersion\":1,\"requestId\":\"{id}\",\"result\":null}}\n").into_bytes(),
                 _=>unreachable!(),
             }

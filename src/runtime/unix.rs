@@ -87,6 +87,15 @@ pub struct Listener {
     directory_identity: (u64, u64),
 }
 impl Listener {
+    #[cfg(target_os = "linux")]
+    pub fn owned_directory(&self) -> io::Result<PathBuf> {
+        let path = self.path.parent().unwrap();
+        let meta = directory(path, false)?;
+        if (meta.dev(), meta.ino()) != self.directory_identity {
+            return Err(denied("runtime directory identity changed"));
+        }
+        Ok(path.to_path_buf())
+    }
     pub fn bind(endpoint: &str) -> io::Result<Self> {
         let path = PathBuf::from(endpoint);
         let parent = path.parent().unwrap();

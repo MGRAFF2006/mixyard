@@ -75,11 +75,13 @@ Requests require a nonempty ID of at most 64 UTF-8 bytes, reject unknown fields,
 and check the version before command dispatch. Malformed, oversized, invalid-ID,
 unsupported-version and timed-out requests have explicit JSON errors; an
 unrecoverable/absent ID is null. `events` optionally accepts `afterSequence` (u64).
-No shell commands, arbitrary file paths or device bridge are exposed.
+No shell commands, arbitrary file paths or audio mutation bridge are exposed
+through IPC. Inventory is a read-only native observation.
 
 These are operational limits, not mix-count or policy limits:
 
-- 8192 request/response bytes before the newline. One bounded 1024-byte read and
+- 8192 request/event-response bytes before the newline (inventory has its own
+  bound below). One bounded 1024-byte request read and
   at most 4096 bytes written per client per 10 ms tick; no blocking server I/O.
 - At most 16 active connections and 8 event subscriptions, plus the Windows
   pending listener. Excess subscribers receive `busy`; saturated connections
@@ -126,3 +128,146 @@ Implementation references: [Linux unix(7)](https://man7.org/linux/man-pages/man7
 [Microsoft named-pipe security](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights),
 [CreateNamedPipeW](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-createnamedpipew),
 and [overlapped I/O](https://learn.microsoft.com/en-us/windows/win32/ipc/synchronous-and-overlapped-input-and-output).
+
+## Read-only inventory (Linux PipeWire)
+
+`mixyard-runtime inventory [--instance NAME]` sends the existing private IPC
+`inventory` command and prints its envelope. On Linux the runtime explicitly
+runs `/usr/bin/pw-dump` with no arguments, reads a single complete snapshot, and
+translates the Node/Device/Port data into schemaVersion 2 `Inventory`. It does
+not invoke the adapter's mutation commands, record microphone samples, create
+streams, start playback, link ports, or change defaults. `backendAvailable`
+remains false and native audio proof remains unverified; inventory does not
+claim `audioApplied`, routing, media control or permission to capture a mic.
+Existing policy consent, exclusions and producer recapture checks still apply.
+
+The schema1 [backend contract](backend-contract.md) is a device discovery
+envelope, not a schema2 inventory. Its device list drops application streams and
+current formats, so this provider validates the same underlying Linux snapshot
+shape directly. It does not import a fixture or accept helper paths/observations
+through HTTP or IPC. `/usr/bin/pw-dump` is a trusted local installation path;
+a missing executable, inaccessible server or diagnostic stderr returns scoped
+`inventory-unavailable`, never successful empty discovery. Stderr contents are
+not forwarded. A complete Core object is required even for a genuinely empty
+graph. Known `support.node.driver` nodes are nonaudio; an audio node with missing
+identity, missing device reference, error state or profile-switch placeholder
+makes the observation unavailable. Unknown nonaudio interfaces are ignored.
+
+Identity rules:
+
+- Mic/output `deviceUid` is `pipewire:node.name:<exact node.name>`, matching the
+  existing schema1 device catalog. Names are profile dependent; they are not
+  permanent physical hardware IDs. There is no label, default-device, PID or
+  numeric object-ID fallback. Distinct observations of the same selector remain
+  distinct, so policy resolution reports ambiguity.
+- Application streams require exact `application.id`. Communication/unknown/absent
+  media roles fail closed because schema2 requires an explicit
+  call-return group; no such group is invented. Unmapped or unclassified application streams need trusted local classification
+  before they can be represented. No call is silently relabeled as ordinary media.
+- Context discovery separately uses `context:pipewire:<digest>` over direction
+  and the semantic identity tuple. A context catalog UID and an inventory
+  selector UID are different namespaces. Nothing auto-merges them or treats
+  matching display names as identity. Explicit user configuration must select
+  each catalog's exact identity.
+- Signed 64-bit numeric identities convert directly to decimal strings; floats
+  and lossy encodings are rejected. `observedId` binds the runtime object ID,
+  object serial if available, Core cookie, exact device serial, current native
+  Format detail and channel-port identities. It is opaque and is never used as
+  the semantic selector.
+- `format` is present only for a single concrete current Node `Format` with
+  positive exact integer rate and explicit `MONO` or ordered `FL,FR` positions.
+  `EnumFormat`, configured `audio.rate`, default graph clocks, channel counts,
+  AUX/reversed/surround positions and absent values do not establish a format.
+  Unrepresentable or unknown format remains null, so the existing planner keeps
+  that path unresolved. Schema2 does not expose PCM encoding or arbitrary
+  layouts; their observed changes still invalidate the inventory revision.
+- Mixyard producer sources retain `mixyard-producer` origin; they cannot be
+  recaptured as external sources. An owned sink is unavailable because schema2
+  has no output-origin field. Virtual sources receive mic consent protections;
+  enumeration never grants consent. Media sessions/actions and backend capacity
+  remain unproved, represented by an empty session list and unknown limits.
+
+`inventory-revision-v1` in the existing private instance directory retains only
+an 80-byte versioned, checksummed SHA256 digest and u64 high-water revision.
+Normalized content is sorted, revision zeroed before hashing, and unchanged
+refresh/restart preserves the revision. Changed content increments it, including
+returning to older content. The state must be a real single-link current-user
+file with mode 0600; namespace device/inode and ownership are rechecked before
+completion. Updates use a random create-new 0600 temporary file, fsync, atomic
+rename and directory fsync. Corruption, symlinks, insecure state, failed writes
+and exhaustion produce unavailable without resetting or overwriting the bad
+state. No raw inventory/application metadata is persisted. Keep this private
+state when restarting an instance. Removing the namespace loses its high-water;
+a connected owner then rejects regressed/reused revisions and must be explicitly
+re-established. `/tmp` state does not promise persistence across machine reboot.
+
+Additional operational bounds:
+
+- One discovery at a time; concurrent inventory requests return `busy`. Status,
+  event and shutdown clients continue while the helper runs. Client disconnect,
+  cancellation and shutdown kill the owned helper process group and reap its
+  leader. No unrelated process is targeted.
+- Helper I/O/exit deadline 700 ms, at most 4 MiB raw stdout and 8192 objects.
+  Validation/normalization/persistence/serialization have a 1200 ms total
+  preparation cutoff from connection admission, leaving delivery time within
+  the typed client's existing 2-second total deadline. This is a bounded
+  synchronous validation of bounded data, not a real-time scheduling guarantee;
+  OS scheduling/filesystem stalls can still make a client time out safely.
+- Inventory alone permits a 1 MiB reply and up to 1024 entries per category,
+  4096 UTF-8 bytes per identity. Requests/events retain their 8192-byte bounds;
+  inventory delivery reads/writes at most 64 KiB per tick. Raw helper draining
+  performs at most 32 bounded reads per tick. Oversize/count errors explicitly
+  ask to reduce the visible graph; nothing is silently truncated. A large graph
+  can hit the byte cap before its entry cap.
+
+`src/runtime/inventory.rs` defines the platform-neutral `Capture::poll()`
+boundary and trusted options. A provider returns `Result<Option<Inventory>>`
+without blocking on subprocess I/O, owns cleanup on drop, translates exact
+platform identities/formats, and starts at revision zero. The runtime completes
+it with secure durable revision state before publishing. Windows/macOS native
+inventory providers and their secure revision stores are pending integration;
+they currently return explicit provider-unavailable, not fabricated inventory.
+Their adapter protocol is `snapshot`, one <=1 MiB schema2 discovery Inventory,
+revision 0, actual platform, <=1024/category and <=4096 UTF-8 bytes per ID. The
+trusted runtime wrapper assigns evidence and high-water; helper-supplied claims
+do not authorize native evidence. Native OS qualification is a separate gate.
+
+For reproducible process/IPC tests only, Linux accepts a local absolute
+`serve --inventory-fixture-helper /ABSOLUTE/HELPER` option. It invokes that helper
+without arguments, expecting raw pw-dump-shaped stdout, and **always** labels
+its inventory `simulated`. This protocol is deliberately different from native
+Windows/macOS normalized helper output. It cannot establish native evidence.
+`cargo test --locked --test runtime_inventory` exercises actual helper/runtime
+child processes and typed IPC with owned fixtures: precision, formats,
+refresh/restart/content changes, malformed/partial/oversized output, timeouts,
+concurrent busy, cancellation, shutdown and secure revision state. It also
+starts the actual HTTP service and confirms `/api/automation/live` accepts the
+actual runtime IPC inventory and its stable restart revision, with both
+`audioApplied` and `backendAvailable` false. These are
+process and IPC proofs, not native PipeWire discovery or audio qualification.
+
+Linux native capture recipe (run in the laptop user's actual PipeWire session,
+with no fixture option, no speaker playback and no graph mutations):
+
+```sh
+# Use a private external target; first confirm sufficient space.
+df -h /tmp /dev/shm
+export CARGO_TARGET_DIR=/tmp/mixyard-native-inventory-target
+export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2
+cargo build --locked --bin mixyard-runtime --bin mixyard
+"$CARGO_TARGET_DIR/debug/mixyard-runtime" serve --instance native-inventory
+# In a second terminal, in the same checkout/user environment:
+"$CARGO_TARGET_DIR/debug/mixyard-runtime" inventory --instance native-inventory
+"$CARGO_TARGET_DIR/debug/mixyard-runtime" inventory --instance native-inventory
+"$CARGO_TARGET_DIR/debug/mixyard" status --instance native-inventory
+"$CARGO_TARGET_DIR/debug/mixyard" shutdown --instance native-inventory
+# Restart the first command, repeat inventory to check stable content/revision,
+# then explicitly shut down again. Keep the private revision state for this test.
+```
+
+Do not publish raw native output with private application/device IDs. Record
+revision/SHA, exit codes, evidence/platform, endpoint counts, nullable-format
+counts, revision equality/change and scoped failure reasons. Native tests on a
+host without PipeWire can establish unavailable behavior only.
+
+Discovery parsing references: [PipeWire pw-dump source](https://github.com/PipeWire/pipewire/blob/master/src/tools/pw-dump.c), [SPA audio format parameters](https://docs.pipewire.org/group__spa__param.html), and [standard PipeWire driver configuration](https://github.com/PipeWire/pipewire/blob/master/src/daemon/pipewire.conf.in).

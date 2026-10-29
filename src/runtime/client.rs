@@ -353,8 +353,8 @@ impl ReadOnlyClient {
                     Err(e) => return Err(e),
                 }
             } else {
-                let mut buf = [0; 1024];
-                let limit = buf.len().min(MAX_FRAME + 1 - input.len());
+                let mut buf = [0; 65536];
+                let limit = buf.len().min(super::MAX_INVENTORY_FRAME + 1 - input.len());
                 match stream.read(&mut buf[..limit]) {
                     Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
                     Ok(n) => input.extend_from_slice(&buf[..n]),
@@ -362,7 +362,7 @@ impl ReadOnlyClient {
                     Err(e) => return Err(e),
                 }
                 if let Some(end) = input.iter().position(|b| *b == b'\n') {
-                    if end > MAX_FRAME || end + 1 != input.len() {
+                    if end > super::MAX_INVENTORY_FRAME || end + 1 != input.len() {
                         return Err(invalid("invalid inventory frame"));
                     }
                     let reply: InventoryResponse = serde_json::from_slice(&input[..end])
@@ -372,35 +372,23 @@ impl ReadOnlyClient {
                     }
                     return match (reply.result, reply.error) {
                         (Some(inventory), None) => {
-                            if [
-                                inventory.sources.len(),
-                                inventory.outputs.len(),
-                                inventory.media_sessions.len(),
-                            ]
-                            .iter()
-                            .any(|n| *n > 256)
-                            {
-                                return Err(invalid("inventory admission limit"));
+                            super::inventory::validate(&inventory).map_err(invalid)?;
+                            if cancelled.load(Ordering::Acquire) {
+                                return Err(io::ErrorKind::Interrupted.into());
                             }
-                            let empty = crate::Config {
-                                schema_version: 2,
-                                revision: 0,
-                                sources: vec![],
-                                mixes: vec![],
-                                sends: vec![],
-                                outputs: vec![],
-                                media_controls: vec![],
-                            };
-                            crate::plan(&empty, &inventory)
-                                .map_err(|_| invalid("invalid inventory"))?;
+                            if start.elapsed() >= std::time::Duration::from_secs(2) {
+                                return Err(io::ErrorKind::TimedOut.into());
+                            }
                             Ok(inventory)
                         }
                         (None, Some(error)) => Err(io::Error::other(error)),
                         _ => Err(invalid("expected exactly one inventory result or error")),
                     };
                 }
-                if input.len() > MAX_FRAME {
-                    return Err(invalid("inventory frame exceeds MAX_FRAME"));
+                if input.len() > super::MAX_INVENTORY_FRAME {
+                    return Err(invalid(
+                        "inventory frame exceeds 1 MiB; reduce visible graph",
+                    ));
                 }
             }
             thread::sleep(TICK);
