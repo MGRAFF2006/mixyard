@@ -2,9 +2,9 @@ name: Headless runtime lifecycle (no native audio)
 on:
   workflow_dispatch:
   push:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', 'tests/runtime_support/**', 'scripts/install-inventory-runtime.*', 'adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', '.github/workflows/runtime.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', 'tests/recording.rs', 'tests/runtime_support/**', 'scripts/install-inventory-runtime.*', 'adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', '.github/workflows/runtime.yml']
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', 'tests/runtime_support/**', 'scripts/install-inventory-runtime.*', 'adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', '.github/workflows/runtime.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', 'tests/recording.rs', 'tests/runtime_support/**', 'scripts/install-inventory-runtime.*', 'adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', '.github/workflows/runtime.yml']
 permissions:
   contents: read
 jobs:
@@ -52,7 +52,7 @@ jobs:
       - name: Existing core and actual Windows kernel DACL checks
         run: cargo test --locked --lib --bins
       - name: Real headless subprocess lifecycle and endpoint security
-        run: cargo test --locked --test runtime_lifecycle --test runtime_readonly --test runtime_inventory --test runtime_native_inventory --test runtime_helper_publication
+        run: cargo test --locked --test runtime_lifecycle --test runtime_readonly --test runtime_inventory --test runtime_native_inventory --test recording --test runtime_helper_publication
       - name: Record qualification boundary
         shell: bash
         run: |

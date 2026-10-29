@@ -124,6 +124,7 @@ test('disarm stays independent of a blocked live request and late live cannot re
   const pending = h.s.capture(true); assert.equal(h.s.busy, true)
   await h.s.disarm(); assert.equal(h.s.status!.armed, false)
   h.release(liveFixture()); await pending; assert.equal(h.s.review, null); assert.equal(h.s.live, null)
+  assert.equal(h.s.busy, false, 'a superseded capture must release its own same-session busy state after Disarm')
   assert.equal(h.calls.filter(c => c.path.endsWith('/disarm')).length, 1)
 })
 

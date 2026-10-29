@@ -4,6 +4,7 @@
 //! preallocated storage only. This module neither authorizes nor discovers routes.
 
 mod filters;
+pub mod live;
 
 use serde::{Deserialize, Serialize};
 use std::mem::size_of;
