@@ -28,6 +28,9 @@ public:
     worker::Queue& queue() noexcept;
     const std::string& observedId() const noexcept;
     void start();
+    // For authority/consent revocation, cancel the HostLink and revoke its
+    // output Workers first. Stopping this source alone is source loss, not
+    // revocation of already queued derived output PCM.
     bool revoke() noexcept;
     bool close() noexcept;
 };

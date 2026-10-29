@@ -1,46 +1,57 @@
 // SPDX-License-Identifier: MIT
 #include "host_link.hpp"
-#import <Foundation/Foundation.h>
 #include <algorithm>
 
 namespace mixyard::macos {
 namespace w = worker;
 namespace {
 constexpr size_t portLimit = 8;
-NSString* string(const std::string& s) {
-    auto* value = [[NSString alloc] initWithBytes:s.data() length:s.size() encoding:NSUTF8StringEncoding];
-    if (!value) throw std::invalid_argument("Port identity must be UTF-8");
-    return [value autorelease];
+std::string quoted(const std::string& text) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string result = "\"";
+    for (const unsigned char c : text) {
+        switch (c) {
+        case '\"': result += "\\\""; break;
+        case '\\': result += "\\\\"; break;
+        case '\b': result += "\\b"; break;
+        case '\f': result += "\\f"; break;
+        case '\n': result += "\\n"; break;
+        case '\r': result += "\\r"; break;
+        case '\t': result += "\\t"; break;
+        default:
+            if (c < 0x20) {
+                result += "\\u00"; result += hex[c >> 4]; result += hex[c & 15];
+            } else result += static_cast<char>(c);
+        }
+    }
+    return result + "\"";
 }
-NSArray* labels(const std::vector<std::string>& values) {
-    auto* result = [NSMutableArray array];
-    for (const auto& value : values) [result addObject:string(value)];
-    return result;
-}
-NSDictionary* json(const uint8_t* data, size_t bytes) {
-    auto* value = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:data length:bytes] options:0 error:nullptr];
-    if (![value isKindOfClass:[NSDictionary class]]) throw std::invalid_argument("Host port info is not an object");
-    return value;
+std::string labels(const std::vector<std::string>& values) {
+    std::string result = "[";
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i) result += ',';
+        result += quoted(values[i]);
+    }
+    return result + "]";
 }
 using Getter = int (*)(const mx_host*, size_t, uint8_t*, size_t, size_t*);
 void validatePort(const mx_host* host, size_t index, Getter getter, const Port& port, bool source) {
     size_t needed = 0;
     // The getter may report insufficient capacity while returning needed.
-    getter(host, index, nullptr, 0, &needed);
-    if (!needed || needed > 65536) throw std::invalid_argument("Unbounded host port info");
+    if (getter(host, index, nullptr, 0, &needed) != MX_BUFFER || !needed || needed > 65536)
+        throw std::invalid_argument("Unbounded/unavailable host port info");
     std::vector<uint8_t> buffer(needed);
     if (getter(host, index, buffer.data(), buffer.size(), &needed) != 0 || needed > buffer.size())
         throw std::invalid_argument("Host port info unavailable");
-    const auto end = std::find(buffer.begin(), buffer.begin() + needed, uint8_t{0});
-    auto* info = json(buffer.data(), static_cast<size_t>(end - buffer.begin()));
     const auto& f = port.queue->format();
-    if (![info[@"observedId"] isEqual:string(port.observedId)] ||
-        ![info[@"sampleRateHz"] isEqual:@(f.sampleRateHz)] ||
-        ![info[@"channels"] isEqual:labels(f.channels)] ||
-        ![info[@"mapping"] isEqual:labels(port.mapping)])
+    // ABI v1 promises compact JSON, exact field order and no NUL. Compare only
+    // immutable control metadata; the audio path never serializes PCM or JSON.
+    std::string expected = "{\"observedId\":" + quoted(port.observedId);
+    if (source) expected += ",\"encoding\":" + quoted(f.precision == w::Precision::Float64 ? "f64-le" : "f32-le");
+    expected += ",\"sampleRateHz\":" + std::to_string(f.sampleRateHz) + ",\"channels\":" + labels(f.channels) +
+                ",\"mapping\":" + labels(port.mapping) + "}";
+    if (needed != expected.size() || std::memcmp(buffer.data(), expected.data(), needed) != 0)
         throw std::invalid_argument("Observed native port differs from compiled canonical slot");
-    if (source && ![info[@"encoding"] isEqual:(f.precision == w::Precision::Float64 ? @"f64-le" : @"f32-le")])
-        throw std::invalid_argument("Source precision differs from host binding");
 }
 mx_stamp stamp(const w::Stamp& s) noexcept {
     return {s.binding.generation, s.binding.revision, s.clockId, s.sequence, s.firstFrame, s.capturedNs, s.deadlineNs};
@@ -125,6 +136,7 @@ HostLink::HostLink(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 HostLink::~HostLink() { impl_->cancel(); }
 std::unique_ptr<HostLink> HostLink::create(const std::string& request, Timeline timeline,
                                          std::vector<Port> sources, std::vector<Port> outputs) {
+    if (mx_host_abi_version() != MX_HOST_ABI_VERSION) throw std::invalid_argument("Unsupported canonical host ABI");
     if (sources.empty() || outputs.empty() || sources.size() > portLimit || outputs.size() > portLimit)
         throw std::invalid_argument("Native host requires 1..8 sources and independent outputs");
     const auto* first = sources.front().queue;
@@ -148,12 +160,10 @@ std::unique_ptr<HostLink> HostLink::create(const std::string& request, Timeline 
         throw std::invalid_argument(std::string("Canonical host rejected request: ") + error.data());
     if (mx_host_source_count(impl->host) != impl->sources.size() || mx_host_output_count(impl->host) != impl->outputs.size())
         throw std::invalid_argument("Host plan port count differs");
-    @autoreleasepool {
-        for (size_t i = 0; i < impl->sources.size(); ++i)
-            validatePort(impl->host, i, mx_host_source_info, impl->sources[i], true);
-        for (size_t i = 0; i < impl->outputs.size(); ++i)
-            validatePort(impl->host, i, mx_host_output_info, impl->outputs[i], false);
-    }
+    for (size_t i = 0; i < impl->sources.size(); ++i)
+        validatePort(impl->host, i, mx_host_source_info, impl->sources[i], true);
+    for (size_t i = 0; i < impl->outputs.size(); ++i)
+        validatePort(impl->host, i, mx_host_output_info, impl->outputs[i], false);
     return std::unique_ptr<HostLink>(new HostLink(std::move(impl)));
 }
 bool HostLink::step(uint64_t now, mx_stamp s, uint32_t frames) noexcept { return impl_->step(now, s, frames); }

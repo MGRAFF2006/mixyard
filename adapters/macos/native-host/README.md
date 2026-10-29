@@ -14,7 +14,7 @@ permissions remain macOS's responsibility; consent does not assert a TCC grant.
 
 Construct the canonical host request **after** observing native source and sink
 identities/formats. Source/output arrays follow compiled plan order. `HostLink`
-compares immutable host info with actual queue IDs, encoding, rate, ordered labels
+compares ABI v1's fixed compact immutable port JSON with actual queue IDs, encoding, rate, ordered labels
 and explicit canonical mapping. Processing supports canonical mono/stereo only;
 the tap source currently admits stereo. It rejects wider processed paths and
 different rates. There is no raw bypass route in this attachment.
@@ -33,7 +33,10 @@ engine period. A missing, expired or malformed source becomes permanent silence
 for that generation. A source revoked during processing cancels the entire
 in-flight generation before outputs publish. A stopped/overflowing/removed sink
 revokes only its queue. `cancel` atomically revokes all transport queues; Rust host
-revoke/destroy remain with the exclusive quiescent owner. Close source/sink workers
+revoke/destroy remain with the exclusive quiescent owner. Consent/authority
+revocation must first cancel `HostLink` and revoke the associated output workers,
+then stop capture; stopping a source alone is source loss and cannot revoke
+already queued derived PCM. Close source/sink workers
 and quiesce the engine before destroying queue/host storage. A failed native stop,
 destroy or listener removal retains ownership and requires `close` retry; dropping
 an object with live native ownership deliberately terminates rather than freeing
@@ -56,13 +59,23 @@ precision, explicit sink conversion, independent consumer close, malformed sourc
 silence, cancel and source SDK failure cleanup. No AudioUnit, tap, device, TCC,
 personal microphone/speaker, default endpoint or service is activated by tests.
 
-Apple SDK compilation and execution are pending until the shared host library
-dependency is available and the hosted check passes. Physical capture/output,
+The production portable `HostLink` and actual static Rust library pass 2048
+SPSC/mixer/DSP/consumer blocks on Linux, including Float32/64 sources and sinks,
+stalled-consumer isolation, source-loss silence, identity/order mismatch and
+stale/cancel paths with zero malloc/calloc/realloc/free operations during processing.
+`portable-check.sh READ_ONLY_HOST_STATIC_LIBRARY` reproduces this check without
+building Rust or invoking Apple APIs. Measured generated artifacts peaked at
+2324 KiB and were removed; the parent's library remained read-only. This is
+transport/engine evidence only.
+
+Apple SDK compilation and execution remain pending the hosted check. Physical capture/output,
 permissions, common-clock adaptation, fidelity/latency and native app identities
 remain unqualified even after the injected test passes.
 
-The separate `macos-native-host.yml` workflow takes an exact shared-host commit
-via `workflow_dispatch` and checks it out separately. It never overlays files on
+The separate `macos-native-host.yml` workflow pins shared-host dependency
+`b71948fe0a5887ecd7226fe8b5d9beae8d24e1bf`; manual dispatch can select another exact
+commit. Automatic PR runs use the exact attachment head. It checks the host out
+separately and never overlays files on
 the frozen base. Its run records both full revisions and retains the safe test
 log. The host is built only on the disposable hosted runner, with one job, no
 incremental compilation and no debug symbols; both host and adapter artifacts are

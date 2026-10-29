@@ -26,7 +26,7 @@ template<class F> void rejects(F function) {
     bool rejected = false; try { function(); } catch (const std::exception&) { rejected = true; }
     assert(rejected);
 }
-m::Selection selection() { return {101, 4242, true, {999}}; }
+m::Selection selection() { return {101, sdk::capture.pid, true, {999}}; }
 m::Timeline timeline() { return m::Timeline::injected(11); }
 void sourceLifecycle() {
     sdk::reset();
@@ -175,6 +175,10 @@ void linkedGraph(const char* path, w::Precision sourcePrecision, w::Precision si
     receive(ticks, 0, sourcePrecision == w::Precision::Float64 ? static_cast<void*>(const_cast<double*>(precise)) : narrowed, sourcePrecision);
     assert(step(*link, now, {7, 1, 11, 0, 0, now, now + 1000000000}));
     render(ticks, 0, shared, w::Precision::Float64);
+    const auto notice = sdk::outputNotices[0];
+    dispatch_sync(notice.queue, ^{ notice.block(0, nullptr); });
+    assert(callQ->fault() == w::Fault::Revoked && !sdk::output.running);
+    assert(recordQ->fault() == w::Fault::None && capture->queue().fault() == w::Fault::None);
     assert(call->close()); call.reset(); // Closing one consumer preserves sibling PCM.
     sdk::output.uid = "injected-output-b"; sdk::output.pcm = sdk::format(sinkPrecision);
     auto record = out::Worker::open("injected-output-b", *recordQ); record->start();
@@ -188,13 +192,11 @@ void linkedGraph(const char* path, w::Precision sourcePrecision, w::Precision si
     assert(step(*link, laterNs, {7, 1, 11, 1, 2, laterNs, laterNs + 1000000000}));
     for (unsigned i = 0; i < 4; ++i) recorded[i] = 0.125 * returned[i];
     render(later, 2, recorded, sinkPrecision);
-    // Native output loss stops that owned unit and preserves source siblings.
-    const auto notice = sdk::outputNotices[0];
-    dispatch_sync(notice.queue, ^{ notice.block(0, nullptr); });
-    assert(recordQ->fault() == w::Fault::Revoked && !sdk::output.running);
-    assert(privateQ->fault() == w::Fault::None && returnQ->fault() == w::Fault::None);
+    // Whole-path consent/cancel revokes a still-live consumer immediately.
+    assert(sdk::output.running && privateQ->fault() == w::Fault::None && returnQ->fault() == w::Fault::None);
     link->cancel(); assert(!step(*link, laterNs, {7, 1, 11, 2, 4, laterNs, laterNs + 1000000000}));
     render(later, 4, recorded, sinkPrecision, true);
+    assert(record->revoke() && !sdk::output.running);
     rejects([&] { capture->start(); });
     assert(capture->close()); assert(record->close());
     link.reset(); sdk::clean();

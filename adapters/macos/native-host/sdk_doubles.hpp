@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cassert>
 #include <vector>
+#include <unistd.h>
 
 namespace mixyard::macos::detail { CaptureApi captureTestApi; }
 namespace mixyard::output::detail { Api testApi; }
@@ -51,7 +52,7 @@ inline AudioStreamBasicDescription format(w::Precision precision) {
 inline struct CaptureState {
     bool tap = false, aggregate = false, io = false, running = false;
     unsigned starts = 0, stops = 0;
-    pid_t pid = 4242;
+    pid_t pid = getpid() + 1000;
     AudioStreamBasicDescription pcm = format(w::Precision::Float64);
     AudioDeviceIOProc proc = nullptr; void* context = nullptr;
     unsigned stopFailures = 0;

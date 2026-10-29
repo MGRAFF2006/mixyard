@@ -1,12 +1,17 @@
 name: macOS Rust host link (injected SDK audio boundary only)
 
 on:
+  pull_request:
+    paths:
+      - 'adapters/macos/native-host/**'
+      - '.github/workflows/macos-native-host.yml'
   workflow_dispatch:
     inputs:
       host_ref:
         description: Exact shared-host dependency commit (40 hex characters)
         required: true
         type: string
+        default: b71948fe0a5887ecd7226fe8b5d9beae8d24e1bf
 
 permissions:
   contents: read
@@ -21,18 +26,18 @@ jobs:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
+      HOST_REF: ${{ inputs.host_ref || 'b71948fe0a5887ecd7226fe8b5d9beae8d24e1bf' }}
     steps:
       - name: Validate exact dependency revision
-        env:
-          HOST_REF: ${{ inputs.host_ref }}
         run: |
           [[ "$HOST_REF" =~ ^[0-9a-f]{40}$ ]] || { echo 'An exact lowercase 40-character host SHA is required'; exit 2; }
       - uses: actions/checkout@v4
         with:
           path: attachment
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.host_ref }}
+          ref: ${{ env.HOST_REF }}
           path: shared-host
       - name: Record isolated environment and dependency revisions
         run: |
@@ -51,13 +56,13 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/mixyard-shared-host-build
         run: |
-          cargo build --manifest-path shared-host/adapters/engine/Cargo.toml --lib -j 1
+          cargo build --locked --manifest-path shared-host/adapters/engine/Cargo.toml --lib --release -j 1
           du -sk "$CARGO_TARGET_DIR"
       - name: Link production SDK code and execute injected consumer PCM oracle
         run: |
           bash attachment/adapters/macos/native-host/check.sh \
             "$GITHUB_WORKSPACE/shared-host" \
-            "$RUNNER_TEMP/mixyard-shared-host-build/debug/libmixyard_host.dylib" \
+            "$RUNNER_TEMP/mixyard-shared-host-build/release/libmixyard_host.dylib" \
             2>&1 | tee "$RUNNER_TEMP/macos-native-host.log"
       - uses: actions/upload-artifact@v4
         if: always()
