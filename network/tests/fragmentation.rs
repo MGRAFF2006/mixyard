@@ -546,3 +546,65 @@ fn real_udp_loopback_reassembles_reordered_fragments_with_admission_and_duplicat
         data
     );
 }
+
+#[test]
+fn variable_codec_geometry_reserves_maximum_and_rejects_length_switches_and_raw_relabeling() {
+    let config = Config {
+        max_block_bytes: 4096,
+        max_datagram: 128,
+        max_streams: 2,
+        window: 2,
+        max_buffered_bytes: 20_000,
+        timeout: Duration::from_millis(50),
+    };
+    let d = Descriptor {
+        stream: 1,
+        generation: 1,
+        block_bytes: 4096,
+        frames_per_block: 960,
+    };
+    let mut receiver = Reassembler::new(config.clone()).unwrap();
+    receiver.admit_variable(d).unwrap();
+    let reserved = receiver.reserved_bytes();
+    assert!(
+        reserved >= 8192,
+        "a tiny first packet cannot under-reserve its maximum window"
+    );
+    let sender = Fragmenter::variable(config.clone(), d).unwrap();
+    let now = Instant::now();
+    for (sequence, length) in [(0, 181), (1, 33)] {
+        let expected: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
+        let fragments: Vec<_> = sender.fragments(sequence, &expected).unwrap().collect();
+        for fragment in fragments.iter().rev() {
+            receiver.ingest(fragment, now).unwrap();
+        }
+        let actual = receiver.take(1, 1, sequence, now).unwrap().unwrap();
+        assert_eq!(actual.payload, expected);
+        assert_eq!(actual.sample_timestamp, sequence * 960);
+        assert_eq!(receiver.reserved_bytes(), reserved);
+    }
+    let mut raw = Reassembler::new(config.clone()).unwrap();
+    raw.admit(d).unwrap();
+    let envelope = vec![7; 4096];
+    let fragment = sender.fragments(0, &envelope).unwrap().next().unwrap();
+    assert_eq!(
+        raw.ingest(&fragment, now),
+        Err(Error::Malformed),
+        "MXAFv3 cannot masquerade as exact raw v2"
+    );
+    let mut lengths = Reassembler::new(config.clone()).unwrap();
+    lengths.admit_variable(d).unwrap();
+    let one = vec![1; 181];
+    let two = vec![1; 100];
+    let first = sender.fragments(0, &one).unwrap().next().unwrap();
+    lengths.ingest(&first, now).unwrap();
+    let switched = sender.fragments(0, &two).unwrap().nth(1).unwrap();
+    assert_eq!(lengths.ingest(&switched, now), Err(Error::Conflict));
+    assert_eq!(lengths.take(1, 1, 0, now), Err(Error::Conflict));
+    let too_large = vec![0; 4097];
+    assert!(sender.fragments(2, &too_large).is_err());
+    let mut bomb = first;
+    bomb[40..44].copy_from_slice(&u32::MAX.to_be_bytes());
+    assert_eq!(lengths.ingest(&bomb, now), Err(Error::Malformed));
+    assert!(lengths.buffered_bytes() <= lengths.reserved_bytes());
+}

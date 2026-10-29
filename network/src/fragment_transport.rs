@@ -24,6 +24,9 @@ use tokio::{
 };
 
 const VERSION: u16 = 2;
+#[cfg(feature = "codecs")]
+#[path = "codec_transport.rs"]
+pub mod codecs;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +35,12 @@ struct BlockOffer {
     generation: u64,
     spec: Spec,
     max_datagram: usize,
+    #[cfg(feature = "codecs")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    codec: Option<codecs::CodecRequest>,
+    #[cfg(feature = "codecs")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_envelope_bytes: Option<usize>,
 }
 
 fn descriptor(offer: &Offer) -> Result<Descriptor> {
@@ -136,6 +145,8 @@ pub fn fragment_endpoint(
         permissions,
         limits,
         config,
+        #[cfg(feature = "codecs")]
+        codecs: None,
     })
 }
 
@@ -144,6 +155,8 @@ pub struct FragmentEndpoint {
     permissions: Permissions,
     limits: Limits,
     config: Config,
+    #[cfg(feature = "codecs")]
+    codecs: Option<codecs::CodecConfig>,
 }
 impl FragmentEndpoint {
     pub fn local_addr(&self) -> Result<SocketAddr> {
@@ -167,9 +180,13 @@ impl FragmentEndpoint {
             permissions: self.permissions.clone(),
             limits: self.limits.clone(),
             config: self.config.clone(),
+            #[cfg(feature = "codecs")]
+            codecs: self.codecs.clone(),
             receiver: Mutex::new(ReceiveState {
                 reassembler: Reassembler::new(self.config.clone())?,
                 revoked: BTreeSet::new(),
+                #[cfg(feature = "codecs")]
+                codecs: BTreeMap::new(),
             }),
             outgoing: Mutex::new(SendState::default()),
             admission: AsyncMutex::new(()),
@@ -182,6 +199,8 @@ impl FragmentEndpoint {
 struct ReceiveState {
     reassembler: Reassembler,
     revoked: BTreeSet<u64>,
+    #[cfg(feature = "codecs")]
+    codecs: BTreeMap<u64, codecs::ReceivingCodec>,
 }
 #[derive(Default)]
 struct SendState {
@@ -195,6 +214,8 @@ struct Sending {
     busy: bool,
     active: bool,
     waiter: Option<Waker>,
+    #[cfg(feature = "codecs")]
+    codec: Option<codecs::SendingCodec>,
 }
 
 pub struct FragmentSession {
@@ -202,6 +223,8 @@ pub struct FragmentSession {
     permissions: Permissions,
     limits: Limits,
     config: Config,
+    #[cfg(feature = "codecs")]
+    codecs: Option<codecs::CodecConfig>,
     receiver: Mutex<ReceiveState>,
     outgoing: Mutex<SendState>,
     admission: AsyncMutex<()>,
@@ -326,16 +349,52 @@ impl FragmentSession {
             !rx.revoked.contains(&wire.spec.stream),
             "receive permission revoked"
         );
-        rx.reassembler.admit(descriptor(&Offer {
+        let offer = Offer {
             version: crate::VERSION,
             generation: wire.generation,
             spec: wire.spec,
-        })?)?;
+        };
+        #[cfg(feature = "codecs")]
+        if let Some(request) = wire.codec {
+            let (state, geometry) = self.incoming_codec(&offer, &request)?;
+            ensure!(
+                wire.max_envelope_bytes == Some(geometry.block_bytes),
+                "codec envelope maximum mismatch"
+            );
+            rx.reassembler.admit_variable(geometry)?;
+            if let Some(old) = rx.codecs.insert(offer.spec.stream, state) {
+                old.life.invalidate();
+                old.decoder.revocation().revoke();
+            }
+            self.changed.notify_waiters();
+            return Ok(());
+        }
+        #[cfg(feature = "codecs")]
+        ensure!(
+            self.codecs.is_none() && wire.max_envelope_bytes.is_none(),
+            "codec endpoint requires exact codec agreement"
+        );
+        rx.reassembler.admit(descriptor(&offer)?)?;
         self.changed.notify_waiters();
         Ok(())
     }
     pub async fn negotiate(self: &Arc<Self>, offer: Offer) -> Result<()> {
+        #[cfg(feature = "codecs")]
+        return self.negotiate_inner(offer, None).await;
+        #[cfg(not(feature = "codecs"))]
+        self.negotiate_inner(offer).await
+    }
+    async fn negotiate_inner(
+        self: &Arc<Self>,
+        offer: Offer,
+        #[cfg(feature = "codecs")] codec: Option<(codecs::CodecRequest, codecs::SendingCodec)>,
+    ) -> Result<()> {
         self.connected()?;
+        #[cfg(feature = "codecs")]
+        ensure!(
+            self.codecs.is_some() == codec.is_some(),
+            "explicit codec endpoint agreement required"
+        );
         descriptor(&offer)?;
         ensure!(
             self.permissions.send.get(&offer.spec.stream) == Some(&offer.spec),
@@ -368,18 +427,21 @@ impl FragmentSession {
             generation: offer.generation,
             spec: offer.spec.clone(),
             max_datagram: self.config.max_datagram,
+            #[cfg(feature = "codecs")]
+            codec: codec.as_ref().map(|(request, _)| request.clone()),
+            #[cfg(feature = "codecs")]
+            max_envelope_bytes: codec
+                .as_ref()
+                .map(|(_, state)| codecs::maximum(state.encoder.negotiated()))
+                .transpose()?,
         };
-        timeout(self.limits.control_timeout, async {
+        let reply = timeout(self.limits.control_timeout, async {
             let (mut send, mut receive) = self.base.connection.open_bi().await?;
             write_control(&mut send, &wire).await?;
             send.finish()?;
             let reply: Reply = read_control(&mut receive).await?;
-            ensure!(
-                reply.version == VERSION && reply.accepted,
-                "block offer rejected: {}",
-                reply.reason
-            );
-            Ok::<_, anyhow::Error>(())
+            ensure!(reply.version == VERSION, "block reply version mismatch");
+            Ok::<_, anyhow::Error>(reply)
         })
         .await
         .context("block negotiation timeout")??;
@@ -393,6 +455,12 @@ impl FragmentSession {
             !self.closed.load(Ordering::Acquire) && tx.negotiating.remove(&offer.spec.stream),
             "negotiation invalidated"
         );
+        // An explicit negative reliable reply made no receiver mutation. Retain
+        // the old generation and siblings; only an uncertain outcome closes.
+        if !reply.accepted {
+            uncertain.confirmed = true;
+            anyhow::bail!("block offer rejected: {}", reply.reason);
+        }
         tx.streams.insert(
             offer.spec.stream,
             Sending {
@@ -401,6 +469,8 @@ impl FragmentSession {
                 busy: false,
                 active: true,
                 waiter: None,
+                #[cfg(feature = "codecs")]
+                codec: codec.map(|(_, state)| state),
             },
         );
         // Successful reliable agreement owns the new generation. Cancel/error closes
@@ -432,6 +502,11 @@ impl FragmentSession {
                 bytes.len() == state.offer.spec.payload_bytes()?,
                 "block payload length mismatch"
             );
+            #[cfg(feature = "codecs")]
+            ensure!(
+                state.codec.is_none(),
+                "codec admission requires paced send_codec"
+            );
             let next = state
                 .next
                 .checked_add(1)
@@ -448,8 +523,19 @@ impl FragmentSession {
             committed: false,
         };
         let fragmenter = Fragmenter::new(self.config.clone(), descriptor(&offer)?)?;
+        self.send_fragments(stream, generation, fragmenter.fragments(sequence, bytes)?)
+            .await?;
+        guard.committed = true;
+        Ok(())
+    }
+    async fn send_fragments(
+        self: &Arc<Self>,
+        stream: u64,
+        generation: u64,
+        fragments: fragmentation::Fragments<'_>,
+    ) -> Result<()> {
         timeout(self.limits.control_timeout, async {
-            for fragment in fragmenter.fragments(sequence, bytes)? {
+            for fragment in fragments {
                 self.connected()?;
                 let pending = self.base.connection.send_datagram_wait(fragment.into());
                 tokio::pin!(pending);
@@ -481,7 +567,6 @@ impl FragmentSession {
         })
         .await
         .context("block send timeout")??;
-        guard.committed = true;
         Ok(())
     }
     /// Exact complete block only. Missing/expired data is an error/None: a host
@@ -495,6 +580,11 @@ impl FragmentSession {
         self.connected()?;
         let mut rx = self.receiver.lock().expect("receive poisoned");
         ensure!(!rx.revoked.contains(&stream), "receive permission revoked");
+        #[cfg(feature = "codecs")]
+        ensure!(
+            !rx.codecs.contains_key(&stream),
+            "codec receiver requires lifecycle-gated playout"
+        );
         let spec = self
             .permissions
             .receive
@@ -541,6 +631,11 @@ impl FragmentSession {
         );
         let mut rx = self.receiver.lock().expect("receive poisoned");
         rx.revoked.insert(stream);
+        #[cfg(feature = "codecs")]
+        if let Some(state) = rx.codecs.get(&stream) {
+            state.life.invalidate();
+            state.decoder.revocation().revoke();
+        }
         match rx.reassembler.revoke(stream) {
             Ok(()) | Err(fragmentation::Error::Unadmitted) => {}
             Err(e) => return Err(e.into()),
@@ -558,6 +653,10 @@ impl FragmentSession {
             tx.revoked.insert(stream);
             tx.streams.get_mut(&stream).and_then(|s| {
                 s.active = false;
+                #[cfg(feature = "codecs")]
+                if let Some(codec) = &s.codec {
+                    codec.encoder.revocation().revoke();
+                }
                 s.waiter.take()
             })
         };
@@ -569,11 +668,15 @@ impl FragmentSession {
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
         self.base.close();
-        self.receiver
-            .lock()
-            .expect("receive poisoned")
-            .reassembler
-            .disconnect();
+        {
+            let mut rx = self.receiver.lock().expect("receive poisoned");
+            rx.reassembler.disconnect();
+            #[cfg(feature = "codecs")]
+            for state in rx.codecs.values() {
+                state.life.invalidate();
+                state.decoder.revocation().revoke();
+            }
+        }
         let streams = {
             let mut tx = self.outgoing.lock().expect("send poisoned");
             tx.negotiating.clear();
@@ -589,6 +692,6 @@ impl FragmentSession {
 }
 impl Drop for FragmentSession {
     fn drop(&mut self) {
-        self.base.close();
+        self.close();
     }
 }
