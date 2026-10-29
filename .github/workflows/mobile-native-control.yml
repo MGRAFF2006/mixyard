@@ -104,8 +104,8 @@ jobs:
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/android-shipping-http-gradle
         run: |
-          gradle --no-daemon :app:assembleDebug :app:lintDebug --write-locks
-          gradle --no-daemon :app:dependencies --configuration releaseRuntimeClasspath --write-locks
+          gradle --no-daemon :app:assembleDebug :app:lintDebug
+          gradle --no-daemon :app:dependencies --configuration releaseRuntimeClasspath
       - uses: actions/upload-artifact@v6
         with:
           name: mobile-android-http-dependency-locks

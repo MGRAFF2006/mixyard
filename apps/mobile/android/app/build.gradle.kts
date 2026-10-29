@@ -1,3 +1,5 @@
+import org.gradle.api.artifacts.dsl.LockMode
+
 plugins { id("com.android.application"); kotlin("android") }
 android {
     namespace = "org.mixyard.mobile"
@@ -7,4 +9,4 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies { implementation(project(":core")); implementation(project(":http")); implementation("androidx.webkit:webkit:1.12.1") }
-dependencyLocking { lockAllConfigurations() }
+dependencyLocking { lockAllConfigurations(); lockMode.set(LockMode.STRICT) }
