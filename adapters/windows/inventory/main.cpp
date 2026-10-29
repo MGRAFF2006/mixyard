@@ -7,6 +7,8 @@
 #include <ks.h>
 #include <ksmedia.h>
 #include <wrl.h>
+#include <fcntl.h>
+#include <io.h>
 #include <cstring>
 #include <memory>
 
@@ -100,6 +102,10 @@ static inv::Snapshot snapshot() {
 }
 
 int main(int argc, char** argv) {
+    // The wire bound includes the LF byte. CRT text mode expands it to CRLF,
+    // including in fixed diagnostics; use exact bytes before any stdio output.
+    if (_setmode(_fileno(stdout), _O_BINARY) == -1 || _setmode(_fileno(stderr), _O_BINARY) == -1)
+        return 1;
     if (argc != 2 || std::strcmp(argv[1], "snapshot") != 0) {
         std::fputs("native-inventory-invalid-arguments\n", stderr);
         return 2;
