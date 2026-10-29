@@ -61,9 +61,9 @@ function formReady() {
 }
 async function save(useBuilder: boolean) {
   if (!formReady() || (useBuilder && !props.builderReady())) return
-  const generation = s.generation, builderGeneration = props.builderGeneration
+  const generation = s.generation, builderGeneration = props.builderGeneration, epoch = props.api.epoch ?? props.epoch
   const saved = await s.save(useBuilder ? { graph: props.graph, catalog: props.catalog } : undefined)
-  if (saved && generation === s.generation && !s.needsRead && !s.dirty) {
+  if (saved && epoch === (props.api.epoch ?? props.epoch) && generation === s.generation && !s.needsRead && !s.dirty) {
     syncForm()
     // Adopt authoritative defaults/revisions only for the graph just saved.
     // A later builder edit must survive an in-flight acknowledgment.
@@ -95,7 +95,7 @@ function exportDraft() {
   const snapshot: SettingsSnapshot = { ...(s.saved ?? {}), format: 'mixyard-situation-settings', schemaVersion: 1, settingsRevision: s.saved?.settingsRevision ?? 0, settings: s.draft }
   download(snapshot, 'mixyard-situation-settings-v1.json')
 }
-defineExpose({ hasUnsavedDrafts: () => s.dirty || !!json.value })
+defineExpose({ hasUnsavedDrafts: () => s.dirty || !!json.value || !!form.value?.querySelector(':invalid') })
 let poll: ReturnType<typeof setTimeout> | undefined, ticker: ReturnType<typeof setInterval> | undefined, disposed = false
 async function refresh() {
   if (props.ready && props.visible && document.visibilityState === 'visible' && s.connected && !s.busy && !s.controlBusy) await s.refreshStatus()

@@ -135,7 +135,7 @@ export class ActivationSession {
       else this.dirty = true
       this.notice = 'Settings saved; automatic selection is disarmed. Review again before arming. Edits made during saving are kept.'
       await this.refreshStatus()
-      return true
+      return session === this.session && authority === this.authorityGeneration
     } catch (error) {
       if (authority === this.authorityGeneration) { this.fail(error); this.notice = 'Write outcome needs a fresh read before another save. Local settings and builder edits are kept; no automatic retry.' }
       return false
