@@ -3,7 +3,6 @@ pub mod client;
 #[cfg(target_os = "linux")]
 pub mod discovery;
 pub mod inventory;
-pub mod worker;
 mod inventory_json;
 #[cfg(unix)]
 #[path = "inventory_unix.rs"]
@@ -14,6 +13,7 @@ mod inventory_os;
 mod inventory_state;
 #[cfg(any(target_os = "macos", windows, test))]
 mod native_inventory;
+pub mod worker;
 pub use client::{
     Availability, Backend, Capabilities, Lifecycle, LifecycleEvent, NativeAudioProof,
     ReadOnlyClient, RuntimeEvent, ServerError, Snapshot,
