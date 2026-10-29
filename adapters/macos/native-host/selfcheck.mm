@@ -74,11 +74,12 @@ void sourceLifecycle() {
     {
         auto capture = m::Capture::open(selection(), {7, 1}, timeline()); capture->start();
         const auto late = Block_copy(sdk::captureNotices[0].block);
+        const auto lateAddress = sdk::captureNotices[0].address;
         const auto control = sdk::captureNotices[0].queue; dispatch_retain(control);
-        dispatch_sync(control, ^{ late(0, nullptr); });
+        dispatch_sync(control, ^{ late(1, &lateAddress); });
         assert(capture->queue().fault() == w::Fault::Revoked && !sdk::capture.running);
         assert(capture->close()); capture.reset();
-        dispatch_sync(control, ^{ late(0, nullptr); });
+        dispatch_sync(control, ^{ late(1, &lateAddress); });
         Block_release(late); dispatch_release(control);
     }
     sdk::clean();
@@ -201,7 +202,7 @@ void linkedGraph(const char* path, w::Precision sourcePrecision, w::Precision si
     assert(step(*link, now, {7, 1, 11, 0, 0, now, now + 1000000000}) == m::StepResult::Processed);
     render(ticks, 0, shared, w::Precision::Float64);
     const auto notice = sdk::outputNotices[0];
-    dispatch_sync(notice.queue, ^{ notice.block(0, nullptr); });
+    dispatch_sync(notice.queue, ^{ notice.block(1, &notice.address); });
     assert(callQ->fault() == w::Fault::Revoked && !sdk::output.running);
     assert(recordQ->fault() == w::Fault::None && capture->queue().fault() == w::Fault::None);
     assert(call->close()); // Closing one consumer preserves sibling PCM.
