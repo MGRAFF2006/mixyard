@@ -40,15 +40,23 @@
 //! an independent native runtime surviving UI closure; this crate has no UI deps.
 
 pub mod audio;
+#[cfg(feature = "desktop")]
 pub mod automation;
+#[cfg(feature = "desktop")]
 pub mod context;
 pub mod diagnostics;
 pub mod dsp;
 pub mod latency;
+#[cfg(feature = "desktop")]
 pub mod profiles;
+#[cfg(feature = "desktop")]
 mod store_fs;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "desktop")]
+pub mod runtime;
+#[cfg(not(feature = "desktop"))]
+#[path = "runtime/core.rs"]
 pub mod runtime;
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -1,0 +1,39 @@
+name: Shared core without desktop IPC
+on:
+  workflow_dispatch:
+  push:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/audio*', 'tests/dsp*', 'tests/latency.rs', 'tests/runtime_worker.rs', '.github/workflows/mobile-core.yml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/audio*', 'tests/dsp*', 'tests/latency.rs', 'tests/runtime_worker.rs', '.github/workflows/mobile-core.yml']
+permissions:
+  contents: read
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+jobs:
+  portable-behavior:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked --no-default-features --lib --test audio_core --test audio_precision --test audio_allocations --test dsp_core --test dsp_allocations --test latency --test runtime_worker
+      - run: cargo tree --locked --no-default-features -e normal
+  mobile-target:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+          - os: macos-latest
+            target: aarch64-apple-ios
+          - os: macos-latest
+            target: aarch64-apple-ios-sim
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo check --locked --no-default-features --lib --target ${{ matrix.target }}
