@@ -45,6 +45,26 @@ gates, staged priorities and actual-device acceptance. These are planned adapter
 not implemented compatibility or a universal casting promise. Preserve the shared
 precision, privacy and explicit-conversion requirements in every direction.
 
+### Current priorities and device/mobile scope (2026-10-29)
+
+The [current roadmap](ROADMAP.md) is the priority/acceptance index;
+[#59](https://github.com/MGRAFF2006/mixyard/issues/59) tracks shared device/native/mobile clients. It carries
+forward native audio, precision, DSP, situations and bidirectional interoperability,
+and adds full paired-device management to every interface: desktop browser,
+Windows/macOS/Linux native app and quick controls, and Android/iOS/iPadOS.
+Management targets are distinct from audio destinations; device/session identity,
+permissions, revisions and drafts must remain separate when switching hosts.
+
+Plan an opt-in authenticated remote control edge, native desktop apps/trays on all
+three OSes (with full-app/CLI fallback on Linux hosts without a tray), native mobile
+receivers and microphone/external/file senders, simultaneous send/receive and
+standalone mobile mixing/DSP. Preserve the full model through simple presets,
+complete ordinary controls and optional expert settings. Platform-specific capture,
+Apple routing/call extensions and cooperative injection are separately qualified
+capabilities, never a generic mobile virtual-mic promise. The supplied
+[mobile feasibility assessment](mobile-feasibility.md) records limits and sources.
+The laptop is offline; continue homelab/hosted work without laptop access or SSH.
+
 ## Product contract
 
 Create arbitrary user-defined mixes that applications can select as audio inputs
@@ -168,7 +188,9 @@ stable --json outputs, meaningful nonzero failures and JSONL events where useful
 Commands act on the same desired/observed state, not a competing audio graph.
 Mutating runtime commands follow the control runtime milestone, not the first
 dry-run policy prototype. Per-user local IPC uses OS permissions (Unix sockets /
-Windows named pipes); no public control listener or app OAuth scheme is needed.
+Windows named pipes). Keep it private; cross-device clients use a separate opt-in
+authenticated control edge with scoped pairing/revocation. Neither a loopback
+CSRF/session token nor a trusted network is remote-user authorization.
 Use private per-user sockets with peer checks / current-user named-pipe ACLs;
 reject remote pipe clients. The OS user account is the authorization boundary,
 not isolation from other programs of the same user. Webview bridge capabilities
@@ -397,8 +419,11 @@ macOS packaging/signing/notarization and SDK availability are release gates.
 Desktop scope initially targets current Linux/PipeWire, Windows 11 and a macOS
 version established by tap API availability and native tests. Linux without
 PipeWire and older desktops are separate potential adapters. Android/iOS public
-capture APIs do not establish universal virtual-mic injection; mobile starts as
-possible controller or cooperating-app integrations, not promised desktop parity.
+capture APIs do not establish universal virtual-mic injection. Full mobile
+controllers, native playback/capture endpoints and standalone mixing are planned,
+with shared capabilities wherever public APIs permit them; see the
+[mobile/device roadmap](ROADMAP.md). Per-app capture, call integration and multiple
+physical routes retain separately qualified OS/version constraints.
 
 ## Verified setup and open gates
 
