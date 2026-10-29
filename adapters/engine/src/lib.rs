@@ -7,6 +7,8 @@ use mixyard::runtime::worker;
 use mixyard::{AudioFormat, Config, Inventory, ResolutionStatus};
 use serde::{Deserialize, Serialize};
 use std::{ffi::c_char, ptr, slice};
+mod attestation;
+pub use attestation::MxOutputPacket;
 
 pub const MX_OK: i32 = 0;
 pub const MX_INVALID: i32 = 1;
@@ -18,6 +20,7 @@ pub const MX_EXPIRED: i32 = 6;
 pub const MX_INACTIVE: i32 = 7;
 pub const MX_BUFFER: i32 = 8;
 pub const MX_PROCESS: i32 = 9;
+pub const MX_UNAVAILABLE: i32 = 10;
 const MAX_REQUEST: usize = 1024 * 1024;
 
 #[no_mangle]
@@ -243,6 +246,8 @@ pub struct MxHost {
     outputs: Vec<Option<Output>>,
     source_info: Vec<Vec<u8>>,
     output_info: Vec<Vec<u8>>,
+    attestations: Vec<Option<attestation::Cached>>,
+    output_stamp: Option<MxStamp>,
     binding: worker::Binding,
     clock_id: u64,
     next_sequence: u64,
@@ -338,7 +343,7 @@ fn effect(
     }))
 }
 impl MxHost {
-    fn new(request: Request) -> Result<Self, String> {
+    fn new(request: Request, request_digest: String) -> Result<Self, String> {
         let Request {
             config,
             inventory,
@@ -427,6 +432,16 @@ impl MxHost {
                 max_buffer_samples: limits.max_buffer_samples,
             },
         )?;
+        let attestations = attestation::compile(attestation::Input {
+            plan: processor.plan(),
+            inventory: &inventory,
+            sources: &sources,
+            outputs: &outputs,
+            dsp: (&source_dsp, &mix_dsp, &output_dsp),
+            generation,
+            clock_id,
+            request_digest,
+        });
         let bank = processor.input_bank(
             source_channels
                 .checked_mul(max_frames)
@@ -596,6 +611,8 @@ impl MxHost {
             outputs: output_states,
             source_info,
             output_info,
+            attestations,
+            output_stamp: None,
             binding,
             clock_id,
             next_sequence: 0,
@@ -607,6 +624,7 @@ impl MxHost {
     }
     fn revoke(&mut self) {
         self.active = false;
+        self.output_stamp = None;
         self.bank.clear();
         self.mix_bank.clear();
         for source in self.sources.iter_mut().flatten() {
@@ -667,6 +685,7 @@ impl MxHost {
             .first_frame
             .checked_add(frames as u64)
             .ok_or(MX_STALE)?;
+        self.output_stamp = None;
         let mut source_lost = false;
         self.bank.clear();
         self.mix_bank.clear();
@@ -810,6 +829,7 @@ impl MxHost {
             }
             output.count = frames * output.queue.format().channels.len();
         }
+        self.output_stamp = Some(stamp);
         self.next_sequence = next_sequence;
         self.next_frame = next_frame;
         self.last_now = now;
@@ -857,7 +877,10 @@ pub unsafe extern "C" fn mx_host_create(
             return MX_INVALID;
         }
     };
-    match MxHost::new(request) {
+    match MxHost::new(
+        request,
+        attestation::digest(slice::from_raw_parts(bytes, length)),
+    ) {
         Ok(host) => {
             *out = Box::into_raw(Box::new(host));
             MX_OK
