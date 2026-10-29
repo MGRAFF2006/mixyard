@@ -239,3 +239,129 @@ pub async fn raw_proof() -> Result<()> {
     assert!(a.enqueue(101, sample_bytes(&streams[0], 0)).await.is_err());
     Ok(())
 }
+
+/// Encrypted network to caller-owned blocks; times below are deliberately injected
+/// LOCAL scheduled block starts, not an audio device's observed clock.
+pub async fn playout_proof() -> Result<()> {
+    use mixyard_network::playout::*;
+    use std::time::Instant;
+    let streams = [
+        spec(
+            401,
+            "a",
+            Codec::RawS24Le,
+            96_000,
+            &["FL", "FR", "FC", "LFE", "SL", "SR"],
+            5,
+        ),
+        spec(
+            402,
+            "a",
+            Codec::RawF64Le,
+            44_117,
+            &["FR", "FL", "height", "aux"],
+            5,
+        ),
+        spec(403, "a", Codec::RawF32Le, 192_000, &["selected-mono"], 5),
+    ];
+    let (a, b, _ea, _eb) = pair(&streams, &[]).await?;
+    let run_a = tokio::spawn(a.clone().run());
+    let run_b = tokio::spawn(b.clone().run());
+    for s in &streams {
+        a.negotiate(offer(s.clone(), 1)).await?;
+    }
+    let anchor = Instant::now();
+    let mut handles: Vec<_> = streams
+        .iter()
+        .map(|s| {
+            b.create_playout(
+                s.stream,
+                PlayoutConfig {
+                    anchor,
+                    target_buffer_frames: 7,
+                },
+            )
+        })
+        .collect::<Result<_>>()?;
+    for seq in 0..4 {
+        for s in &streams {
+            let bytes = sample_bytes(s, seq);
+            let frame_bytes = s.codec.sample_bytes()? * s.channels.len();
+            assert_eq!(a.enqueue_pcm(s.stream, &bytes[..frame_bytes]).await?, 0);
+            assert_eq!(a.enqueue_pcm(s.stream, &bytes[frame_bytes..]).await?, 1);
+        }
+        a.flush_round().await?;
+    }
+    for (s, p) in streams.iter().zip(&mut handles) {
+        wait_queued(&b, s.stream, 4).await?;
+        b.service_playout(p)?;
+        let frame_bytes = s.codec.sample_bytes()? * s.channels.len();
+        let mut before = vec![0xff; frame_bytes * 3];
+        assert_eq!(p.render_into(anchor, &mut before)?.prebuffer_frames, 3);
+        assert!(before.iter().all(|&b| b == 0));
+        let expected: Vec<_> = (0..4).flat_map(|seq| sample_bytes(s, seq)).collect();
+        let mut cursor = 0;
+        for frames in [2, 7, 1, 10] {
+            let elapsed_frames = 7 + cursor as u64;
+            let nanos = (elapsed_frames * 1_000_000_000).div_ceil(u64::from(s.sample_rate));
+            let local_block_start = anchor
+                .checked_add(Duration::from_nanos(nanos))
+                .expect("short fixture time");
+            let mut block = vec![0xff; frames * frame_bytes];
+            let report = p.render_into(local_block_start, &mut block)?;
+            assert_eq!(report.audio_frames, frames as u64);
+            assert_eq!(
+                block,
+                expected[cursor * frame_bytes..(cursor + frames) * frame_bytes]
+            );
+            cursor += frames;
+        }
+        println!("{}", serde_json::to_string(&p.snapshot())?);
+    }
+    // Retain old-generation bytes, then prove reliable restart invalidates them
+    // without a service tick. Sibling generation remains active.
+    a.enqueue(streams[0].stream, sample_bytes(&streams[0], 4))
+        .await?;
+    a.flush_round().await?;
+    b.service_playout(&mut handles[0])?; // Advance ingress to the rendered cursor.
+    wait_queued(&b, streams[0].stream, 1).await?;
+    b.service_playout(&mut handles[0])?;
+    assert_eq!(handles[0].snapshot().buffered_frames, 5);
+    let receipt = handles[0].revocation();
+    a.negotiate(offer(streams[0].clone(), 2)).await?;
+    assert_eq!(receipt.status(), RevocationStatus::Complete);
+    assert!(handles[1].snapshot().active);
+    let mut out = vec![0xff; streams[0].payload_bytes()?];
+    assert_eq!(
+        handles[0]
+            .render_into(
+                anchor
+                    .checked_add(Duration::from_millis(10))
+                    .expect("short fixture time"),
+                &mut out
+            )?
+            .inactive_frames,
+        5
+    );
+    assert!(out.iter().all(|&b| b == 0));
+    let revoked = b.revoke_receive(streams[1].stream)?;
+    assert_eq!(revoked.status(), RevocationStatus::Complete);
+    b.close(); // Local close invalidates remaining consumer without another handoff.
+    out.resize(streams[2].payload_bytes()?, 0xff);
+    assert_eq!(
+        handles[2]
+            .render_into(
+                anchor
+                    .checked_add(Duration::from_millis(10))
+                    .expect("short fixture time"),
+                &mut out
+            )?
+            .inactive_frames,
+        5
+    );
+    assert!(out.iter().all(|&b| b == 0));
+    a.close();
+    let _ = run_a.await?;
+    let _ = run_b.await?;
+    Ok(())
+}

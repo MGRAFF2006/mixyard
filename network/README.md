@@ -43,3 +43,14 @@ See the [timing contract and bounds](../docs/network-audio.md#executable-timing-
 For a small build cache set `CARGO_PROFILE_DEV_DEBUG=0`,
 `CARGO_PROFILE_TEST_DEBUG=0`, and `CARGO_INCREMENTAL=0`; use a private target/cache
 and retain the 10 GiB free-space reserve.
+
+For executable sample-aligned consumer blocks with an explicit local anchor:
+
+```sh
+cargo run --locked --manifest-path network/Cargo.toml --example playout -j2
+```
+
+This runs encrypted loopback into preallocated blocks and prints per-stream
+playout snapshots. Its local block times are injected schedule fixtures; it opens
+no native device. See [the playout API, exact timing rules, lifecycle receipts and
+remaining qualification gates](../docs/network-playout.md).
