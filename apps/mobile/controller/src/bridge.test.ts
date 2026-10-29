@@ -126,3 +126,25 @@ test('native transport failures immediately clear the shared Api instead of leav
   await assert.rejects(api.post('/api/status'), /offline or timed out/)
   assert.equal(api.connected, false)
 })
+
+test('scoped revocation clears mobile host notifications and shared authority; permission denial retains both', async () => {
+  for (const [status, code, revoked] of [[409, 'store-conflict', true], [401, 'unauthorized', true], [403, 'invalid-origin', true], [403, 'permission-denied', false]] as const) {
+    const notifications: unknown[] = []
+    let dispatched = 0
+    const bridge = new MobileBridge(async method => {
+      if (method === 'session') return session
+      dispatched++
+      return nativeReply({ ...session, status, body: { error: { code, message: 'Original canonical reason' } } }, status)
+    }, value => { notifications.push(value) })
+    const api = Api.forControl(bridge.fetch, { deviceId: session.deviceId, credential: 'native-owned' })
+    await api.connect()
+    await assert.rejects(api.post('/api/automation/settings/write'), /Original canonical reason/)
+    assert.equal(api.connected, !revoked)
+    assert.equal(notifications.at(-1) === null, revoked)
+    if (revoked) {
+      assert.equal((await bridge.fetch('/control/request', request())).status, 401)
+      await assert.rejects(api.post('/api/automation/settings/read'), /Refresh to reconnect/)
+    }
+    assert.equal(dispatched, 1)
+  }
+})

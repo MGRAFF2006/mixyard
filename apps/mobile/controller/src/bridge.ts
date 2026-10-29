@@ -79,6 +79,14 @@ export class MobileBridge {
           reply.status !== native.status || !('body' in reply)) {
         this.invalidate(); throw new Error('Invalid or stale mobile authority reply. Refresh explicitly.')
       }
+      if ((native.status as number) >= 400) {
+        const failure = record(record(reply.body).error)
+        if (typeof failure.code !== 'string' || typeof failure.message !== 'string') throw new Error('Invalid canonical error reply.')
+        if (native.status === 401 || native.status === 409 || failure.code === 'invalid-origin') {
+          this.invalidate()
+          return new Response(native.json, { status: native.status as number, headers: { 'Content-Type': 'application/json' } })
+        }
+      }
       this.active = { ...session, revision: reply.revision as number }; this.notify(this.active)
       return new Response(native.json, { status: native.status as number, headers: { 'Content-Type': 'application/json' } })
     } catch (cause) {
