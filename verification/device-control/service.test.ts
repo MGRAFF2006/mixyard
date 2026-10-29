@@ -7,8 +7,9 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { Api } from '../../apps/web/src/api.ts'
+import { Api, ApiError } from '../../apps/web/src/api.ts'
 import { ActivationSession } from '../../apps/web/src/activation-session.ts'
+import { ConsoleSession } from '../../apps/web/src/session.ts'
 import { pinnedFetch } from './pinned-fetch.ts'
 
 const binary = process.env.MIXYARD_CONTROL_BINARY
@@ -121,7 +122,7 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
     const initialB = await apiB.post('/api/profiles/read') as { storeRevision: number; draft: unknown }
     const config = JSON.parse(readFileSync(join(root, 'apps/web/src/example-config.json'), 'utf8'))
     await assert.rejects(view.post('/api/profiles/edit', { expectedRevision: initialA.storeRevision, edit: { kind: 'draft', config } }), 'view role cannot edit stored routing intent')
-    const saved = await apiA.post('/api/profiles/edit', { expectedRevision: initialA.storeRevision, edit: { kind: 'draft', config } }) as { storeRevision: number; draft: unknown }
+    let saved = await apiA.post('/api/profiles/edit', { expectedRevision: initialA.storeRevision, edit: { kind: 'draft', config } }) as { storeRevision: number; draft: unknown }
     assert.ok(saved.storeRevision > initialA.storeRevision)
     assert.deepEqual((await apiB.post('/api/profiles/read') as { draft: unknown }).draft, initialB.draft, 'editing A must not alter B')
     await assert.rejects(competing.post('/api/profiles/edit', { expectedRevision: initialA.storeRevision, edit: { kind: 'undo' } }), 'competing stale controller cannot overwrite current revision')
@@ -130,6 +131,31 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
     // The canonical store advances config revision and fills schema defaults;
     // reopening must reproduce that committed value rather than the import.
     assert.deepEqual((await competing.post('/api/profiles/read') as { draft: unknown }).draft, saved.draft)
+
+    const conflictReached = Promise.withResolvers<void>(), conflictRelease = Promise.withResolvers<void>()
+    const raceTransport = a.fetcher()
+    const raceApi = a.api(ownerA.credential, async (input, init) => {
+      const response = await raceTransport(input, init)
+      if (input === '/control/request' && JSON.parse(String(init?.body)).path === '/api/automation/settings/write') {
+        assert.equal(response.status, 409, 'fixture must hold an actual canonical settings conflict')
+        conflictReached.resolve(); await conflictRelease.promise
+      }
+      return response
+    })
+    const console = new ConsoleSession(raceApi)
+    await console.refresh()
+    assert.equal(console.canWrite, true)
+    const currentSettings = await raceApi.post('/api/automation/settings/read') as { settings: unknown }
+    const staleSettings = raceApi.post('/api/automation/settings/write', { expectedSettingsRevision: 999, settings: currentSettings.settings })
+    const rejectedConflict = assert.rejects(staleSettings, error => error instanceof ApiError && error.status === 409 && error.code === 'store-conflict')
+    try {
+      await conflictReached.promise
+      saved = await raceApi.post('/api/profiles/edit', { expectedRevision: saved.storeRevision, edit: { kind: 'draft', config } }) as typeof saved
+      assert.equal(raceApi.identity!.revision, saved.storeRevision)
+    } finally { conflictRelease.resolve() }
+    await rejectedConflict
+    assert.equal(raceApi.connected, false, 'a newer successful revision cannot hide same-epoch canonical revocation')
+    assert.equal(console.canWrite, false, 'console writes stop immediately after that conflict')
 
     // Delay a real response after the server has produced it. Reconnection must
     // prevent that old operation from being accepted into the new authority.
