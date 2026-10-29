@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#error Native-host qualification requires enabled assertions
+#endif
 // SPDX-License-Identifier: MIT
 #include "capture.hpp"
 #include "native_output.hpp"
@@ -250,10 +253,18 @@ int main(int argc, char** argv) {
     assert(argc == 2); sdk::install();
     @autoreleasepool {
         sourceLifecycle();
+        std::cout << "MIXYARD_NATIVE_HOST_SOURCE_LIFECYCLE_OK\n";
+        unsigned completed = 0;
         for (auto source : {w::Precision::Float32, w::Precision::Float64})
             for (auto sink : {w::Precision::Float32, w::Precision::Float64})
                 for (bool stale : {false, true})
-                    for (bool partial : {false, true}) linkedGraph(argv[1], source, sink, stale, partial);
+                    for (bool partial : {false, true}) {
+                        linkedGraph(argv[1], source, sink, stale, partial);
+                        ++completed; // Includes the five-queue scrub assertion in each case.
+                    }
+        assert(completed == 16);
+        std::cout << "MIXYARD_NATIVE_HOST_MATRIX_OK cases=" << completed
+                  << " five_queue_scrub_assertion_per_case=true\n";
     }
     std::cout << "Actual Rust host + production tap ingress/output-only callback: scoped mixing, output DSP, exact source precision, explicit sink conversion, whole-generation source_loss, queued/partial cursor discard, destination isolation and native-close completion passed. Injected SDK clocks/identities only; no native audio.\n";
 }

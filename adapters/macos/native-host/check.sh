@@ -37,6 +37,7 @@ done
 xcrun --sdk macosx ar rcs "$scratch/libmixyard-macos-host.a" "$scratch/host_link.o" "$scratch/capture.o" "$scratch/native_output.o" "$scratch/output_only.o"
 xcrun --sdk macosx clang++ "${flags[@]}" link_check.cpp \
   -Wl,-force_load,"$scratch/libmixyard-macos-host.a" "$host_library" "${frameworks[@]}" -o "$scratch/link-check"
+echo 'MIXYARD_NATIVE_HOST_PRODUCTION_SDK_LINK_OK (linked only; no native activation)'
 rm -- "$scratch/host_link.o" "$scratch/capture.o" "$scratch/native_output.o" "$scratch/output_only.o" "$scratch/libmixyard-macos-host.a" "$scratch/link-check"
 # Actual Rust policy/mixer/DSP/clock; only native audio SDK functions are replaced.
 xcrun --sdk macosx clang++ "${flags[@]}" -DMIXYARD_NATIVE_HOST_TEST -DMIXYARD_OUTPUT_API_TEST \
@@ -49,4 +50,5 @@ if (( used > 16 * 1024 )); then
   exit 2
 fi
 ASAN_OPTIONS=detect_leaks=0 "$scratch/selfcheck" "$host_checkout/adapters/engine/fixtures/owned-common-clock.json"
+echo 'MIXYARD_NATIVE_HOST_SELF_CHECK_OK (assertions executed; injected SDK only)'
 echo "Native-host linked SDK/API-double tests passed; measured private peak ${used} KiB; artifacts removed. No native audio."

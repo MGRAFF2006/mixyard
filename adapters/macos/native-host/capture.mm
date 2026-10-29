@@ -193,7 +193,7 @@ w::Queue& Capture::queue() noexcept { return *impl_->queue; }
 const std::string& Capture::observedId() const noexcept { return impl_->uid; }
 void Capture::start() { impl_->sync([&] { impl_->startOwned(); }); }
 bool Capture::revoke() noexcept {
-    __block bool ok = false; impl_->sync([&] { ok = impl_->revokeOwned(); }); return ok;
+    bool ok = false; impl_->sync([&] { ok = impl_->revokeOwned(); }); return ok;
 }
 bool Capture::close() noexcept { return impl_->close(); }
 } // namespace mixyard::macos

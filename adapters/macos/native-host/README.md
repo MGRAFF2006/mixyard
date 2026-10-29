@@ -112,3 +112,12 @@ the frozen base. Its run records both full revisions and retains the safe test
 log. The host is built only on the disposable hosted runner, with one job, no
 incremental compilation and no debug symbols; both host and adapter artifacts are
 removed after the run. Adapter-generated SDK artifacts are limited to 16 MiB.
+
+The hosted SDK step uses an explicit outer `bash`/`pipefail` boundary around its
+`tee` log pipeline. A green tee process alone is not test evidence. Qualification
+requires the production SDK link marker, source-lifecycle marker, all 16 matrix
+cases reaching their five-queue scrub assertions, and the final selfcheck marker.
+The injected fixture rejects `NDEBUG` at compile time. Earlier green job
+123699518286 failed production compilation before these assertions; it is not
+SDK/link/lifecycle evidence. The current repair still needs actual hosted
+execution; no local Apple SDK result is claimed.

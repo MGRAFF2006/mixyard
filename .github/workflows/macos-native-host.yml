@@ -59,7 +59,9 @@ jobs:
           cargo build --locked --manifest-path shared-host/adapters/engine/Cargo.toml --lib --release -j 1
           du -sk "$CARGO_TARGET_DIR"
       - name: Link production SDK code and execute injected consumer PCM oracle
+        shell: bash
         run: |
+          set -euo pipefail
           bash attachment/adapters/macos/native-host/check.sh \
             "$GITHUB_WORKSPACE/shared-host" \
             "$RUNNER_TEMP/mixyard-shared-host-build/release/libmixyard_host.dylib" \
