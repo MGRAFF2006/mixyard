@@ -218,7 +218,13 @@ Additional operational bounds:
   inventory delivery reads/writes at most 64 KiB per tick. Raw helper draining
   performs at most 32 bounded reads per tick. Oversize/count errors explicitly
   ask to reduce the visible graph; nothing is silently truncated. A large graph
-  can hit the byte cap before its entry cap.
+  can hit the byte cap before its entry cap. The Windows overlapped transport
+  has a matching 64 KiB read buffer; a completed read retains any bytes not yet
+  consumed if the caller supplies a smaller slice on its next poll. Actual OS
+  transport tests cover valid large inventories and this changing-slice case.
+  Oversized-peer tests accept only expected disconnect errors from that hostile
+  writer and require InvalidData at the client, so a timeout is not a passing
+  admission result.
 
 `src/runtime/inventory.rs` defines the platform-neutral `Capture::poll()`
 boundary and trusted options. A provider returns `Result<Option<Inventory>>`

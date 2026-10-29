@@ -141,17 +141,19 @@ fn frame(value: &Value) -> Vec<u8> {
     bytes
 }
 
-fn write(stream: &mut transport::Stream, bytes: &[u8]) {
+fn write(stream: &mut transport::Stream, bytes: &[u8]) -> io::Result<()> {
     let started = Instant::now();
     let mut sent = 0;
     while sent < bytes.len() {
         match stream.write(&bytes[sent..]) {
             Ok(n) if n > 0 => sent += n,
+            Ok(_) => return Err(io::ErrorKind::WriteZero.into()),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => thread::sleep(TICK),
-            result => panic!("fake peer write: {result:?}"),
+            Err(e) => return Err(e),
         }
         assert!(started.elapsed() < LIMIT);
     }
+    Ok(())
 }
 
 struct Fake {
@@ -168,6 +170,14 @@ impl Fake {
         command: &'static str,
         reply: impl FnOnce(&str) -> Vec<u8> + Send + 'static,
         hold_open: bool,
+    ) -> Self {
+        Self::command_with_disconnect(command, reply, hold_open, false)
+    }
+    fn command_with_disconnect(
+        command: &'static str,
+        reply: impl FnOnce(&str) -> Vec<u8> + Send + 'static,
+        hold_open: bool,
+        allow_disconnect: bool,
     ) -> Self {
         let instance = instance();
         let endpoint = runtime::endpoint(&instance).unwrap();
@@ -200,7 +210,21 @@ impl Fake {
             assert_eq!(request["command"], command);
             assert_eq!(request["ipcVersion"], IPC_VERSION);
             assert_eq!(request.as_object().unwrap().len(), 3);
-            write(&mut stream, &reply(request["requestId"].as_str().unwrap()));
+            if let Err(error) = write(&mut stream, &reply(request["requestId"].as_str().unwrap())) {
+                // Only explicitly hostile oversized fixtures expect the reader
+                // to close before the entire response has been written.
+                assert!(
+                    allow_disconnect
+                        && matches!(
+                            error.kind(),
+                            io::ErrorKind::BrokenPipe
+                                | io::ErrorKind::ConnectionReset
+                                | io::ErrorKind::ConnectionAborted
+                                | io::ErrorKind::NotConnected
+                        ),
+                    "fake peer write: {error:?}"
+                );
+            }
             if hold_open {
                 finish.recv_timeout(LIMIT).unwrap();
             }
@@ -645,9 +669,88 @@ fn inventory_query_is_actual_typed_ipc_and_lifecycle_daemon_reports_unavailable(
     assert!(ReadOnlyClient::inventory(&fake.instance, &AtomicBool::new(true)).is_err());
 }
 #[test]
+fn valid_large_inventory_replies_arrive_over_actual_os_transport() {
+    use std::sync::atomic::AtomicBool;
+    for count in [130, 420] {
+        let fake = Fake::command(
+            "inventory",
+            move |id| {
+                let sources: Vec<Value> = (0..count)
+                    .map(|i| {
+                        json!({
+                            "observedId":format!("source:{i}:{}", "x".repeat(2048)),
+                            "selector":{"kind":"mic","deviceUid":format!("fixture-device-{i}")},
+                            "origin":"external","format":null
+                        })
+                    })
+                    .collect();
+                let reply = frame(&envelope(
+                    id,
+                    json!({"schemaVersion":2,"revision":77,
+                "platform":"linux","evidence":"simulated","sources":sources,"outputs":[]}),
+                ));
+                assert!(reply.len() > 256 * 1024 && reply.len() <= runtime::MAX_INVENTORY_FRAME);
+                reply
+            },
+            true,
+        );
+        let inventory = ReadOnlyClient::inventory(&fake.instance, &AtomicBool::new(false)).unwrap();
+        assert_eq!(inventory.revision, 77);
+        assert_eq!(inventory.sources.len(), count);
+        assert_eq!(
+            inventory.sources[count - 1].observed_id,
+            format!("source:{}:{}", count - 1, "x".repeat(2048))
+        );
+    }
+}
+
+#[test]
+fn transport_completes_pending_reads_into_smaller_caller_slices() {
+    let (waiting, ready) = mpsc::channel();
+    let (release, held) = mpsc::channel();
+    let expected = vec![b'q'; 32 * 1024];
+    let bytes = expected.clone();
+    let fake = Fake::command(
+        "inventory",
+        move |_| {
+            waiting.send(()).unwrap();
+            held.recv_timeout(LIMIT).unwrap();
+            bytes
+        },
+        true,
+    );
+    let mut stream = transport::connect(&runtime::endpoint(&fake.instance).unwrap()).unwrap();
+    write(
+        &mut stream,
+        &frame(&json!({"ipcVersion":IPC_VERSION,
+        "requestId":"pending-slice-check","command":"inventory"})),
+    )
+    .unwrap();
+    ready.recv_timeout(LIMIT).unwrap();
+    let mut initial = [0; 64 * 1024];
+    assert_eq!(
+        stream.read(&mut initial).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    release.send(()).unwrap();
+    let start = Instant::now();
+    let mut received = Vec::new();
+    while received.len() < expected.len() {
+        let mut small = [0; 17];
+        match stream.read(&mut small) {
+            Ok(n) if n > 0 => received.extend_from_slice(&small[..n]),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => thread::sleep(TICK),
+            result => panic!("small read after pending large read: {result:?}"),
+        }
+        assert!(start.elapsed() < LIMIT);
+    }
+    assert_eq!(received, expected);
+}
+
+#[test]
 fn inventory_rejects_bad_envelopes_oversize_and_is_cancellable_with_total_deadline() {
     use std::sync::{atomic::AtomicBool, Arc};
-    for kind in 0..7 {
+    for kind in [0, 1, 2, 3, 4, 6] {
         let fake = Fake::command(
             "inventory",
             move |id| {
@@ -661,7 +764,6 @@ fn inventory_rejects_bad_envelopes_oversize_and_is_cancellable_with_total_deadli
                 2=>reply["error"]=json!({"code":"both","message":"ambiguous"}),
                 3=>reply["result"]=Value::Null,
                 4=>reply["result"]["schemaVersion"]=json!(1),
-                5=>reply["result"]["extra"]=json!("x".repeat(runtime::MAX_INVENTORY_FRAME)),
                 6=>return format!("{{\"ipcVersion\":1,\"ipcVersion\":1,\"requestId\":\"{id}\",\"result\":null}}\n").into_bytes(),
                 _=>unreachable!(),
             }
@@ -669,11 +771,31 @@ fn inventory_rejects_bad_envelopes_oversize_and_is_cancellable_with_total_deadli
             },
             true,
         );
-        assert!(
-            ReadOnlyClient::inventory(&fake.instance, &AtomicBool::new(false)).is_err(),
+        assert_eq!(
+            ReadOnlyClient::inventory(&fake.instance, &AtomicBool::new(false))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData,
             "bad envelope {kind}"
         );
     }
+    let oversized = Fake::command_with_disconnect(
+        "inventory",
+        |id| {
+            frame(&envelope(
+                id,
+                json!({"schemaVersion":2,"revision":1,"platform":"linux",
+            "evidence":"simulated","sources":[],"outputs":[],
+            "extra":"x".repeat(runtime::MAX_INVENTORY_FRAME)}),
+            ))
+        },
+        true,
+        true,
+    );
+    let error =
+        ReadOnlyClient::inventory(&oversized.instance, &AtomicBool::new(false)).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("1 MiB"));
     let fake = Fake::command("inventory", |_| b"{\"ipcVersion\":".to_vec(), true);
     let start = Instant::now();
     assert_eq!(
