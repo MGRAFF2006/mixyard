@@ -10,7 +10,21 @@ layouts, hardware, general device clock adaptation and endurance are unqualified
 `graph.c` uses native `pw_filter` callbacks and mapped shared buffers, not shell
 PCM pipelines. Its raw ports negotiate exactly 48 kHz, interleaved Float64LE,
 ordered FL/FR and 128 frames. A different negotiated format/rate/quantum fails.
-No implicit Float32 DSP port, resampler or channel narrowing is used. The only
+No implicit Float32 DSP port, resampler or channel narrowing is used.
+SPA parsing returns a nonnegative collected-property count; zero is not its only
+success value. `native_format.h` shares the exact requested descriptor and
+validator with the real SDK-only POD regression run before native contexts are
+created. The regression builds/parses both request and negotiated-format PODs,
+rejects missing fields, truncated/negative parses and wrong encoding/rate/count/
+order, and catches the prior zero-only parser-return bug. SDK execution is hosted
+only; it has not run on the implementation host.
+
+Format notifications copy fixed-size numeric records (parser results, actual
+media/encoding/rate/count/flags/positions and role/direction/index). The first
+rejection per port is retained through shutdown. The control owner prints these
+bounded records in final JSON only after native contexts are destroyed; no
+logging, JSON or dynamic allocation is added to the process callback. Diagnostics
+never admit a different descriptor or replace the sample/lifecycle oracle. The only
 mixer/policy/clock/DSP implementation is `adapters/engine`; source aliases in the
 canonical fixture configuration do not represent discovered external apps.
 Generators are synthetic nodes external to the engine, never relabeled engine
@@ -33,7 +47,9 @@ and nonlingering links. No system services or defaults change.
 
 Metadata/3 protocol marshalling is explicitly registered in both owned server
 and client contexts. The exact server allowlist includes that single metadata
-module, and the native registry guard accepts the same list. Stderr remains a
+module. A strict C11 control test executes the actual native registry predicate
+and compares its complete allowlist with the server config and Python isolation
+gate; unexpected modules remain rejected. Stderr remains a
 fatal pre-PCM observation error. A rejected observation may include a bounded
 read-only registry listing for actual global IDs/types/versions; that diagnostic
 never qualifies the graph or assumes stable numeric IDs.

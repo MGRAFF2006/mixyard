@@ -1,6 +1,8 @@
 """Control-plane tests; these never import a native library or start PipeWire."""
 import copy
 import os
+import re
+import subprocess
 from pathlib import Path
 import tempfile
 import sys
@@ -24,6 +26,38 @@ def private_snapshot():
 
 
 class Isolation(unittest.TestCase):
+    def test_actual_c_module_guard_matches_server_and_python_isolation(self):
+        base = Path(__file__).resolve().parent
+        configured = re.findall(r'\{ name = (libpipewire-module-[\w-]+)',
+                                (base / "private.conf").read_text())
+        # Execute the same predicate/table used by global_added, without an SDK
+        # or native context. Exact cross-language/config agreement is the rule.
+        program = r'''#include <stdio.h>
+#include "private_modules.h"
+int main(void) {
+    if (mx_private_module_allowed(NULL) || mx_private_module_allowed("") ||
+        mx_private_module_allowed("libpipewire-module-protocol-pulse") ||
+        mx_private_module_allowed("libpipewire-module-metadata-extra")) return 1;
+    for (size_t i = 0; i < sizeof(mx_private_modules) / sizeof(mx_private_modules[0]); ++i) {
+        if (!mx_private_module_allowed(mx_private_modules[i])) return 2;
+        puts(mx_private_modules[i]);
+    }
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="mixyard-module-guard-", dir="/dev/shm") as root:
+            source = Path(root) / "guard.c"
+            binary = Path(root) / "guard"
+            source.write_text(program)
+            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                            "-I", str(base), str(source), "-o", str(binary)],
+                           env=dict(os.environ, TMPDIR=root), check=True, capture_output=True)
+            actual = subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout.splitlines()
+        self.assertEqual(len(actual), len(set(actual)))
+        self.assertEqual(set(actual), set(configured))
+        self.assertEqual(len(configured), len(actual))
+        self.assertEqual(set(actual), qualify.MODULES)
+
     def test_failed_bind_reports_dynamic_registry_but_never_qualifies(self):
         env = {"PIPEWIRE_REMOTE": "mixyard-private"}
         listing = b'id 42, type PipeWire:Interface:Metadata/3\n'

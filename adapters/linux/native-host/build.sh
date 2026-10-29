@@ -4,6 +4,12 @@ set -euo pipefail
 : "${MIXYARD_NATIVE_BUILD:?set a private build directory}"
 root=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
 pkg-config --modversion libpipewire-0.3
+# Exercise the actual SPA request/parser contract before creating any native context.
+cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
+  $(pkg-config --cflags libpipewire-0.3) \
+  "$root/adapters/linux/native-host/native_format_check.c" \
+  -o "$MIXYARD_NATIVE_BUILD/native-format-check"
+"$MIXYARD_NATIVE_BUILD/native-format-check"
 cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
   $(pkg-config --cflags libpipewire-0.3 json-c) \
   -I"$root/adapters/engine/include" \

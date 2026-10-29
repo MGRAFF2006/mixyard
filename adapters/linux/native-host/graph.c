@@ -19,6 +19,8 @@
 #include "mixyard_host.h"
 #include "timeline.h"
 #include "destination.h"
+#include "private_modules.h"
+#include "native_format.h"
 
 #define ROUTES 3
 #define FRAMES 128
@@ -35,7 +37,16 @@ struct endpoint {
     unsigned role; // 0 generator; 1 shared-engine capture; 2 actual consumer
     void *in[ROUTES], *out[ROUTES];
 };
-struct port { _Atomic bool format_ok; };
+// Written only by format notifications; read after native contexts are destroyed.
+// Preserve the first rejection, even if shutdown later clears the port format.
+struct format_report {
+    bool used, present, accepted, rejected;
+    unsigned role, direction, index;
+    uint32_t events, media_type, media_subtype;
+    int media_parse, raw_parse;
+    struct spa_audio_info_raw raw;
+};
+struct port { _Atomic bool format_ok; struct format_report *report; };
 struct global { uint32_t id, node; uint64_t serial; char type[32], name[96], direction[8]; };
 struct app {
     struct pw_main_loop *loop;
@@ -46,6 +57,7 @@ struct app {
     struct spa_hook registry_hook, core_hook;
     struct spa_source *timer;
     struct endpoint nodes[3];
+    struct format_report formats[3][2][ROUTES];
     struct global globals[MAX_GLOBALS];
     size_t global_count;
     struct pw_proxy *links[ROUTES * 2];
@@ -266,9 +278,17 @@ static void param_changed(void *userdata, void *port, uint32_t id, const struct 
     if (!port || id != SPA_PARAM_Format) return;
     struct port *p = port;
     struct spa_audio_info_raw info = {0};
-    bool ok = param && spa_format_audio_raw_parse(param, &info) == 0 &&
-        info.format == SPA_AUDIO_FORMAT_F64_LE && info.rate == 48000 && info.channels == 2 &&
-        info.position[0] == SPA_AUDIO_CHANNEL_FL && info.position[1] == SPA_AUDIO_CHANNEL_FR;
+    int raw_parse = param ? spa_format_audio_raw_parse(param, &info) : -ENOENT;
+    uint32_t media_type = 0, media_subtype = 0;
+    int media_parse = param ? spa_format_parse(param, &media_type, &media_subtype) : -ENOENT;
+    bool ok = param && mx_native_format_matches(raw_parse, &info);
+    if (p->report && !p->report->rejected) {
+        struct format_report *r = p->report;
+        if (r->events != UINT32_MAX) ++r->events;
+        r->present = param != NULL; r->accepted = ok; r->rejected = param && !ok;
+        r->media_parse = media_parse; r->raw_parse = raw_parse;
+        r->media_type = media_type; r->media_subtype = media_subtype; r->raw = info;
+    }
     atomic_store_explicit(&p->format_ok, ok, memory_order_release);
     if (param && !ok) fail(e->app, 30);
 }
@@ -283,8 +303,7 @@ static const struct pw_filter_events filter_events = {
 static void *add_port(struct endpoint *e, enum pw_direction dir, unsigned index) {
     char name[32]; snprintf(name, sizeof(name), "%s-%u", dir == PW_DIRECTION_INPUT ? "in" : "out", index);
     uint8_t storage[2048]; struct spa_pod_builder b = SPA_POD_BUILDER_INIT(storage, sizeof(storage));
-    struct spa_audio_info_raw info = { .format = SPA_AUDIO_FORMAT_F64_LE, .rate = 48000,
-        .channels = 2, .position = {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR} };
+    struct spa_audio_info_raw info = mx_native_format_requested();
     const struct spa_pod *params[3];
     params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &info);
     params[1] = spa_pod_builder_add_object(&b, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
@@ -295,8 +314,15 @@ static void *add_port(struct endpoint *e, enum pw_direction dir, unsigned index)
     params[2] = spa_pod_builder_add_object(&b, SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
         SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Header),
         SPA_PARAM_META_size, SPA_POD_Int(sizeof(struct spa_meta_header)));
-    return pw_filter_add_port(e->filter, dir, PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(struct port),
+    struct port *port = pw_filter_add_port(e->filter, dir, PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(struct port),
         pw_properties_new(PW_KEY_PORT_NAME, name, NULL), params, 3);
+    if (port) {
+        struct format_report *r = &e->app->formats[e->role][dir == PW_DIRECTION_OUTPUT][index];
+        *r = (struct format_report){ .used = true, .role = e->role, .direction = dir, .index = index };
+        port->report = r;
+        atomic_init(&port->format_ok, false);
+    }
+    return port;
 }
 static bool number(const char *s, uint64_t *out) {
     if (!s || !*s || *s == '-') return false;
@@ -317,10 +343,7 @@ static void global_added(void *userdata, uint32_t id, uint32_t permissions, cons
         (!name || strncmp(name, "mixyard-private-", 16))) { fail(a, 42); return; }
     if (!strcmp(type, PW_TYPE_INTERFACE_Module)) {
         const char *module = spa_dict_lookup(props, PW_KEY_MODULE_NAME);
-        if (!module || (strcmp(module, "libpipewire-module-protocol-native") &&
-            strcmp(module, "libpipewire-module-client-node") && strcmp(module, "libpipewire-module-access") &&
-            strcmp(module, "libpipewire-module-spa-node-factory") && strcmp(module, "libpipewire-module-link-factory") &&
-            strcmp(module, "libpipewire-module-metadata"))) fail(a, 43);
+        if (!mx_private_module_allowed(module)) fail(a, 43);
         return;
     }
     struct global *g = &a->globals[a->global_count++];
@@ -605,6 +628,28 @@ static void timer(void *userdata, uint64_t expirations) {
         break;
     }
 }
+// Bounded diagnostics are serialized only after teardown quiesces every native
+// callback. The process callback never formats/logs or accesses these records.
+static void print_format_reports(const struct app *a) {
+    printf(",\"expectedFormat\":{\"format\":%u,\"rate\":48000,\"channels\":2,\"positions\":[%u,%u]},\"formatReports\":[",
+        SPA_AUDIO_FORMAT_F64_LE, SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR);
+    bool comma = false;
+    for (unsigned role = 0; role < 3; ++role) for (unsigned direction = 0; direction < 2; ++direction)
+        for (unsigned index = 0; index < ROUTES; ++index) {
+            const struct format_report *r = &a->formats[role][direction][index];
+            if (!r->used) continue;
+            printf("%s{\"role\":%u,\"direction\":%u,\"index\":%u,\"events\":%u,\"present\":%s,\"accepted\":%s,\"rejected\":%s,\"mediaParse\":%d,\"rawParse\":%d,\"mediaType\":%u,\"mediaSubtype\":%u,\"format\":%u,\"rate\":%u,\"channels\":%u,\"flags\":%u,\"positions\":[",
+                comma ? "," : "", r->role, r->direction, r->index, r->events,
+                r->present ? "true" : "false", r->accepted ? "true" : "false", r->rejected ? "true" : "false",
+                r->media_parse, r->raw_parse, r->media_type, r->media_subtype,
+                r->raw.format, r->raw.rate, r->raw.channels, r->raw.flags);
+            comma = true;
+            for (uint32_t ch = 0; ch < r->raw.channels && ch < SPA_AUDIO_MAX_CHANNELS; ++ch)
+                printf("%s%u", ch ? "," : "", r->raw.position[ch]);
+            printf("]}");
+        }
+    printf("]}\n");
+}
 static void quit(void *userdata, int signal) {
     (void)signal; struct app *a = userdata; a->cancelled = true; pw_main_loop_quit(a->loop);
 }
@@ -664,10 +709,11 @@ int main(int argc, char **argv) {
     pw_proxy_destroy((struct pw_proxy *)a.registry);
     pw_core_disconnect(a.core); pw_context_destroy(a.context); pw_main_loop_destroy(a.loop); pw_deinit();
     printf("{\"stage\":%u,\"error\":%u,\"sampleMismatches\":%" PRIu64 ",\"rendered\":%" PRIu64
-        ",\"delivered\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"dropped\":%" PRIu64 ",\"cancelled\":%s,\"callbackHeapOperations\":%" PRIu64 ",\"inactiveOutputs\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"lossFrame\":%" PRIu64 "}\n",
+        ",\"delivered\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"dropped\":%" PRIu64 ",\"cancelled\":%s,\"callbackHeapOperations\":%" PRIu64 ",\"inactiveOutputs\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"lossFrame\":%" PRIu64,
         a.stage, atomic_load(&a.error), atomic_load(&a.mismatches), atomic_load(&a.rendered),
         atomic_load(&a.delivered[0]), atomic_load(&a.delivered[1]), atomic_load(&a.delivered[2]),
         atomic_load(&a.dropped), a.cancelled ? "true" : "false", atomic_load(&a.heap_ops),
         atomic_load(&a.inactive[0]), atomic_load(&a.inactive[1]), atomic_load(&a.inactive[2]), atomic_load(&a.loss_frame));
+    print_format_reports(&a);
     return (a.stage == 10 || a.cancelled) && !atomic_load(&a.error) && !atomic_load(&a.mismatches) ? 0 : 1;
 }
