@@ -1,6 +1,7 @@
 //! Explicitly opted-in encrypted management. No audio transport or native activation.
 mod identity;
 mod server;
+#[cfg(not(windows))]
 #[path = "../../src/store_fs.rs"]
 mod store_fs;
 #[path = "../../src/web/mod.rs"]
@@ -26,6 +27,7 @@ impl std::fmt::Display for Failure {
     }
 }
 impl std::error::Error for Failure {}
+#[cfg(not(windows))]
 impl From<store_fs::Error> for Failure {
     fn from(e: store_fs::Error) -> Self {
         fail(503, "identity-store-unavailable", e.to_string())

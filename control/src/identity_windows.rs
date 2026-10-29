@@ -35,7 +35,14 @@ fn unsafe_store(reason: &str) -> Failure {
 }
 fn handle(raw: HANDLE) -> Result<Handle> {
     if raw.is_null() || raw == INVALID_HANDLE_VALUE {
-        Err(unsafe_store("windows-identity-windows-handle-unavailable"))
+        Err(fail(
+            503,
+            "unsafe-identity-store",
+            format!(
+                "Windows identity handle unavailable: {}",
+                std::io::Error::last_os_error()
+            ),
+        ))
     } else {
         Ok(Handle(unsafe { File::from_raw_handle(raw) }))
     }
@@ -326,7 +333,11 @@ fn pin_ancestors(path: &Path) -> Result<Vec<Handle>> {
             Component::Prefix(prefix)
                 if matches!(prefix.kind(), std::path::Prefix::Verbatim(_)) =>
             {
-                current.push(part)
+                current.push(part);
+                // A verbatim volume prefix reports has_root() even before its
+                // trailing slash. Opening it here would open the volume device,
+                // not the root directory that must be checked and pinned.
+                continue;
             }
             Component::RootDir | Component::Normal(_) => current.push(part),
             _ => {
