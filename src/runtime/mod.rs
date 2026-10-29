@@ -1,4 +1,4 @@
-//! Independent lifecycle IPC. This module does not own or dispatch audio.
+//! Lifecycle IPC and explicit in-process PCM modules. Serving IPC does not start audio.
 pub mod client;
 #[cfg(target_os = "linux")]
 pub mod discovery;
@@ -11,8 +11,12 @@ mod inventory_os;
 #[path = "inventory_windows.rs"]
 mod inventory_os;
 mod inventory_state;
+#[cfg(target_os = "linux")]
+pub mod linux_audio;
 #[cfg(any(target_os = "macos", windows, test))]
 mod native_inventory;
+pub mod recording;
+pub mod worker;
 pub use client::{
     Availability, Backend, Capabilities, Lifecycle, LifecycleEvent, NativeAudioProof,
     ReadOnlyClient, RuntimeEvent, ServerError, Snapshot,

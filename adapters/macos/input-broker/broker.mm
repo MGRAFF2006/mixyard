@@ -104,7 +104,8 @@ void authorityEvent(NSDictionary *event) {
     state.revision = 0;
     reply(@{@"status": @"admitted", @"generation": @(generation), @"epoch": @(state.epoch),
             @"position": @(state.end), @"credit_frames": @(state.credits()),
-            @"sample_rate": @48000, @"channels": @2, @"format": @"Float32-interleaved"});
+            @"sample_rate": @48000, @"channels": @2, @"format": @"Float32-interleaved",
+            @"provenance": @"authenticated-anonymous-XPC-fixture", @"backendAvailable": @NO, @"audioApplied": @NO});
 }
 - (void)packet:(NSData *)data reply:(void (^)(NSDictionary *))reply {
     { std::lock_guard<std::mutex> lock(state.mutex); ++_packetRequests; }
@@ -116,10 +117,7 @@ void authorityEvent(NSDictionary *event) {
         reply(status(@"invalid")); return;
     }
     std::memcpy(&h, data.bytes, sizeof(h));
-    if (h.version != 1 || h.sampleRate != 48000 || h.channels != 2 || h.format != 1 ||
-        !h.frames || h.frames > mixyard::packetFrames || h.bytes != h.frames * 8 ||
-        data.length != sizeof(h) + h.bytes || !h.generation || !h.epoch || !h.revision ||
-        h.position > mixyard::maxPosition - h.frames) { reply(status(@"invalid")); return; }
+    if (!mixyard::packetShape(h, data.length)) { reply(status(@"invalid")); return; }
     std::array<float, mixyard::packetFrames * 2> pcm{};
     std::memcpy(pcm.data(), static_cast<const char *>(data.bytes) + sizeof(h), h.bytes);
     for (uint32_t i = 0; i < h.frames * 2; ++i)
@@ -128,11 +126,11 @@ void authorityEvent(NSDictionary *event) {
     if (_readiness.closed || !_readiness.ready || self.endpoint || !_generation || state.active != _generation) {
         reply(status(@"not_admitted")); return;
     }
-    if (h.generation != _generation || h.epoch != state.epoch ||
-        h.position != state.end || h.revision < state.revision) {
+    const auto admission = mixyard::packetAdmission(h, _generation, state.epoch, state.end, state.revision, state.credits());
+    if (admission == mixyard::PacketAdmission::Stale) {
         reply(status(@"stale")); return;
     }
-    if (h.frames > state.credits()) { reply(status(@"backpressure")); return; }
+    if (admission == mixyard::PacketAdmission::Backpressure) { reply(status(@"backpressure")); return; }
     if (MixyardInputTest_Packet(2, h.generation, h.epoch, h.revision, h.position,
                               h.frames, pcm.data(), h.bytes) != MY_INPUT_OK) {
         reply(status(@"ring_rejected")); return;

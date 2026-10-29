@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { Api } from './api.ts'
 import { copyDsp, dspJson } from './dsp-json.ts'
 import { DspDraft, effectKinds, filters, move, newEffect, readChain, starter } from './dsp.ts'
@@ -12,9 +12,11 @@ import DelayTiming from './DelayTiming.vue'
 import DelayMeter from './DelayMeter.vue'
 import { addChannel as addLane, removeChannel as removeLane, renameChannel as renameLane } from './channels.ts'
 
-const props = defineProps<{ api: Pick<Api, 'post'>; ready: boolean }>()
+const props = defineProps<{ api: Pick<Api, 'post'> & Partial<Pick<Api, 'epoch' | 'connectionError'>>; ready: boolean; epoch?: number }>()
 const d = reactive(new DspDraft())
 const form = ref<HTMLFormElement | null>(null)
+const delayMeter = ref<InstanceType<typeof DelayMeter> | null>(null)
+const channelOperations = ref<InstanceType<typeof ChannelOperations> | null>(null)
 const generation = ref(0)
 const busy = ref(false), error = ref(''), notice = ref(''), importText = ref('')
 const preset = ref<'empty' | 'trim' | 'echo' | 'fir'>('empty'), kind = ref<EffectKind>('gain')
@@ -33,6 +35,8 @@ const dynamicsFields: { key: keyof Pick<Dynamics, 'thresholdDb' | 'ratio' | 'kne
   { key: 'releaseMs', label: 'Release (ms)', min: 0 }, { key: 'makeupDb', label: 'Makeup (dB)', min: -6000, max: 6000 },
   { key: 'rangeDb', label: 'Range (dB)', min: 0, max: 6000 },
 ]
+const sessionEpoch = computed(() => props.api.epoch ?? props.epoch)
+watch(sessionEpoch, () => { d.changed(); busy.value = false; error.value = props.api.connectionError ?? ''; notice.value = '' }, { flush: 'sync' })
 function changed() { d.changed(); error.value = ''; notice.value = '' }
 function valid() { return form.value?.reportValidity() ?? false }
 function download(value: unknown, name: string) {
@@ -82,29 +86,36 @@ function toggleChannel(item: EffectConfig, id: string, event: Event) {
 function message(e: unknown) { return e instanceof Error ? e.message : String(e) }
 async function run(action: () => Promise<void>) {
   if (busy.value) return
+  const epoch = sessionEpoch.value
   busy.value = true; error.value = ''; notice.value = ''
-  try { await action() } catch (e) { error.value = message(e) }
-  finally { busy.value = false }
+  try { await action() } catch (e) { if (epoch === sessionEpoch.value) error.value = message(e) }
+  finally { if (epoch === sessionEpoch.value) busy.value = false }
 }
 async function applyImport(text: string) {
-  if (await d.import(props.api, text)) { generation.value++; importText.value = ''; notice.value = 'Chain imported; core validation passed. Timing is unknown. Export chain to keep it.' }
+  const epoch = sessionEpoch.value, imported = await d.import(props.api, text)
+  if (epoch !== sessionEpoch.value) return
+  if (imported) { generation.value++; importText.value = ''; notice.value = 'Chain imported; core validation passed. Timing is unknown. Export chain to keep it.' }
   else notice.value = 'Draft changed during validation; imported chain was not applied.'
 }
 async function importFile(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = ''
   if (file && file.size > 1_048_576) { error.value = 'Chain file exceeds the web preview 1 MiB input budget. Use the offline renderer for larger jobs. Current chain kept.'; return }
-  if (file) await run(async () => applyImport(await file.text()))
+  if (file) await run(async () => { const epoch = sessionEpoch.value; const text = await file.text(); if (epoch !== sessionEpoch.value) return; await applyImport(text) })
 }
 async function render() {
   if (!valid()) return
   await run(async () => {
+    const epoch = sessionEpoch.value
     const config = copyDsp(readChain(d.config))
     const signal: Signal = signalKind.value === 'samples' ? { kind: 'samples', samples: copyDsp(samples.value) } : signalKind.value === 'sine' ? { kind: 'sine', amplitude: amplitude.value, frequencyHz: frequency.value } : { kind: signalKind.value, amplitude: amplitude.value }
     if (signal.kind === 'samples' && signal.samples.length !== frames.value * config.format.channels.length) throw new Error(`Custom input needs exactly ${frames.value * config.format.channels.length} interleaved samples (${frames.value} frames × ${config.format.channels.length} channels). No padding or truncation is applied.`)
     const request: PreviewRequest = { config, frames: frames.value, iterations: iterations.value, bypassed: d.bypassed, signal }
-    if (!await d.render(props.api, request)) notice.value = 'Inputs changed during rendering; discarded the stale result. Render again.'
+    const rendered = await d.render(props.api, request)
+    if (epoch !== sessionEpoch.value) return
+    if (!rendered) notice.value = 'Inputs changed during rendering; discarded the stale result. Render again.'
   })
 }
+defineExpose({ hasUnsavedDrafts: () => dspJson(d.config) !== dspJson(starter('empty')) || d.bypassed || frames.value !== 128 || iterations.value !== 16 || signalKind.value !== 'impulse' || amplitude.value !== 0.25 || frequency.value !== 1000 || dspJson(samples.value) !== dspJson([0.25, 0]) || !!channelId.value || renameDrafts.size > 0 || !!importText.value || !!form.value?.querySelector(':invalid') || !!delayMeter.value?.hasUnsavedDrafts() || !!channelOperations.value?.hasUnsavedDrafts() })
 function headroom(peak: number) { return peak === 0 ? '∞' : (-20 * Math.log10(peak)).toPrecision(6) }
 function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrecision(6) }
 </script>
@@ -137,7 +148,7 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
         <div class="actions"><label class="dsp-field">New channel ID<input v-model="channelId" /></label><button type="button" @click="addChannel">Add channel</button></div>
         <div class="dsp-starter actions"><label class="dsp-field">Starter preset<select aria-label="Starter preset" v-model="preset"><option value="empty">Empty stereo / 48 kHz</option><option value="trim">Half-amplitude trim</option><option value="echo">20 ms single echo / 48 kHz</option><option value="fir">Three-tap FIR example</option></select></label><button type="button" @click="loadStarter">Load starter (replaces chain)</button><button type="button" @click="exportChain">Export chain</button></div>
       </fieldset>
-      <ChannelOperations :config="d.config" :busy="busy" @append="appendOperation" @error="error = $event" />
+      <ChannelOperations ref="channelOperations" :config="d.config" :busy="busy" @append="appendOperation" @error="error = $event" />
       <div class="section-heading"><div><h3>Effect order</h3><p>Signal passes through enabled effects from top to bottom. Disabled parameters are still validated.</p></div></div>
       <p v-if="!d.config.effects.length" class="empty">No effects. The empty chain preserves the input samples.</p>
       <ol class="dsp-effects">
@@ -206,7 +217,7 @@ function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrec
         <button class="primary dsp-render" type="button" :disabled="busy || !ready" @click="render">{{ busy ? 'Working…' : 'Render and measure' }}</button>
       </fieldset>
     </form>
-    <DelayMeter :api="api" :ready="ready" :config="d.config" :bypassed="d.bypassed" @append="appendAlignment" @export="download($event, 'mixyard-delay.json')" />
+    <DelayMeter ref="delayMeter" :api="api" :epoch="epoch" :ready="ready" :config="d.config" :bypassed="d.bypassed" @append="appendAlignment" @export="download($event, 'mixyard-delay.json')" />
     <div class="dsp-results" aria-live="polite" aria-atomic="false">
       <p v-if="!result" class="empty">Speed unknown. No current preview or timing. Render and measure explicitly after editing.</p>
       <template v-else>
