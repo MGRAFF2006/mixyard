@@ -256,7 +256,8 @@ pub(super) fn state_directory(instance: &str) -> Result<PathBuf> {
     }
     let mut pins = pin_ancestors(&path)?;
     let security = Security::new()?;
-    for part in ["MixyardInventory", instance] {
+    let leaf = format!("instance-{instance}");
+    for part in ["MixyardInventory", leaf.as_str()] {
         path.push(part);
         if unsafe { CreateDirectoryW(wide(&path).as_ptr(), &security.attributes()) } == 0
             && unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
@@ -695,6 +696,20 @@ mod tests {
         assert!(private_acl(file.0).is_err());
         drop(file);
         assert!(store.read().is_err());
+        let saved_state = directory.join("saved-state");
+        std::fs::rename(&path, &saved_state).unwrap();
+        match std::os::windows::fs::symlink_file(&saved_state, &path) {
+            Ok(()) => {
+                assert!(store.read().is_err());
+                assert_eq!(std::fs::read(&saved_state).unwrap(), b"corrupt");
+                std::fs::remove_file(&path).unwrap();
+            }
+            Err(error) if error.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD as i32) => {
+                eprintln!("File-reparse fixture unavailable: Windows symlink privilege not held");
+            }
+            Err(error) => panic!("file reparse fixture: {error}"),
+        }
+        std::fs::rename(saved_state, &path).unwrap();
         // No delete sharing means a pinned directory cannot be swapped to make
         // subsequent path-based operations reach an attacker's replacement.
         assert!(std::fs::rename(&directory, directory.with_extension("moved")).is_err());

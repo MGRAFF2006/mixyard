@@ -19,7 +19,8 @@ $directory = [IO.DirectoryInfo]::new($destination)
 [IO.FileSystemAclExtensions]::Create($directory, $directorySecurity)
 if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Installation must not be a reparse point' }
 $actual = [IO.FileSystemAclExtensions]::GetAccessControl($directory)
-if ($actual.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Owner,Access') -ne $sddl) { throw 'Installation ACL did not match the current SID' }
+$rules = $actual.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])
+if ($actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid -or -not $actual.AreAccessRulesProtected -or $rules.Count -ne 1 -or $rules[0].IdentityReference.Value -ne $sid -or $rules[0].AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or $rules[0].FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl -or $rules[0].InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None -or $rules[0].IsInherited) { throw 'Installation ACL did not match the current SID' }
 $fileSecurity = [Security.AccessControl.FileSecurity]::new()
 $fileSecurity.SetSecurityDescriptorSddlForm($sddl)
 foreach ($item in @(@($Runtime, 'mixyard-runtime.exe'), @($Helper, 'mixyard-windows-inventory.exe'))) {

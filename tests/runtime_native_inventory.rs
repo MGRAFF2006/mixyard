@@ -186,7 +186,8 @@ impl Runtime {
             unsafe {
                 CoTaskMemFree(raw.cast());
             }
-            root.join("MixyardInventory").join(&self.instance)
+            root.join("MixyardInventory")
+                .join(format!("instance-{}", self.instance))
         }
         #[cfg(target_os = "macos")]
         {

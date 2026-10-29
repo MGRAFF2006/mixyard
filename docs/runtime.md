@@ -363,7 +363,7 @@ Persistent state locations, per validated runtime instance:
 
 | OS | Private state directory |
 | --- | --- |
-| Windows | `FOLDERID_LocalAppData/MixyardInventory/<instance>` via `SHGetKnownFolderPath` |
+| Windows | `FOLDERID_LocalAppData/MixyardInventory/instance-<instance>` via `SHGetKnownFolderPath` |
 | macOS | account-database home + `Library/Application Support/MixyardInventory/<instance>` via `getpwuid_r` |
 
 `HOME`/`LOCALAPPDATA` overrides and request fields cannot choose these paths.

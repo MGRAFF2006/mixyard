@@ -18,6 +18,8 @@ jobs:
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - name: Require 10 GiB free
