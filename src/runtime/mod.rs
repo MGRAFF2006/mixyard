@@ -1,5 +1,8 @@
 //! Independent lifecycle IPC. This module does not own or dispatch audio.
 pub mod client;
+#[cfg(target_os = "linux")]
+pub mod discovery;
+pub mod inventory;
 pub use client::{
     Availability, Backend, Capabilities, Lifecycle, LifecycleEvent, NativeAudioProof,
     ReadOnlyClient, RuntimeEvent, ServerError, Snapshot,
@@ -24,11 +27,14 @@ compile_error!("The lifecycle runtime currently supports Linux, macOS and Window
 
 pub const IPC_VERSION: u32 = 1;
 pub const MAX_FRAME: usize = 8192;
+/// Inventory has separate bounded admission; requests/events keep the 8 KiB limit.
+pub const MAX_INVENTORY_FRAME: usize = 1024 * 1024;
 const MAX_CLIENTS: usize = 16;
 const MAX_EVENTS: usize = 8;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
 const TICK: Duration = Duration::from_millis(10);
+const INVENTORY_TRANSFER_TICK: Duration = Duration::from_millis(1);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -83,6 +89,8 @@ struct Peer {
     events: bool,
     id: Value,
     dead: bool,
+    discovery: Option<Box<dyn inventory::Capture>>,
+    inventory: bool,
 }
 impl Peer {
     fn new(stream: transport::Stream) -> Self {
@@ -96,6 +104,8 @@ impl Peer {
             events: false,
             id: Value::Null,
             dead: false,
+            discovery: None,
+            inventory: false,
         }
     }
     fn reply(&mut self, value: Value) {
@@ -182,12 +192,18 @@ impl Peer {
         }
     }
     fn flush(&mut self) -> io::Result<bool> {
-        if self.written < self.output.len() {
-            let end = (self.written + 4096).min(self.output.len());
+        let budget = if self.inventory { 65536 } else { 4096 };
+        let end = (self.written + budget).min(self.output.len());
+        // Bound bytes and calls per peer, while allowing short OS writes to
+        // make progress without imposing a full scheduler tick per write.
+        for _ in 0..32 {
+            if self.written == end {
+                break;
+            }
             match self.stream.write(&self.output[self.written..end]) {
                 Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
                 Ok(n) => self.written += n,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => return Err(e),
             }
         }
@@ -202,6 +218,10 @@ impl Peer {
 
 /// Foreground process, explicit lifetime; does not autostart from any client.
 pub fn serve(instance: &str) -> io::Result<()> {
+    serve_with_inventory(instance, inventory::Options::default())
+}
+
+pub fn serve_with_inventory(instance: &str, options: inventory::Options) -> io::Result<()> {
     let mut listener = transport::Listener::bind(&endpoint(instance)?)?;
     let mut peers: Vec<Peer> = Vec::new();
     let mut stopping: Option<Instant> = None;
@@ -212,7 +232,51 @@ pub fn serve(instance: &str) -> io::Result<()> {
             }
         }
         let mut event_count = peers.iter().filter(|p| p.events).count();
+        let mut discovering = peers.iter().any(|p| p.discovery.is_some());
         for peer in &mut peers {
+            if let Some(job) = &mut peer.discovery {
+                let mut byte = [0; 1];
+                let connected = matches!(peer.stream.read(&mut byte), Err(e) if e.kind() == io::ErrorKind::WouldBlock);
+                if !connected || stopping.is_some() {
+                    peer.discovery = None;
+                    peer.dead = true;
+                    continue;
+                }
+                let result = if peer.started.elapsed() >= Duration::from_millis(1200) {
+                    Err("inventory-total-preparation-deadline-1200ms")
+                } else {
+                    job.poll()
+                }
+                .and_then(|inventory| match inventory {
+                    Some(mut inventory) => {
+                        #[cfg(target_os = "linux")]
+                        listener
+                            .owned_directory()
+                            .map_err(|_| "inventory-namespace-ownership-changed")?;
+                        inventory::complete(instance, &mut inventory)?;
+                        Ok(Some(
+                            serde_json::to_value(inventory)
+                                .map_err(|_| "inventory-serialization-failed")?,
+                        ))
+                    }
+                    None => Ok(None),
+                });
+                let result = if peer.started.elapsed() >= Duration::from_millis(1200) {
+                    Err("inventory-total-preparation-deadline-1200ms")
+                } else {
+                    result
+                };
+                match result {
+                    Ok(None) => continue,
+                    Ok(Some(value)) => peer.reply(envelope(peer.id.clone(), value)),
+                    Err(reason) => {
+                        peer.reply(error(peer.id.clone(), "inventory-unavailable", reason))
+                    }
+                }
+                peer.discovery = None;
+                // The next tick can admit another discovery after the previous child is reaped.
+                continue;
+            }
             if peer.responding && !peer.events {
                 // Keep the endpoint alive until the client consumes its reply and
                 // disconnects, or the deadline. Windows DisconnectNamedPipe drops
@@ -229,10 +293,27 @@ pub fn serve(instance: &str) -> io::Result<()> {
                 Ok(Some(command)) if stopping.is_none() => {
                     let reply = match command.get("command").and_then(Value::as_str) {
                         Some("status") => envelope(peer.id.clone(), status()),
-                        Some("inventory") => error(
-                            peer.id.clone(), "inventory-unavailable",
-                            "The lifecycle runtime has no audio inventory; automatic stored-profile changes require an actual inventory provider",
-                        ),
+                        Some("inventory") => {
+                            peer.inventory = true;
+                            if discovering {
+                                error(
+                                    peer.id.clone(),
+                                    "busy",
+                                    "one inventory discovery at a time; retry after completion",
+                                )
+                            } else {
+                                match inventory::start(&options) {
+                                    Ok(job) => {
+                                        peer.discovery = Some(job);
+                                        discovering = true;
+                                        continue;
+                                    }
+                                    Err(reason) => {
+                                        error(peer.id.clone(), "inventory-unavailable", reason)
+                                    }
+                                }
+                            }
+                        }
                         Some("shutdown") => {
                             stopping = Some(Instant::now());
                             envelope(peer.id.clone(), json!({"shutdown":"requested"}))
@@ -312,7 +393,16 @@ pub fn serve(instance: &str) -> io::Result<()> {
                 return Ok(());
             }
         }
-        thread::sleep(TICK);
+        thread::sleep(
+            if peers
+                .iter()
+                .any(|peer| peer.inventory && peer.written < peer.output.len())
+            {
+                INVENTORY_TRANSFER_TICK
+            } else {
+                TICK
+            },
+        );
     }
 }
 
@@ -341,14 +431,19 @@ pub fn client(instance: &str, command: &str, output: &mut impl Write) -> io::Res
     let mut input = Vec::new();
     let mut received = false;
     loop {
-        let mut buf = [0; 1024];
+        let mut buf = [0; 65536];
+        let max_frame = if command == "inventory" {
+            MAX_INVENTORY_FRAME
+        } else {
+            MAX_FRAME
+        };
         match stream.read(&mut buf) {
             Ok(0) if received && command == "events" => return Ok(()),
             Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
             Ok(n) => {
                 input.extend_from_slice(&buf[..n]);
                 while let Some(end) = input.iter().position(|b| *b == b'\n') {
-                    if end > MAX_FRAME {
+                    if end > max_frame {
                         return Err(io::ErrorKind::InvalidData.into());
                     }
                     let reply: Value = serde_json::from_slice(&input[..end])?;
@@ -376,7 +471,7 @@ pub fn client(instance: &str, command: &str, output: &mut impl Write) -> io::Res
                         return Ok(());
                     }
                 }
-                if input.len() > MAX_FRAME {
+                if input.len() > max_frame {
                     return Err(io::ErrorKind::InvalidData.into());
                 }
             }

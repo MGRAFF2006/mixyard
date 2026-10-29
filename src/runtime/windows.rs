@@ -148,6 +148,8 @@ impl Operation {
 pub struct Stream {
     pipe: Handle,
     read: Operation,
+    read_offset: usize,
+    read_available: usize,
     write: Operation,
     server: bool,
 }
@@ -155,7 +157,11 @@ impl Stream {
     fn new(pipe: Handle, server: bool) -> io::Result<Self> {
         Ok(Self {
             pipe,
-            read: Operation::new(1024)?,
+            // Inventory clients request bounded 64 KiB chunks. Request/event
+            // callers retain their smaller slices and separate frame limits.
+            read: Operation::new(64 * 1024)?,
+            read_offset: 0,
+            read_available: 0,
             write: Operation::new(0)?,
             server,
         })
@@ -165,6 +171,13 @@ impl Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
+        }
+        if self.read_available != 0 {
+            let n = buf.len().min(self.read_available);
+            buf[..n].copy_from_slice(&self.read.buffer[self.read_offset..self.read_offset + n]);
+            self.read_offset += n;
+            self.read_available -= n;
+            return Ok(n);
         }
         let result = if self.read.pending {
             self.read.completed(self.pipe.0)
@@ -195,8 +208,13 @@ impl Read for Stream {
         };
         match result {
             Ok(n) => {
-                buf[..n as usize].copy_from_slice(&self.read.buffer[..n as usize]);
-                Ok(n as usize)
+                // The caller may provide a smaller slice while an earlier
+                // overlapped read is pending. Retain its unconsumed bytes.
+                let count = buf.len().min(n as usize);
+                buf[..count].copy_from_slice(&self.read.buffer[..count]);
+                self.read_offset = count;
+                self.read_available = n as usize - count;
+                Ok(count)
             }
             Err(e) if e.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) => Ok(0),
             Err(e) => Err(e),

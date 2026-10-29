@@ -2,18 +2,45 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["-h"] {
-        println!("Usage: mixyard-runtime serve [--instance NAME]\nForeground lifecycle daemon. No audio backend or automatic startup.");
+        println!("Usage: mixyard-runtime serve|inventory [--instance NAME]\n       mixyard-runtime serve [--instance NAME] --inventory-fixture-helper /ABSOLUTE/HELPER\nRead-only PipeWire discovery; fixture helpers always produce simulated evidence. No audio backend or automatic startup.");
         return ExitCode::SUCCESS;
     }
-    let instance = match args.as_slice() {
-        [command] if command == "serve" => "default",
-        [command, flag, name] if command == "serve" && flag == "--instance" => name,
-        _ => {
-            eprintln!("Usage: mixyard-runtime serve [--instance NAME]");
-            return ExitCode::from(2);
+    let mut instance = "default";
+    let mut instance_seen = false;
+    let mut fixture_helper = None;
+    let command = args.first().map(String::as_str).unwrap_or("");
+    if !matches!(command, "serve" | "inventory") {
+        return ExitCode::from(2);
+    }
+    let (flags, remainder) = args[1..].as_chunks::<2>();
+    for flag in flags {
+        match flag[0].as_str() {
+            "--instance" if !instance_seen => {
+                instance = &flag[1];
+                instance_seen = true;
+            }
+            "--inventory-fixture-helper"
+                if command == "serve"
+                    && fixture_helper.is_none()
+                    && std::path::Path::new(&flag[1]).is_absolute() =>
+            {
+                fixture_helper = Some(std::path::PathBuf::from(&flag[1]))
+            }
+            _ => return ExitCode::from(2),
         }
+    }
+    if !remainder.is_empty() {
+        return ExitCode::from(2);
+    }
+    let result = if command == "inventory" {
+        mixyard::runtime::client(instance, "inventory", &mut std::io::stdout().lock())
+    } else {
+        mixyard::runtime::serve_with_inventory(
+            instance,
+            mixyard::runtime::inventory::Options { fixture_helper },
+        )
     };
-    match mixyard::runtime::serve(instance) {
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!(

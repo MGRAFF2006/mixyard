@@ -1,0 +1,363 @@
+//! Actual owned helper/runtime/typed IPC tests. All helper evidence is simulated.
+#![cfg(target_os = "linux")]
+#[path = "web_support/mod.rs"]
+mod support;
+use mixyard::{
+    runtime::{self, ReadOnlyClient, ServerError},
+    Evidence,
+};
+use serde_json::{json, Value};
+use std::{
+    fs,
+    io::Write,
+    os::unix::{fs::PermissionsExt, net::UnixStream},
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, AtomicU32, Ordering},
+        Arc,
+    },
+    thread,
+    time::{Duration, Instant},
+};
+static NEXT: AtomicU32 = AtomicU32::new(0);
+fn graph(name: &str) -> Value {
+    json!([
+        {"id":0,"type":"PipeWire:Interface:Core","info":{"cookie":100,"props":{}}},
+        {"id":10,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"node.name":name,"media.class":"Audio/Source","object.serial":9007199254740993i64},"params":{"Format":[{"mediaType":"audio","mediaSubtype":"raw","rate":44100,"channels":1,"position":["MONO"]}]}}},
+        {"id":20,"type":"PipeWire:Interface:Node","info":{"state":"idle","props":{"node.name":"speaker","media.class":"Audio/Sink"}}}
+    ])
+}
+struct Runtime {
+    instance: String,
+    directory: PathBuf,
+    child: Option<Child>,
+}
+impl Runtime {
+    fn new() -> Self {
+        let instance = format!(
+            "inv-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        Self::named(instance)
+    }
+    fn named(instance: String) -> Self {
+        let directory = PathBuf::from(runtime::endpoint(&instance).unwrap())
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let r = Self {
+            instance,
+            directory,
+            child: None,
+        };
+        fs::write(r.directory.join("helper"), b"#!/usr/bin/python3\nimport pathlib,sys,time,subprocess,os\np=pathlib.Path(__file__).parent\nmode=(p/'mode').read_text()\nif mode=='hang':\n (p/'pid').write_text(str(os.getpid()))\n child=subprocess.Popen(['/bin/sleep','30'])\n (p/'descendant').write_text(str(child.pid))\n time.sleep(30)\nif mode=='stderr': sys.stderr.write('private bind failure'); sys.stderr.flush()\nif mode=='fail': sys.exit(1)\nif mode=='oversize': sys.stdout.write('x'*(4*1024*1024+1)); sys.exit(0)\nsys.stdout.write((p/'graph').read_text())\n").unwrap();
+        fs::set_permissions(
+            r.directory.join("helper"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        r.mode("ok");
+        r.graph(&graph("mic"));
+        r
+    }
+    fn mode(&self, mode: &str) {
+        fs::write(self.directory.join("mode"), mode).unwrap();
+    }
+    fn graph(&self, graph: &Value) {
+        fs::write(
+            self.directory.join("graph"),
+            serde_json::to_vec(graph).unwrap(),
+        )
+        .unwrap();
+    }
+    fn start(&mut self) {
+        self.child = Some(
+            Command::new(env!("CARGO_BIN_EXE_mixyard-runtime"))
+                .args([
+                    "serve",
+                    "--instance",
+                    &self.instance,
+                    "--inventory-fixture-helper",
+                ])
+                .arg(self.directory.join("helper"))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while ReadOnlyClient::connect(&self.instance).is_err() {
+            assert!(Instant::now() < deadline, "runtime startup");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    fn inventory(&self) -> mixyard::Inventory {
+        ReadOnlyClient::inventory(&self.instance, &AtomicBool::new(false)).unwrap()
+    }
+    fn error(&self) -> ServerError {
+        let start = Instant::now();
+        let e = ReadOnlyClient::inventory(&self.instance, &AtomicBool::new(false)).unwrap_err();
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "unavailable must arrive before typed deadline: {e}"
+        );
+        e.get_ref()
+            .unwrap()
+            .downcast_ref::<ServerError>()
+            .unwrap()
+            .clone()
+    }
+    fn stop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            runtime::client(&self.instance, "shutdown", &mut Vec::new()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while child.try_wait().unwrap().is_none() {
+                assert!(Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+    fn wait_pid(&self) -> u32 {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            if let Ok(s) = fs::read_to_string(self.directory.join("pid")) {
+                return s.parse().unwrap();
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    fn reaped(&self, pid: u32) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while PathBuf::from(format!("/proc/{pid}")).exists() {
+            assert!(Instant::now() < deadline, "helper not reaped");
+            thread::sleep(Duration::from_millis(10));
+        }
+        let descendant: u32 = fs::read_to_string(self.directory.join("descendant"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        // Orphan grandchildren can briefly be zombies until the host reaper runs.
+        if let Ok(stat) = fs::read_to_string(format!("/proc/{descendant}/stat")) {
+            assert!(
+                stat.split_whitespace().nth(2) == Some("Z"),
+                "descendant still running"
+            );
+        }
+    }
+}
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+#[test]
+fn actual_helper_to_typed_ipc_preserves_precision_formats_and_monotonic_restart_revision() {
+    let mut r = Runtime::new();
+    r.start();
+    let first = r.inventory();
+    assert_eq!(first.evidence, Evidence::Simulated);
+    assert!(first.sources[0]
+        .observed_id
+        .starts_with("pipewire:object:10:9007199254740993:"));
+    assert_eq!(first.sources[0].format.unwrap().sample_rate_hz, 44100);
+    assert!(first.outputs[0].format.is_none());
+    assert_eq!(r.inventory().revision, first.revision);
+    r.stop();
+    r.start();
+    assert_eq!(r.inventory().revision, first.revision);
+    r.graph(&graph("new-mic"));
+    let changed = r.inventory();
+    assert!(changed.revision > first.revision);
+    r.graph(&graph("mic"));
+    assert!(r.inventory().revision > changed.revision);
+    let before_detail = r.inventory();
+    let mut detail = graph("mic");
+    detail[1]["info"]["params"]["Format"][0]["format"] = json!("S24LE");
+    r.graph(&detail);
+    let after_detail = r.inventory();
+    assert_eq!(
+        after_detail.sources[0].format,
+        before_detail.sources[0].format
+    );
+    assert!(
+        after_detail.revision > before_detail.revision,
+        "unrepresented PCM encoding must still invalidate review"
+    );
+    let snapshot = ReadOnlyClient::connect(&r.instance)
+        .unwrap()
+        .initial_snapshot()
+        .clone();
+    assert!(!snapshot.availability.backend_available);
+    let output = Command::new(env!("CARGO_BIN_EXE_mixyard-runtime"))
+        .args(["inventory", "--instance", &r.instance])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["result"]["evidence"],
+        "simulated"
+    );
+    r.stop();
+}
+#[test]
+fn malformed_partial_oversize_permission_and_timeout_never_become_empty_success() {
+    let mut r = Runtime::new();
+    r.start();
+    for raw in [
+        "[]",
+        "{}",
+        "[",
+        "[{\"id\":0,\"id\":0,\"type\":\"PipeWire:Interface:Core\"}]",
+    ] {
+        fs::write(r.directory.join("graph"), raw).unwrap();
+        assert_eq!(r.error().code, "inventory-unavailable");
+    }
+    r.graph(&graph("mic"));
+    for mode in ["stderr", "fail", "oversize", "hang"] {
+        r.mode(mode);
+        let e = r.error();
+        assert_eq!(e.code, "inventory-unavailable");
+        assert!(!e.message.contains("private bind"));
+    }
+    r.reaped(r.wait_pid());
+    r.mode("ok");
+    assert!(!r.inventory().sources.is_empty());
+    r.stop();
+}
+#[test]
+fn disconnect_cancel_busy_and_shutdown_kill_only_owned_discovery_process_group() {
+    let mut r = Runtime::new();
+    r.mode("hang");
+    r.start();
+    let mut stream = UnixStream::connect(runtime::endpoint(&r.instance).unwrap()).unwrap();
+    stream
+        .write_all(b"{\"ipcVersion\":1,\"requestId\":\"held\",\"command\":\"inventory\"}\n")
+        .unwrap();
+    let pid = r.wait_pid();
+    assert_eq!(r.error().code, "busy");
+    assert!(ReadOnlyClient::connect(&r.instance).is_ok());
+    drop(stream);
+    r.reaped(pid);
+    fs::remove_file(r.directory.join("pid")).unwrap();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let signal = cancelled.clone();
+    let instance = r.instance.clone();
+    let client = thread::spawn(move || ReadOnlyClient::inventory(&instance, &signal));
+    let pid = r.wait_pid();
+    cancelled.store(true, Ordering::Release);
+    assert_eq!(
+        client.join().unwrap().unwrap_err().kind(),
+        std::io::ErrorKind::Interrupted
+    );
+    r.reaped(pid);
+    fs::remove_file(r.directory.join("pid")).unwrap();
+    let mut stream = UnixStream::connect(runtime::endpoint(&r.instance).unwrap()).unwrap();
+    stream
+        .write_all(b"{\"ipcVersion\":1,\"requestId\":\"stop\",\"command\":\"inventory\"}\n")
+        .unwrap();
+    let pid = r.wait_pid();
+    r.stop();
+    r.reaped(pid);
+}
+#[test]
+fn insecure_corrupt_and_symlink_revision_state_fail_closed_across_restart() {
+    use std::os::unix::fs::symlink;
+    let mut r = Runtime::new();
+    r.start();
+    let first = r.inventory();
+    r.stop();
+    let state = r.directory.join("inventory-revision-v1");
+    let original = fs::read(&state).unwrap();
+    assert_eq!(original.len(), 80);
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o644)).unwrap();
+    r.start();
+    assert_eq!(r.error().code, "inventory-unavailable");
+    r.stop();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&state, b"corrupt").unwrap();
+    r.start();
+    assert_eq!(r.error().code, "inventory-unavailable");
+    r.stop();
+    let mut flipped = original.clone();
+    flipped[9] ^= 1;
+    fs::write(&state, &flipped).unwrap();
+    r.start();
+    assert_eq!(r.error().message, "inventory-state-corrupt-do-not-reset");
+    r.stop();
+    fs::write(&state, &original).unwrap();
+    r.start();
+    assert_eq!(r.inventory().revision, first.revision);
+    r.stop();
+    let mut exhausted = original.clone();
+    exhausted[8..16].copy_from_slice(&u64::MAX.to_be_bytes());
+    use sha2::{Digest, Sha256};
+    let checksum = Sha256::digest(&exhausted[..48]);
+    exhausted[48..].copy_from_slice(&checksum);
+    fs::write(&state, &exhausted).unwrap();
+    r.graph(&graph("changed"));
+    r.start();
+    assert_eq!(r.error().message, "inventory-revision-exhausted");
+    r.stop();
+    assert_eq!(fs::read(&state).unwrap(), exhausted);
+    fs::write(&state, &original).unwrap();
+    fs::rename(&state, r.directory.join("saved")).unwrap();
+    symlink(r.directory.join("saved"), &state).unwrap();
+    r.start();
+    assert_eq!(r.error().code, "inventory-unavailable");
+    r.stop();
+    assert_eq!(fs::read(r.directory.join("saved")).unwrap(), original);
+}
+#[test]
+fn valid_inventory_larger_than_lifecycle_frame_is_not_truncated() {
+    let mut r = Runtime::new();
+    let mut g = graph("mic");
+    let a = g.as_array_mut().unwrap();
+    for id in 100..250 {
+        let mut node = a[1].clone();
+        node["id"] = json!(id);
+        node["info"]["props"]["node.name"] = json!(format!("endpoint-{id}"));
+        a.push(node);
+    }
+    r.graph(&g);
+    r.start();
+    let inv = r.inventory();
+    assert_eq!(inv.sources.len(), 151);
+    assert!(serde_json::to_vec(&inv).unwrap().len() > runtime::MAX_FRAME);
+    r.stop();
+}
+
+#[test]
+fn real_http_service_reads_actual_runtime_discovery_over_private_ipc() {
+    let f = support::Fixture::new();
+    let mut r = Runtime::named(f.instance());
+    r.start();
+    let settings = mixyard::automation::settings::Settings { graph: Some(serde_json::from_value(json!({"schemaVersion":1,"id":"inventory-proof","name":"Hold with actual inventory","revision":1,"root":"hold","nodes":[{"kind":"terminal","id":"hold","action":{"kind":"no-change"}}]})).unwrap()), catalog: mixyard::automation::standard_catalog(), ..Default::default() };
+    mixyard::automation::settings::Store::sibling_of_profiles(f.root.join("store"))
+        .unwrap()
+        .write(0, &settings)
+        .unwrap();
+    let service = f.start();
+    let live = service.ok("/api/automation/live", json!({}));
+    assert_eq!(live["blocked"], Value::Null, "{live}");
+    assert_eq!(live["inventory"]["evidence"], "simulated");
+    assert_eq!(live["inventory"]["sources"].as_array().unwrap().len(), 1);
+    assert_eq!(live["audioApplied"], false);
+    assert_eq!(live["backendAvailable"], false);
+    let revision = live["inventory"]["revision"].as_u64().unwrap();
+    r.stop();
+    r.start();
+    let live = service.ok("/api/automation/live", json!({}));
+    assert_eq!(live["blocked"], Value::Null, "{live}");
+    assert_eq!(live["inventory"]["revision"], revision);
+    drop(service);
+    r.stop();
+}
