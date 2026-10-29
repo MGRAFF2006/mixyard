@@ -27,8 +27,7 @@ async function pair() {
 }
 async function manage(target: PairedTarget, command: 'paired_disconnect' | 'paired_forget' | 'paired_revoke') {
   if (busy.value) return
-  if (command === 'paired_forget' && !props.canRemove(target.deviceId) && !window.confirm('This target has unsaved work. Export it first, or continue removing the native credential and retain a disconnected workspace for export. Continue?')) return
-  if (command !== 'paired_disconnect' && !window.confirm(command === 'paired_revoke' ? `Revoke this desktop controller on ${target.displayName}? Other controllers keep their rights. A timeout needs reconciliation on the owning service.` : `Delete this app’s saved credential for ${target.displayName}? This does not revoke it on the server.`)) return
+  if (command !== 'paired_disconnect' && !window.confirm(command === 'paired_revoke' ? `Revoke this desktop controller on ${target.displayName}? Other controllers keep their rights. A timeout needs reconciliation on the owning service.` : `Delete this app’s saved credential for ${target.displayName}? This does not revoke it on the server.${props.canRemove(target.deviceId) ? '' : ' Unsaved work stays in a disconnected target for export; export it before closing this window.'}`)) return
   busy.value = true; notice.value = ''
   emit('disconnected', target.deviceId)
   try {

@@ -14,6 +14,7 @@ import signal
 import socket
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -50,7 +51,7 @@ class Harness:
     def close(self):
         self.process.stdin.close()
         self.process.wait(timeout=15)
-        assert self.process.returncode == 0, self.process.stderr.read()
+        assert self.process.returncode == 0, f'Owned service exit {self.process.returncode}: ' + self.process.stderr.read()
 
 
 class Service:
@@ -69,7 +70,14 @@ class Service:
         return json.loads(result.stdout)
 
     def start(self):
-        flags = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {}
+        flags = {}
+        if os.name == 'nt':
+            assert os.environ.get('GITHUB_ACTIONS') == 'true', 'Windows console signaling is hosted-owned qualification only'
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startup.wShowWindow = 0
+            # A separate console contains only this owned service. Never signal the runner/operator console.
+            flags = {'creationflags': subprocess.CREATE_NEW_CONSOLE, 'startupinfo': startup}
         self.process = subprocess.Popen([self.binary, '--state', str(self.state), 'serve', '--enable-control',
                                          '--bind', self.ready['address'] if hasattr(self, 'ready') else '127.0.0.1:0', '--store', str(self.root / 'profiles'),
                                          '--assets', str(self.assets), '--instance', 'paired-qualification'],
@@ -84,9 +92,19 @@ class Service:
 
     def stop(self):
         if self.process is not None and self.process.poll() is None:
-            self.process.send_signal(signal.CTRL_BREAK_EVENT if os.name == 'nt' else signal.SIGTERM)
+            if os.name == 'nt':
+                helper = '''import ctypes, sys
+kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel.FreeConsole()
+assert kernel.AttachConsole(int(sys.argv[1])), "Cannot attach owned service console"
+assert kernel.SetConsoleCtrlHandler(None, True), "Cannot protect owned signal helper"
+assert kernel.GenerateConsoleCtrlEvent(0, 0), "Cannot signal owned service Ctrl-C"
+'''
+                subprocess.run([sys.executable, '-c', helper, str(self.process.pid)], check=True, timeout=5)
+            else:
+                self.process.send_signal(signal.SIGTERM)
             self.process.wait(timeout=20)
-            assert self.process.returncode == 0, self.process.stderr.read()
+            assert self.process.returncode == 0, f'Owned service exit {self.process.returncode}: ' + self.process.stderr.read()
 
 
 def envelope(session, path, body):
