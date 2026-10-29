@@ -223,6 +223,28 @@ test('independent settings grant remains usable without view; permission denial 
   assert.deepEqual(await api.post('/api/automation/settings/read'), { settings: 'settings-only result' })
 })
 
+test('scoped canonical conflicts revoke shared authority immediately, while permission and validation errors preserve grants', async () => {
+  for (const [status, code, revokes] of [[409, 'store-conflict', true], [401, 'unauthorized', true], [403, 'invalid-origin', true], [403, 'permission-denied', false], [400, 'invalid-automation', false]] as const) {
+    let requests = 0
+    const api = Api.forControl(async (path) => {
+      if (path === '/control/session') return Response.json({ deviceId: 'A', authorityId: 'boot', revision: 0, permissions: ['settings'], backendAvailable: false, audioApplied: false })
+      requests++
+      return Response.json({ deviceId: 'A', authorityId: 'boot', revision: 0, status, body: { error: { code, message: 'Original canonical reason' } } }, { status })
+    }, { deviceId: 'A', credential: 'private' })
+    await api.connect()
+    const epoch = api.epoch
+    await assert.rejects(api.post('/api/automation/settings/write', { expectedSettingsRevision: 0 }), e => e instanceof ApiError && e.status === status && e.code === code)
+    assert.equal(api.connected, !revokes, code)
+    assert.equal(api.epoch, epoch + (revokes ? 1 : 0), code)
+    if (revokes) {
+      assert.equal(api.identity, null)
+      assert.match(api.connectionError, new RegExp(code))
+      await assert.rejects(api.post('/api/automation/settings/read'), /Refresh to reconnect/)
+    } else assert.deepEqual(api.identity?.permissions, ['settings'])
+    assert.equal(requests, 1, 'no replay or follow-up request under a revoked generation')
+  }
+})
+
 test('consumer continuations cannot restore validation, inspection or a snapshot after concurrent authority loss', async () => {
   const snapshot: Snapshot = { format: 'mixyard-local-drafts', schemaVersion: 1, storeRevision: 0, configRevision: 1, profiles: [], draft: config(), previousDraft: null }
   const inventory = JSON.parse(readFileSync(new URL('./example-inventory.json', import.meta.url), 'utf8'))
