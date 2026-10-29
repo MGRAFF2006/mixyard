@@ -84,6 +84,12 @@ differently. This direct compiler/socket check does not compile that entire
 standalone Cargo feature graph and is not a full Cargo workspace build or the
 hosted cross-platform checks. See the PR for final revision verification.
 
+The dedicated `network-control-identity.yml` workflow runs the locked standalone
+Cargo format, Clippy and test commands on Linux, Windows and macOS. It places
+build outputs under `RUNNER_TEMP`, limits build jobs to two and disables debug
+information and incremental builds. These are fixture/TLS checks without native
+audio devices or SDK qualification; adding the workflow is not a passing result.
+
 No personal store, running personal service, native device, microphone,
 desktop, SSH, account or LAN promotion is involved. `backendAvailable` and
 `audioApplied` are not changed or reported true. Native endpoint integration,
