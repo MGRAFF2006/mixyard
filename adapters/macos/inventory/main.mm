@@ -7,6 +7,7 @@
 #error "The inventory helper requires macOS SDK 14.2 or newer."
 #endif
 #include "../../windows/inventory/protocol.hpp"
+#include "pcm.hpp"
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -81,7 +82,10 @@ static std::optional<inv::Format> query_format(const std::vector<AudioObjectID>&
     if (floating ? (f.mBitsPerChannel != 32 && f.mBitsPerChannel != 64) :
         (f.mBitsPerChannel != 8 && f.mBitsPerChannel != 16 && f.mBitsPerChannel != 24 && f.mBitsPerChannel != 32))
         return std::nullopt;
-    if (!f.mBytesPerFrame || !f.mFramesPerPacket || !f.mBytesPerPacket) return std::nullopt;
+    if (!inv::macos::pcm_storage_consistent(f, floating,
+        (f.mFormatFlags & kAudioFormatFlagIsPacked) != 0,
+        (f.mFormatFlags & kAudioFormatFlagIsAlignedHigh) != 0,
+        (f.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0)) return std::nullopt;
     return inv::format(f.mChannelsPerFrame, static_cast<std::uint32_t>(f.mSampleRate));
 }
 

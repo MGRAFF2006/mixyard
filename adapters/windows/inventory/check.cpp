@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "protocol.hpp"
+#include "../../macos/inventory/pcm.hpp"
 #include <cstdlib>
 #include <iostream>
 
@@ -10,7 +11,47 @@ template<class F> static void rejected(F action) {
     try { action(); } catch (const inv::Unavailable&) { failed = true; }
     require(failed);
 }
+struct PcmDescription {
+    std::uint32_t mChannelsPerFrame = 2, mBitsPerChannel = 32,
+        mBytesPerFrame = 8, mFramesPerPacket = 1, mBytesPerPacket = 8;
+};
+static void pcm_checks() {
+    using inv::macos::pcm_storage_consistent;
+    const PcmDescription valid{};
+    require(pcm_storage_consistent(valid, true, true, false, false));
+    auto f = valid;
+    f.mBytesPerFrame = 1;
+    require(!pcm_storage_consistent(f, true, true, false, false));
+    f = valid; f.mFramesPerPacket = 2;
+    require(!pcm_storage_consistent(f, true, true, false, false));
+    f = valid; f.mBytesPerPacket = 1;
+    require(!pcm_storage_consistent(f, true, true, false, false));
+    f = valid; f.mBitsPerChannel = 64; f.mBytesPerFrame = f.mBytesPerPacket = 16;
+    require(pcm_storage_consistent(f, true, true, false, false));
+    f.mBytesPerFrame = f.mBytesPerPacket = 8;
+    require(pcm_storage_consistent(f, true, true, false, true));
+    require(!pcm_storage_consistent(f, true, true, false, false));
+    require(!pcm_storage_consistent(f, true, false, false, true));
+    f = valid; f.mBitsPerChannel = 24; f.mBytesPerFrame = f.mBytesPerPacket = 6;
+    require(pcm_storage_consistent(f, false, true, false, false));
+    f.mBytesPerFrame = f.mBytesPerPacket = 8;
+    require(!pcm_storage_consistent(f, false, true, false, false));
+    require(pcm_storage_consistent(f, false, false, false, false));
+    require(pcm_storage_consistent(f, false, false, true, false));
+    require(!pcm_storage_consistent(f, false, true, true, false));
+    f.mBytesPerFrame = f.mBytesPerPacket = 4;
+    require(pcm_storage_consistent(f, false, false, true, true));
+    f.mBitsPerChannel = 32; f.mBytesPerFrame = f.mBytesPerPacket = 2;
+    require(!pcm_storage_consistent(f, false, false, true, true));
+    f = valid; f.mBytesPerFrame = f.mBytesPerPacket = 9;
+    require(!pcm_storage_consistent(f, false, false, false, false));
+    f = valid; f.mChannelsPerFrame = 0;
+    require(!pcm_storage_consistent(f, true, true, false, false));
+    f = valid; f.mBitsPerChannel = 0;
+    require(!pcm_storage_consistent(f, false, false, false, false));
+}
 static void checks() {
+    pcm_checks();
     const std::string uid = "opaque:\"\\\n\t\x01\xc3\xa4\xf0\x9f\x8e\xa7";
     inv::Snapshot result("macos");
     result.mic(uid, inv::format(1, 44100));

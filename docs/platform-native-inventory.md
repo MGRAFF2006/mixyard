@@ -110,7 +110,14 @@ an exactly representable positive integer rate. Multistream devices, unsupported
 encodings, missing formats and fractional/invalid rates produce null. It never
 combines a nominal device rate with a different stream's channel count. This does
 not query a created tap or prove a future stream's format, hardware precision,
-conversion behavior or transport.
+conversion behavior or transport. Known metadata additionally requires one PCM
+frame per packet, matching packet/frame byte counts and a consistent per-sample
+container for interleaved or planar storage. Float32/Float64 must be packed;
+integer PCM may be packed or use a supported wider low/high-aligned container.
+Contradictory or unsupported storage descriptions remain null. Portable injected
+cases exercise the same storage predicate called on the actual ASBD, including
+malformed byte counts, Float64 planar data and 24-bit samples in 32-bit containers.
+These fixtures are not Apple hardware evidence.
 
 On macOS 14.2+, the public
 [process object list](https://developer.apple.com/documentation/coreaudio/kaudiohardwarepropertyprocessobjectlist),
