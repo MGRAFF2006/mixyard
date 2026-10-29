@@ -3,10 +3,14 @@ import test from 'node:test'
 import { desktopFetcher } from './transport.ts'
 import type { Invoke } from './transport.ts'
 import { readFileSync } from 'node:fs'
-import { watch } from 'vue'
+import { createRequire } from 'node:module'
 import { Api, StaleSessionError } from '../../web/src/api.ts'
 import { ConsoleSession } from '../../web/src/session.ts'
 import { readConfig, signature } from '../../web/src/model.ts'
+
+// The API owns sibling-web reactive state. Independent locked installs may
+// contain two Vue instances; use the API's runtime, as production Vite dedupes it.
+const { watch } = createRequire(new URL('../../web/package.json', import.meta.url))('vue') as typeof import('vue')
 
 test('native fetch preserves serialized precision and conflict status without retry', async () => {
   const calls: unknown[] = []
