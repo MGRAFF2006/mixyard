@@ -1,0 +1,36 @@
+name: Linux native shared-engine private graph
+on:
+  workflow_dispatch:
+  push:
+    paths: ['adapters/engine/**', 'adapters/linux/native-host/**', 'src/audio/**', 'src/audio.rs', 'src/dsp/**', '.github/workflows/linux-native-host.yml']
+  pull_request:
+    paths: ['adapters/engine/**', 'adapters/linux/native-host/**', 'src/audio/**', 'src/audio.rs', 'src/dsp/**', '.github/workflows/linux-native-host.yml']
+permissions:
+  contents: read
+jobs:
+  private-graph:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      MIXYARD_NATIVE_BUILD: ${{ runner.temp }}/mixyard-native-build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDK only on this disposable hosted runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pipewire pipewire-bin libpipewire-0.3-dev libspa-0.2-dev libjson-c-dev pkg-config
+      - name: Build actual canonical Rust engine and native transport
+        run: |
+          mkdir -m 700 "$MIXYARD_NATIVE_BUILD"
+          bash adapters/linux/native-host/build.sh
+      - name: Exercise isolated native source to engine to consumer
+        run: python3 -B adapters/linux/native-host/qualify.py "$MIXYARD_NATIVE_BUILD/native-graph" "$RUNNER_TEMP/native-evidence.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-native-private-graph-evidence
+          path: ${{ runner.temp }}/native-evidence.json
+          if-no-files-found: warn
