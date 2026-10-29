@@ -153,3 +153,19 @@ clocks/pacing/drift, Bluetooth mode changes, native latency/dropout/endurance,
 power/thermal behavior and per-platform signing/store privacy qualification.
 Generic virtual microphone, arbitrary call capture and unrestricted per-app
 capture remain unsupported. A hosted compile or fixture is never physical proof.
+
+### Native control JSON boundary
+
+Controller requests cross the native boundary as the original complete JSON
+string. Kotlin/Swift parse a separate view to check the device, authority,
+revision and route, then send the original UTF-8 bytes. Replies return
+`{status, json}` with the original response string. WebMessage/WK messages carry
+that string, so neither platform JSON serialization nor `Response.json` can
+normalize canonical signed zero or other finite Float64 values. PCM still uses
+native binary workers, never this control channel.
+
+Unwrapped HTTP permission denials retain their status/code/message and preserve
+unrelated grants; 401/409 invalidate native and shared authority. Transport
+failures clear the shared API instead of leaving a connected indicator. Swift's
+production default vault remains Keychain; `CredentialVault` injection is a
+platform testing seam, with no plaintext or memory production fallback.

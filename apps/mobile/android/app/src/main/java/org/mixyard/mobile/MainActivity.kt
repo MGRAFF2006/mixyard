@@ -72,7 +72,7 @@ class MainActivity : Activity() {
             val expected = control.ticket()
             try { worker.execute {
                 val response = JSONObject().put("id", id)
-                try { response.put("value", control.invoke(value.getString("method"), value.getJSONObject("payload"), expected)) }
+                try { response.put("value", control.invoke(value.getString("method"), value.get("payload"), expected)) }
                 catch (_: Exception) { response.put("error", "Native control failed or session changed. Verify pairing/trust, then Refresh; no replay.") }
                 runOnUiThread { if (!isDestroyed && ticket == System.identityHashCode(web)) reply.postMessage(response.toString()) }
             } } catch (_: java.util.concurrent.RejectedExecutionException) {
