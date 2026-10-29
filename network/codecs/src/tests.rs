@@ -327,7 +327,7 @@ fn lossless_entropy_expansion_and_sibling_streams_remain_independent() {
 
 #[cfg(feature = "system-opus")]
 #[test]
-fn opus_long_high_bitrate_packet_is_not_silently_capped_to_1275_bytes() {
+fn opus_profile_capacity_is_forwarded_and_large_valid_packets_decode() {
     let f = Format {
         rate: 48000,
         sample: Sample::F32Le,
@@ -344,9 +344,50 @@ fn opus_long_high_bitrate_packet_is_not_silently_capped_to_1275_bytes() {
     let mut encoder = Encoder::new((), n.clone(), binding()).unwrap();
     let mut decoder = Decoder::new((), n.clone(), binding()).unwrap();
     let packet = encoder.encode(&vec![0; n.block_bytes()]).unwrap();
-    assert!(packet.len() - HEADER_BYTES > 1275);
-    assert!(packet.len() - HEADER_BYTES <= OPUS_MAX_PACKET_BYTES);
-    assert_eq!(decoder.decode(0, &packet).unwrap().len(), n.block_bytes());
+    let payload_len = packet.len() - HEADER_BYTES;
+    assert!(payload_len > 0 && payload_len <= OPUS_MAX_PACKET_BYTES);
+    assert_eq!(crate::opus::last_encode_capacity(), OPUS_MAX_PACKET_BYTES);
+    let decoded = decoder.decode(0, &packet).unwrap();
+    assert_eq!(decoded.len(), n.block_bytes());
+
+    // Use libopus's public padding API to produce a valid maximum-capacity
+    // packet deterministically, regardless of its chosen native output bitrate.
+    #[link(name = "opus")]
+    unsafe extern "C" {
+        fn opus_packet_pad(data: *mut u8, len: i32, new_len: i32) -> i32;
+    }
+    let mut padded_payload = packet[HEADER_BYTES..].to_vec();
+    padded_payload.resize(OPUS_MAX_PACKET_BYTES, 0);
+    // SAFETY: the original valid packet occupies payload_len initialized bytes;
+    // the buffer owns exactly new_len initialized writable bytes.
+    assert_eq!(
+        unsafe {
+            opus_packet_pad(
+                padded_payload.as_mut_ptr(),
+                payload_len as i32,
+                OPUS_MAX_PACKET_BYTES as i32,
+            )
+        },
+        0
+    );
+    let mut padded = packet[..HEADER_BYTES].to_vec();
+    padded[52..56].copy_from_slice(&(OPUS_MAX_PACKET_BYTES as u32).to_be_bytes());
+    padded.extend_from_slice(&padded_payload);
+    let mut padded_decoder = Decoder::new((), n.clone(), binding()).unwrap();
+    assert_eq!(padded_decoder.decode(0, &padded).unwrap(), decoded);
+    assert!(
+        negotiate(
+            n.plan(),
+            std::slice::from_ref(n.plan()),
+            std::slice::from_ref(n.plan()),
+            true,
+            Budget {
+                max_block_bytes: n.block_bytes(),
+                max_encoded_bytes: OPUS_MAX_PACKET_BYTES - 1
+            }
+        )
+        .is_err()
+    );
     let mut mismatch = n.plan().clone();
     if let Encoding::Opus(ref mut parameters) = mismatch.encoding {
         parameters.bitrate = 64000;
