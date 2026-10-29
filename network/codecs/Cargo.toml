@@ -1,0 +1,21 @@
+[package]
+name = "mixyard-network-codecs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[features]
+default = []
+system-zstd = []
+system-opus = []
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

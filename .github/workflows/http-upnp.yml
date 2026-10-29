@@ -1,0 +1,23 @@
+name: HTTP and UPnP loopback adapters
+
+on:
+  pull_request:
+    paths: ['interoperability/mixyard_interop/core.py', 'interoperability/mixyard_interop/http_upnp/**', 'interoperability/tests/http_upnp/**', 'docs/protocol-http-upnp.md', '.github/workflows/http-upnp.yml']
+  push:
+    branches: [main]
+    paths: ['interoperability/mixyard_interop/core.py', 'interoperability/mixyard_interop/http_upnp/**', 'interoperability/tests/http_upnp/**', 'docs/protocol-http-upnp.md', '.github/workflows/http-upnp.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  owned-loopback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: interoperability
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s interoperability/tests/http_upnp -v
