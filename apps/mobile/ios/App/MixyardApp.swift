@@ -50,7 +50,7 @@ import MobileCore
         guard message.frameInfo.isMainFrame, let root, let url = message.frameInfo.request.url, url.isFileURL,
               url.standardizedFileURL.path == root.appendingPathComponent("index.html").standardizedFileURL.path,
               let request = message.body as? [String: Any], let method = request["method"] as? String,
-              let payload = request["payload"] as? [String: Any], let control,
+              let payload = request["payload"], let control,
               let bytes = try? JSONSerialization.data(withJSONObject: request), bytes.count <= 2_097_152 else { replyHandler(nil, "Native bridge origin/size/command denied."); return }
         let expected = control.ticket
         Task {

@@ -35,7 +35,7 @@ class PinnedControl(private val store: CredentialStore) {
         require(configuration.getString("pin").matches(Regex("[a-fA-F0-9]{64}"))) { "leaf-sha256-required" }
         return uri
     }
-    private fun request(config: JSONObject, path: String, body: JSONObject, ticket: Ticket, credential: Boolean): Pair<Int, JSONObject> {
+    private fun request(config: JSONObject, path: String, body: String, ticket: Ticket, credential: Boolean): Pair<Int, String> {
         require(path in allowed)
         val origin = endpoint(config)
         val expectedPin = config.getString("pin").lowercase()
@@ -59,7 +59,7 @@ class PinnedControl(private val store: CredentialStore) {
             connection.requestMethod = "POST"; connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
             if (credential) connection.setRequestProperty("Authorization", "Bearer " + config.getString("credential"))
-            val encoded = body.toString().toByteArray(Charsets.UTF_8)
+            val encoded = body.toByteArray(Charsets.UTF_8)
             require(encoded.size <= 2_097_152) { "request-too-large" }
             connection.setFixedLengthStreamingMode(encoded.size)
             synchronized(this) { fence.check(ticket) }
@@ -80,14 +80,15 @@ class PinnedControl(private val store: CredentialStore) {
             }
             require(bytes.size <= 2_097_152) { "response-too-large" }
             synchronized(this) { fence.check(ticket) }
-            return status to JSONObject(String(bytes, Charsets.UTF_8))
+            return status to Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString()
         } finally { connection.disconnect(); synchronized(this) { if (active === connection) active = null } }
     }
     fun pair(endpoint: String, pin: String, device: String, invitation: String, name: String, expected: Ticket) {
         val ticket: Ticket
         synchronized(this) { fence.check(expected); invalidate(); ticket = fence.ticket() }
         val config = JSONObject().put("endpoint", endpoint).put("pin", pin).put("deviceId", device)
-        val (status, reply) = request(config, "/control/pair", JSONObject().put("deviceId", device).put("invitation", invitation).put("name", name), ticket, false)
+        val (status, rawReply) = request(config, "/control/pair", JSONObject().put("deviceId", device).put("invitation", invitation).put("name", name).toString(), ticket, false)
+        val reply = JSONObject(rawReply)
         require(status == 200 && reply.getString("deviceId") == device) { "pairing-failed" }
         permissions(reply)
         require(reply.getString("credential").isNotBlank() && reply.getString("credentialId").isNotBlank()) { "invalid-credential" }
@@ -95,7 +96,7 @@ class PinnedControl(private val store: CredentialStore) {
         config.put("credential", reply.getString("credential")).put("credentialId", reply.getString("credentialId"))
         synchronized(this) { fence.check(ticket); store.save(config); configuration = config }
     }
-    fun invoke(method: String, payload: JSONObject, expected: Ticket): JSONObject {
+    fun invoke(method: String, payload: Any, expected: Ticket): JSONObject {
         synchronized(this) { fence.check(expected) }
         if (method == "disconnect") { invalidate(); return JSONObject() }
         val config: JSONObject; val ticket: Ticket
@@ -107,7 +108,8 @@ class PinnedControl(private val store: CredentialStore) {
         }
         try {
             if (method == "session") {
-                val (status, value) = request(config, "/control/session", JSONObject(), ticket, true)
+                val (status, rawReply) = request(config, "/control/session", "{}", ticket, true)
+                val value = JSONObject(rawReply)
                 require(status == 200) { "session-failed-http-$status" }
                 permissions(value)
                 require(value.get("backendAvailable") == false && value.get("audioApplied") == false) { "unsupported-backend-version" }
@@ -117,21 +119,27 @@ class PinnedControl(private val store: CredentialStore) {
                 return value
             }
             require(method == "request") { "unsupported-native-command" }
+            require(payload is String) { "raw-control-json-required" }
+            require(payload.toByteArray(Charsets.UTF_8).size <= 2_097_152) { "request-too-large" }
+            val envelope = JSONObject(payload)
             val before = ticket.authority ?: error("session-unavailable")
-            require(authority(payload) == before) { "frozen-request-identity-mismatch" }
-            val path = payload.getString("path")
+            require(authority(envelope) == before) { "frozen-request-identity-mismatch" }
+            val path = envelope.getString("path")
             require(path.matches(Regex("/api/[a-z0-9/-]+")) && !path.contains("//") && path != "/api/session") { "path-denied" }
-            require(path !in setOf("/api/automation/arm", "/api/automation/review")) { "remote-arm-and-review-unsupported" }
-            val envelope = JSONObject().put("deviceId", before.deviceId).put("authorityId", before.authorityId)
-                .put("revision", before.revision).put("path", path).put("body", payload.get("body"))
-            val (status, value) = request(config, "/control/request", envelope, ticket, true)
+            require(path !in setOf("/api/automation/arm", "/api/automation/review", "/api/automation/live") && envelope.has("body")) { "remote-arm-and-review-unsupported" }
+            // Inspect authority, but send and return the original JSON bytes.
+            // JSONObject must never reserialize Float64 canonical payloads.
+            val (status, rawReply) = request(config, "/control/request", payload, ticket, true)
+            val value = JSONObject(rawReply)
             if (value.has("error")) {
-                // Protocol errors are distinct from canonical API replies; never pretend they are an envelope.
-                invalidate(); error("control-protocol-http-$status")
+                require(status in 400..599) { "invalid-control-error" }
+                val code = value.getJSONObject("error").getString("code")
+                if (status == 401 || status == 409 || code == "invalid-origin") invalidate()
+                return JSONObject().put("status", status).put("json", rawReply)
             }
             require(value.getInt("status") == status && value.has("body")) { "status-envelope-mismatch" }
             synchronized(this) { fence.accept(ticket, authority(value)) }
-            return value
+            return JSONObject().put("status", status).put("json", rawReply)
         } catch (failure: Exception) { synchronized(this) { if (fence.ticket().epoch == ticket.epoch) invalidate() }; throw failure }
     }
 }

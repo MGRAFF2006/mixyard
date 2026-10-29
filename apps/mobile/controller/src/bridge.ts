@@ -5,6 +5,10 @@ export type Session = {
 }
 export type Permission = 'view' | 'control' | 'settings'
 export type NativeCall = (method: 'session' | 'request' | 'disconnect', payload: unknown) => Promise<unknown>
+export function encodeNativeMessage(method: string, payload: unknown, id: number) {
+  if (method === 'request' && typeof payload !== 'string') throw new Error('Canonical control requests must remain raw JSON strings.')
+  return JSON.stringify({ method, payload, id })
+}
 const MAX_BYTES = 2_097_152
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid native control reply.')
@@ -60,16 +64,29 @@ export class MobileBridge {
       if (epoch !== this.epoch || !this.active || this.active.revision !== envelope.revision || init.signal?.aborted)
         throw new Error('Mobile target/session changed before dispatch. No request replayed.')
       // Native rechecks this entire frozen envelope, then adds its own bearer.
-      const reply = record(await this.call('request', envelope))
+      const native = record(await this.call('request', init.body))
       if (epoch !== this.epoch || init.signal?.aborted) throw new Error('Mobile target/session changed. Response discarded; no request replayed.')
+      if (!Number.isInteger(native.status) || (native.status as number) < 200 || (native.status as number) > 599 || typeof native.json !== 'string' || new TextEncoder().encode(native.json).length > MAX_BYTES) throw new Error('Invalid native HTTP reply.')
+      const reply = record(JSON.parse(native.json))
+      if ('error' in reply) {
+        const failure = record(reply.error)
+        if (typeof failure.code !== 'string' || typeof failure.message !== 'string' || (native.status as number) < 400) throw new Error('Invalid native protocol error.')
+        if (native.status === 401 || native.status === 409 || failure.code === 'invalid-origin') this.invalidate()
+        return new Response(native.json, { status: native.status as number, headers: { 'Content-Type': 'application/json' } })
+      }
       if (reply.deviceId !== session.deviceId || reply.authorityId !== session.authorityId ||
           !Number.isSafeInteger(reply.revision) || (reply.revision as number) < (this.active?.revision ?? session.revision) ||
-          !Number.isInteger(reply.status) || (reply.status as number) < 200 || (reply.status as number) > 599 || !('body' in reply)) {
+          reply.status !== native.status || !('body' in reply)) {
         this.invalidate(); throw new Error('Invalid or stale mobile authority reply. Refresh explicitly.')
       }
       this.active = { ...session, revision: reply.revision as number }; this.notify(this.active)
-      return Response.json(reply, { status: reply.status as number })
-    } catch (cause) { if (epoch === this.epoch) this.invalidate(); throw cause }
+      return new Response(native.json, { status: native.status as number, headers: { 'Content-Type': 'application/json' } })
+    } catch (cause) {
+      if (epoch === this.epoch) this.invalidate()
+      // Fetch-compatible transport failure clears the shared Api's authority;
+      // structured HTTP permission denials above do not revoke other grants.
+      throw new TypeError(cause instanceof Error ? cause.message : 'Native control transport failed; refresh before retrying. No request replayed.')
+    }
     finally { this.queued--; release() }
   }
 }
