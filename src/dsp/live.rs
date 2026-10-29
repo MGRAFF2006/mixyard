@@ -288,8 +288,14 @@ impl LiveChain {
     /// Privacy/loss/restart: immediately discard all retained audio, including
     /// tails. An inactive instance cannot resume; compile and bind a fresh one.
     pub fn revoke(&mut self) {
-        self.active = false;
         self.chain.reset();
+        self.invalidate();
+    }
+
+    // Chain::process already clears all history on its own error path. Keep
+    // host invalidation separate so that path uses the one reset we admitted.
+    fn invalidate(&mut self) {
+        self.active = false;
         self.output.fill(0.0);
         self.valid_samples = 0;
         self.gain = Ramp::constant(0.0);
@@ -318,7 +324,11 @@ impl LiveChain {
         match self.process_inner(binding, format, frames, input) {
             Ok(report) => Ok(report),
             Err(error) => {
-                self.revoke();
+                if matches!(error, Error::Process(_)) {
+                    self.invalidate();
+                } else {
+                    self.revoke();
+                }
                 Err(error)
             }
         }
