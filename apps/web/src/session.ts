@@ -22,6 +22,7 @@ export class ConsoleSession {
   private operation = 0
   constructor(api: ApiClient = new Api()) { this.api = api }
   get dirty() { return signature(this.local) !== this.baseline }
+  get canRead() { return this.api.mode === 'local' || !!this.api.identity?.permissions.includes('view') }
   get canWrite() { return this.api.connected && !!this.snapshot && !this.busy && !this.needsRefresh && (this.api.mode === 'local' || !!this.api.identity?.permissions.includes('control')) }
   invalidate() {
     this.operation++; this.busy = false; this.snapshot = null; this.status = null
@@ -43,7 +44,13 @@ export class ConsoleSession {
       this.needsRefresh = true
       this.status = null; this.statusError = ''
       await connection
+      const epoch = this.api.epoch
+      if (!this.canRead) {
+        this.error = 'View permission was not granted. Ask the owning device for view access to routing, profiles and runtime status. Other explicitly granted rights remain available.'
+        return
+      }
       const [store, status] = await Promise.allSettled([this.api.post('/api/profiles/read'), this.api.post('/api/status')])
+      this.api.assertEpoch(epoch)
       if (status.status === 'fulfilled') {
         try { this.status = readStatus(status.value) } catch (error) { this.statusError = String(error) }
       } else this.statusError = status.reason instanceof Error ? status.reason.message : String(status.reason)

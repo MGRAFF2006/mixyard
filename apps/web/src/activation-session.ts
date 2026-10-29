@@ -25,6 +25,7 @@ export class ActivationSession {
   statusError = ''
   routingNotice = ''
   generation = 0
+  private session = 0
   private draftGeneration = 0
   private authorityGeneration = 0
   private statusGeneration = 0
@@ -32,7 +33,7 @@ export class ActivationSession {
   private now: () => number
   constructor(api: Pick<Api, 'post'>, now = () => Date.now()) { this.api = api; this.now = now }
   disconnect() {
-    this.generation++; this.draftGeneration++; this.authorityGeneration++; this.statusGeneration++
+    this.session++; this.generation++; this.draftGeneration++; this.authorityGeneration++; this.statusGeneration++
     this.invalidateReview(); this.saved = null; this.status = null; this.live = null
     this.connected = false; this.needsRead = true; this.busy = false; this.controlBusy = false
     this.disarming = false; this.refreshing = false; this.statusError = ''; this.notice = ''; this.error = ''
@@ -68,6 +69,7 @@ export class ActivationSession {
   }
   async read(onAdopt?: () => void) {
     if (this.busy || this.controlBusy) return
+    const session = this.session
     this.busy = true; this.error = ''; this.invalidateReview()
     const generation = this.draftGeneration, authority = ++this.authorityGeneration
     try {
@@ -87,7 +89,7 @@ export class ActivationSession {
       // Sequential status read: never start capture or activation on connection.
       await this.queryStatus(true)
     } catch (error) { if (authority === this.authorityGeneration) { this.needsRead = true; this.fail(error) } }
-    finally { this.busy = false }
+    finally { if (session === this.session) this.busy = false }
   }
   async refreshStatus() { await this.queryStatus() }
   private async queryStatus(reconcile = false) {
@@ -120,6 +122,7 @@ export class ActivationSession {
       if (!Number.isSafeInteger(this.saved.settingsRevision + 1)) throw Error('Settings revision cannot be incremented exactly in this browser.')
     } catch (error) { this.fail(error); return false }
     const expected = this.saved.settingsRevision, generation = this.generation, authority = ++this.authorityGeneration
+    const session = this.session
     this.busy = true
     // Any submitted write may have succeeded even if its acknowledgment is lost.
     this.needsRead = true
@@ -137,12 +140,13 @@ export class ActivationSession {
       if (authority === this.authorityGeneration) { this.fail(error); this.notice = 'Write outcome needs a fresh read before another save. Local settings and builder edits are kept; no automatic retry.' }
       return false
     }
-    finally { this.busy = false }
+    finally { if (session === this.session) this.busy = false }
   }
   async capture(wantsReview: boolean) {
     if (this.busy || this.controlBusy) return
     if (!this.saved || this.needsRead || this.dirty) { this.fail('Save or reconcile settings before collecting a saved-policy review.'); return }
     if (!this.saved.settings.graph) { this.fail('Save builder graph and settings before reading a live decision.'); return }
+    const session = this.session
     this.busy = true; this.error = ''; this.notice = ''; this.invalidateReview(); this.live = null
     const generation = this.generation, authority = ++this.authorityGeneration, saved = copyDsp(this.saved), started = this.now()
     try {
@@ -157,7 +161,7 @@ export class ActivationSession {
       if (wantsReview && !live.review && !live.blocked) this.fail('No armable review returned. Inspect live details and retry review.')
     } catch (error) {
       if (generation === this.generation && authority === this.authorityGeneration) this.fail(error)
-    } finally { this.busy = false }
+    } finally { if (session === this.session) this.busy = false }
   }
   async arm() {
     if (this.busy || this.controlBusy) return

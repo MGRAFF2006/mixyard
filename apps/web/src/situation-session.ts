@@ -17,11 +17,12 @@ export class SituationSession {
   dirty = false
   // Generation includes invalid text drafts, not just successfully parsed edits.
   generation = 0
+  private session = 0
   constructor(api: Pick<Api, 'post'>) {
     this.api = api
   }
   disconnect() {
-    this.generation++; this.evaluation = null; this.validated = false; this.live = null
+    this.session++; this.generation++; this.evaluation = null; this.validated = false; this.live = null
     this.liveError = ''; this.error = ''; this.notice = ''; this.busy = false; this.collecting = false
   }
   invalidate() {
@@ -64,6 +65,7 @@ export class SituationSession {
   async validate() {
     if (this.busy)
       return
+    const session = this.session
     this.busy = true
     this.error = ''
     this.evaluation = null
@@ -82,13 +84,14 @@ export class SituationSession {
         this.fail(error)
     }
     finally {
-      this.busy = false
+      if (session === this.session) this.busy = false
     }
   }
   async evaluate() {
     if (this.busy)
       return
     this.validated = false
+    const session = this.session
     this.busy = true
     this.error = ''
     this.evaluation = null
@@ -107,12 +110,13 @@ export class SituationSession {
         this.fail(error)
     }
     finally {
-      this.busy = false
+      if (session === this.session) this.busy = false
     }
   }
   async import(text: string) {
     if (this.busy)
       return false
+    const session = this.session
     this.busy = true
     this.error = ''
     this.notice = ''
@@ -140,12 +144,13 @@ export class SituationSession {
       return false
     }
     finally {
-      this.busy = false
+      if (session === this.session) this.busy = false
     }
   }
   async collect() {
     if (this.collecting)
       return
+    const session = this.session
     this.collecting = true
     this.liveError = ''
     this.live = null
@@ -158,7 +163,7 @@ export class SituationSession {
       if (generation === this.generation) this.liveError = error instanceof Error ? error.message : String(error)
     }
     finally {
-      this.collecting = false
+      if (session === this.session) this.collecting = false
     }
   }
   useLive() {

@@ -12,7 +12,7 @@ import DelayTiming from './DelayTiming.vue'
 import DelayMeter from './DelayMeter.vue'
 import { addChannel as addLane, removeChannel as removeLane, renameChannel as renameLane } from './channels.ts'
 
-const props = defineProps<{ api: Pick<Api, 'post'>; ready: boolean; epoch?: number }>()
+const props = defineProps<{ api: Pick<Api, 'post'> & Partial<Pick<Api, 'epoch' | 'connectionError'>>; ready: boolean; epoch?: number }>()
 const d = reactive(new DspDraft())
 const form = ref<HTMLFormElement | null>(null)
 const generation = ref(0)
@@ -33,7 +33,8 @@ const dynamicsFields: { key: keyof Pick<Dynamics, 'thresholdDb' | 'ratio' | 'kne
   { key: 'releaseMs', label: 'Release (ms)', min: 0 }, { key: 'makeupDb', label: 'Makeup (dB)', min: -6000, max: 6000 },
   { key: 'rangeDb', label: 'Range (dB)', min: 0, max: 6000 },
 ]
-watch(() => props.epoch, () => { d.changed(); busy.value = false; error.value = ''; notice.value = '' }, { flush: 'sync' })
+const sessionEpoch = computed(() => props.api.epoch ?? props.epoch)
+watch(sessionEpoch, () => { d.changed(); busy.value = false; error.value = props.api.connectionError ?? ''; notice.value = '' }, { flush: 'sync' })
 function changed() { d.changed(); error.value = ''; notice.value = '' }
 function valid() { return form.value?.reportValidity() ?? false }
 function download(value: unknown, name: string) {
@@ -83,9 +84,10 @@ function toggleChannel(item: EffectConfig, id: string, event: Event) {
 function message(e: unknown) { return e instanceof Error ? e.message : String(e) }
 async function run(action: () => Promise<void>) {
   if (busy.value) return
+  const epoch = sessionEpoch.value
   busy.value = true; error.value = ''; notice.value = ''
-  try { await action() } catch (e) { error.value = message(e) }
-  finally { busy.value = false }
+  try { await action() } catch (e) { if (epoch === sessionEpoch.value) error.value = message(e) }
+  finally { if (epoch === sessionEpoch.value) busy.value = false }
 }
 async function applyImport(text: string) {
   if (await d.import(props.api, text)) { generation.value++; importText.value = ''; notice.value = 'Chain imported; core validation passed. Timing is unknown. Export chain to keep it.' }
@@ -94,7 +96,7 @@ async function applyImport(text: string) {
 async function importFile(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = ''
   if (file && file.size > 1_048_576) { error.value = 'Chain file exceeds the web preview 1 MiB input budget. Use the offline renderer for larger jobs. Current chain kept.'; return }
-  if (file) await run(async () => { const epoch = props.epoch; const text = await file.text(); if (epoch !== props.epoch) return; await applyImport(text) })
+  if (file) await run(async () => { const epoch = sessionEpoch.value; const text = await file.text(); if (epoch !== sessionEpoch.value) return; await applyImport(text) })
 }
 async function render() {
   if (!valid()) return
@@ -106,6 +108,7 @@ async function render() {
     if (!await d.render(props.api, request)) notice.value = 'Inputs changed during rendering; discarded the stale result. Render again.'
   })
 }
+defineExpose({ hasUnsavedDrafts: () => dspJson(d.config) !== dspJson(starter('empty')) || d.bypassed || frames.value !== 128 || iterations.value !== 16 || signalKind.value !== 'impulse' || amplitude.value !== 0.25 || frequency.value !== 1000 || dspJson(samples.value) !== dspJson([0.25, 0]) || !!channelId.value || renameDrafts.size > 0 || !!importText.value || !!form.value?.querySelector(':invalid') })
 function headroom(peak: number) { return peak === 0 ? '∞' : (-20 * Math.log10(peak)).toPrecision(6) }
 function ms(frames: number, rate: number) { return (frames / rate * 1000).toPrecision(6) }
 </script>

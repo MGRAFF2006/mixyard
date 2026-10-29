@@ -164,3 +164,60 @@ test('disconnect drops collected context and arm review while retaining host-loc
   assert.equal(activation.saved, null)
   assert.equal(activation.needsRead, true)
 })
+
+test('control boundary validates integer identity metadata/capabilities and preserves canonical non-2xx errors', async () => {
+  const good = { deviceId: 'A', authorityId: 'boot', revision: 7, permissions: ['settings'], backendAvailable: false, audioApplied: false }
+  for (const bad of [
+    { ...good, revision: 1.5 }, { ...good, revision: 2 ** 53 }, { ...good, authorityId: '' },
+    { ...good, permissions: ['view', 'admin'] }, { ...good, permissions: ['view', 'view'] },
+    { ...good, backendAvailable: true }, { ...good, audioApplied: true }, { ...good, deviceId: 'B' },
+  ]) {
+    const api = Api.forControl(async () => Response.json(bad), { deviceId: 'A', credential: 'private' })
+    await assert.rejects(api.connect())
+    assert.equal(api.connected, false)
+  }
+  let calls = 0
+  const api = Api.forControl(async path => {
+    calls++
+    if (path === '/control/session') return Response.json(good)
+    return Response.json({ deviceId: 'A', authorityId: 'boot', revision: 7, status: 422, body: { error: { code: 'invalid-policy', message: 'Unsupported exact ordered channel route' } } }, { status: 422 })
+  }, { deviceId: 'A', credential: 'private' })
+  await api.connect()
+  await assert.rejects(api.post('/api/profiles/edit', {}), e => e instanceof ApiError && e.status === 422 && e.code === 'invalid-policy' && e.message === 'Unsupported exact ordered channel route')
+  assert.equal(calls, 2)
+  assert.equal(api.identity?.permissions.includes('control'), false)
+})
+
+test('an obsolete operation cannot release a new session busy guard', async () => {
+  const old = deferred<unknown>(), fresh = deferred<unknown>()
+  let n = 0
+  const session = new SituationSession({ post: async () => ++n === 1 ? old.promise : fresh.promise })
+  const first = session.validate()
+  session.disconnect()
+  const second = session.validate()
+  old.resolve({ valid: true }); await first
+  assert.equal(session.busy, true)
+  assert.equal(session.validated, false)
+  fresh.resolve({ valid: true }); await second
+  assert.equal(session.busy, false)
+  assert.equal(session.validated, true)
+})
+
+test('independent settings grant remains usable without view; permission denial is not credential revocation', async () => {
+  const paths: string[] = []
+  const api = Api.forControl(async (path, init) => {
+    const wirePath = String(path), request = JSON.parse(String(init?.body)); paths.push(wirePath)
+    if (wirePath === '/control/session') return Response.json({ deviceId: 'A', authorityId: 'boot', revision: 0, permissions: ['settings'], backendAvailable: false, audioApplied: false })
+    if (request.path === '/api/automation/settings/read') return Response.json({ deviceId: 'A', authorityId: 'boot', revision: 0, status: 200, body: { settings: 'settings-only result' } })
+    return Response.json({ error: { code: 'permission-denied', message: 'View was not granted' } }, { status: 403 })
+  }, { deviceId: 'A', credential: 'private' })
+  const console = new ConsoleSession(api)
+  await console.refresh()
+  assert.equal(api.connected, true)
+  assert.equal(console.canWrite, false)
+  assert.match(console.error, /View permission was not granted/)
+  assert.deepEqual(paths, ['/control/session'])
+  await assert.rejects(api.post('/api/status'), e => e instanceof ApiError && e.code === 'permission-denied')
+  assert.equal(api.connected, true)
+  assert.deepEqual(await api.post('/api/automation/settings/read'), { settings: 'settings-only result' })
+})

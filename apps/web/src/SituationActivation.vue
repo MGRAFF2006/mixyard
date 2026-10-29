@@ -11,7 +11,7 @@ import { useSituationRows } from './situation-rows.ts'
 import { vSituationNumber } from './situation-number.ts'
 import SituationPreview from './SituationPreview.vue'
 const props = defineProps<{
-  api: Pick<Api, 'post'>; epoch?: number; ready: boolean; visible: boolean
+  api: Pick<Api, 'post'> & Partial<Pick<Api, 'epoch'>>; epoch?: number; ready: boolean; visible: boolean
   graph: Graph; catalog: Definition[]; builderGeneration: number; builderReady: () => boolean
 }>()
 const emit = defineEmits<{ loadSavedGraph: [graph: Graph, catalog: Definition[]] }>()
@@ -24,7 +24,7 @@ const builderMatches = computed(() => !!s.saved && sameJson(props.graph, s.saved
 const armable = computed(() => { void clock.value; return s.reviewCurrent && acknowledged.value && builderMatches.value && !s.statusError })
 const state = computed(() => !s.status || s.statusError ? 'State unconfirmed' : `${s.status.manualOverride ? `Manually paused / ${s.status.armed ? 'armed authority retained' : 'disarmed'}` : s.status.armed ? 'Armed' : 'Disarmed'}${s.status.blocked ? ' / blocked' : ''}`)
 const locked = computed(() => !props.ready || s.busy || s.controlBusy)
-watch(() => props.epoch, () => { s.disconnect(); acknowledged.value = false }, { flush: 'sync' })
+watch(() => props.api.epoch ?? props.epoch, () => { s.disconnect(); acknowledged.value = false }, { flush: 'sync' })
 watch(() => props.builderGeneration, () => s.builderChanged())
 watch(() => s.review, () => { acknowledged.value = false })
 function syncForm() {
@@ -95,6 +95,7 @@ function exportDraft() {
   const snapshot: SettingsSnapshot = { ...(s.saved ?? {}), format: 'mixyard-situation-settings', schemaVersion: 1, settingsRevision: s.saved?.settingsRevision ?? 0, settings: s.draft }
   download(snapshot, 'mixyard-situation-settings-v1.json')
 }
+defineExpose({ hasUnsavedDrafts: () => s.dirty || !!json.value })
 let poll: ReturnType<typeof setTimeout> | undefined, ticker: ReturnType<typeof setInterval> | undefined, disposed = false
 async function refresh() {
   if (props.ready && props.visible && document.visibilityState === 'visible' && s.connected && !s.busy && !s.controlBusy) await s.refreshStatus()
@@ -114,7 +115,7 @@ onUnmounted(() => { disposed = true; clearTimeout(poll); clearInterval(ticker); 
     <p v-if="s.error" role="alert" class="message error">{{ s.error }}<span v-if="s.error.includes('graph-required')"> Save builder graph and settings, then retry.</span></p>
     <p v-if="s.notice" role="status" class="message success">{{ s.notice }}</p>
     <p v-if="s.routingNotice" class="message warning">{{ s.routingNotice }}</p>
-    <template v-if="s.connected">
+    <template v-if="s.connected || s.dirty">
       <div class="situation-ownership">
         <div><h4>{{ state }}</h4><p v-if="s.statusError" role="alert" class="message error">{{ s.statusError }}</p><p v-if="s.status?.blocked" class="message warning">Blocked: {{ s.status.blocked.code }} — {{ s.status.blocked.message }}</p><p v-if="s.status">Decision: {{ s.status.decision.kind }}. Last stored change: {{ s.status.lastAppliedAtMs === null ? 'none reported' : `${s.status.lastAppliedAtMs} ms in the server observation epoch` }}.</p></div>
         <button class="situation-disarm" :disabled="!ready || s.disarming" @click="s.disarm">Disarm automatic selection</button>
