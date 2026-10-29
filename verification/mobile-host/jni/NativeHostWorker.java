@@ -23,9 +23,14 @@ public final class NativeHostWorker {
         return ByteBuffer.allocateDirect(size).order(ByteOrder.LITTLE_ENDIAN);
     }
     public static void main(String[] args) throws Exception {
-        require(args.length == 2, "native library and owned fixture required");
+        require(args.length == 2 || args.length == 3, "native library, owned fixture and optional denied fixture required");
         System.load(Path.of(args[0]).toAbsolutePath().toString());
         var api = new NativeHostWorker();
+        if (args.length == 3) {
+            long denied = api.create(Files.readAllBytes(Path.of(args[2])));
+            if (denied != 0) api.destroy(denied);
+            require(denied == 0, "excluded call return must reject before native activation");
+        }
         long handle = api.create(Files.readAllBytes(Path.of(args[1])));
         require(handle != 0, "actual host admission");
         try {

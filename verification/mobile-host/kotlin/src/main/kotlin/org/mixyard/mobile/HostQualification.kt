@@ -7,7 +7,8 @@ import org.mixyard.mobile.host.NativeHostWorker
 /** Owned offline binary-buffer probe of the actual JNI -> Rust policy/DSP path. */
 fun main(args: Array<String>) {
     require(args.size == 1)
-    val request = JSONObject(File(args[0]).readText())
+    val admitted = File(args[0]).readText()
+    val request = JSONObject(admitted)
     // Exercise canonical mix-minus admission even with an explicit return send.
     request.getJSONObject("config").getJSONArray("sends").put(JSONObject().put("source", "return").put("mix", "call").put("gain", 1.0))
     request.getJSONObject("limits").put("maxSends", 4)
@@ -23,7 +24,11 @@ fun main(args: Array<String>) {
         }
     }
     val sources = ports("sources"); val outputs = ports("outputs")
-    NativeHostWorker(request.toString(), 4, sources, outputs).use { worker ->
+    var rejectedMixMinus = false
+    try { NativeHostWorker(request.toString(), 4, sources, outputs).close() }
+    catch (_: IllegalStateException) { rejectedMixMinus = true }
+    check(rejectedMixMinus) { "excluded-call-return-admitted" }
+    NativeHostWorker(admitted, 4, sources, outputs).use { worker ->
         check(!worker.backendAvailable && !worker.audioApplied)
         for ((index, level) in listOf(999.0, 4.0, 2.0).withIndex()) {
             val buffer = worker.input(index)

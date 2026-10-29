@@ -4,8 +4,9 @@ import NativeHost
 
 @main struct HostQualification {
     static func main() throws {
-        guard CommandLine.arguments.count == 2,
-              var request = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))) as? [String: Any],
+        guard CommandLine.arguments.count == 2 else { throw MobileError.invalid("fixture") }
+        let admitted = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
+        guard var request = try JSONSerialization.jsonObject(with: admitted) as? [String: Any],
               var config = request["config"] as? [String: Any], var sends = config["sends"] as? [[String: Any]],
               var limits = request["limits"] as? [String: Any] else { throw MobileError.invalid("fixture") }
         sends.append(["source": "return", "mix": "call", "gain": 1.0]); config["sends"] = sends
@@ -20,7 +21,11 @@ import NativeHost
         }
         let sources = try ports("sources"), outputs = try ports("outputs")
         let json = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
-        let worker = try NativeHostWorker(requestJSON: json, frames: 4, sources: sources, outputs: outputs)
+        var rejectedMixMinus = false
+        do { let forbidden = try NativeHostWorker(requestJSON: json, frames: 4, sources: sources, outputs: outputs); try forbidden.close() }
+        catch { rejectedMixMinus = true }
+        precondition(rejectedMixMinus, "excluded-call-return-admitted")
+        let worker = try NativeHostWorker(requestJSON: String(decoding: admitted, as: UTF8.self), frames: 4, sources: sources, outputs: outputs)
         defer { try? worker.close() }
         precondition(!worker.backendAvailable && !worker.audioApplied)
         for (index, level) in [999.0, 4.0, 2.0].enumerated() {
