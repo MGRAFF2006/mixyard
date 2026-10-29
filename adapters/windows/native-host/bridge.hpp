@@ -36,7 +36,7 @@ struct MappedTime {
     uint64_t device_frame = 0, qpc_100ns = 0;
     uint32_t packet_offset = 0;
 };
-enum class Result { ok, cancelled, invalid, binding, clock, host, source_time, exhausted };
+enum class Result { ok, cancelled, invalid, binding, clock, host, source_time, exhausted, source_loss };
 
 class Bridge {
     struct Port {
@@ -72,10 +72,23 @@ public:
     myw_port* output(size_t index) const;
     // Safe control-thread cancellation. Does not touch the single-owner Rust host.
     void cancel();
+    // Control-only after ALL graph/capture/consumer workers are stopped/joined.
+    // Owned Lifecycle invokes this only after its actual worker joins/scrubs.
+    // Returns invalid while admission is open. This is never a callback clear.
+    Result scrub_quiescent();
     // Sole graph-owner, bounded/preallocated: no locks, allocation, I/O or native
     // calls. MappedTime binds EACH observed native packet to an explicit injected
     // engine timestamp; QPC is compared as provenance, never cast into engine ns.
-    // Missing/failed sources supply fresh silence. Failed output stays isolated.
+    // ANY missing/failed selected source returns source_loss and terminally
+    // revokes the WHOLE generation, including healthy sibling output queues.
+    // Existing render cursors/pop return zero-filled output on that revoked
+    // port, so retained PCM cannot be submitted after loss is acknowledged.
+    // source_loss reports CLOSED ADMISSION, not completed quiescence/scrubbing.
+    // Lifecycle::try_finish_stop provides completion only after actual joins.
+    // Expected scheduled silence is a real zero-filled packet, NOT missing
+    // capture input. Do not reuse this loss policy for network jitter/loss.
+    // Restart requires quiescence and a fresh host/generation. A destination-only
+    // failure stays isolated; it does not close healthy sources/outputs.
     Result process(uint64_t now_ns, mx_stamp engine, uint32_t frames,
                    const MappedTime* source_times, size_t count);
 };

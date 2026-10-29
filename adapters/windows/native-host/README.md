@@ -29,7 +29,12 @@ loads a driver, changes a service, or selects a microphone/speaker itself.
    port. The host remains exclusively borrowed until the bridge is destroyed.
    Source/output format differences, partial-valid-bit containers, recapture,
    ambiguous labels, denied consent and unqualified timelines reject.
-3. A dedicated capture worker produces to each `source(i)` port. One graph worker
+3. Transfer the bridge into `Lifecycle`, register every asynchronous
+   graph/capture/render/IOCTL user as an owned `Worker`, then call `start()` on
+   the control thread. No detached/unregistered users may share this lifetime.
+   Each worker owns its endpoint/cursor/buffers and releases native interfaces on
+   its `run()` thread; its `scrub_quiescent()` clears retained PCM after joins.
+   A dedicated capture worker produces to each `source(i)` port. One graph worker
    calls `Bridge::process`; each native render worker consumes its own `output(i)`
    with the existing `RenderCursor` or the SDK `RenderEndpoint`. `CaptureEndpoint`
    services a caller-owned initialized `IAudioCaptureClient` directly into the
@@ -43,22 +48,56 @@ loads a driver, changes a service, or selects a microphone/speaker itself.
    QPC, nominal rates, RTT or wall time. All currently admitted ports have one
    exact nominal rate and mono/front-center or stereo/front-left,front-right
    order, mapped explicitly to `MONO` or `FL,FR`.
-5. On consent/authority loss call `cancel()` from the control thread. It atomically
-   closes every native queue; the graph owner calls Rust revoke on its next
-   process call. Quiesce/join **all** endpoint and graph users before destroying
-   the bridge, then destroy the Rust host. There is no reconnect: a fresh graph,
-   host, binding and generation are required. Destruction is a control operation,
-   not a callback operation. Allocation failure during creation can revoke the
-   borrowed host; discard it after any unsuccessful creation attempt.
+5. On consent/authority loss call `Lifecycle::request_stop()` on the control
+   owner. Atomic queue closure prevents later queue/cursor admission. Closure is
+   **not shutdown completion**. `try_finish_stop()` returns `StopState::pending`
+   while any actual owned thread is running, a join fails, or any scrub fails.
+   It reports `complete` only after **all actual joins**, every owned worker's
+   successful scrub, and shared-host/native-queue/bridge PCM invalidation/scrub.
+   `stop_issue()` and `join_error()` distinguish running workers from failures.
+   Retain the entire owner on failure; never free a live worker or concurrently
+   clear its storage. This completion is owned lifecycle evidence, not a caller
+   boolean or a physical/SDK qualification assertion. Destruction is control-only
+   and may join; it must never run on an owned worker/callback. A persistent scrub
+   failure must be resolved while retaining the owner before destruction.
+   Destroy the Rust host after this owned lifecycle. Restart requires a fresh
+   host, generation, binding and admission after actual quiescence. Allocation
+   failure during creation can revoke the borrowed host; discard a failed host.
 
 `Bridge::process` performs bounded copying and calls the preallocated Rust host;
 it does not allocate, lock, log or perform I/O. Each `myw_port` preallocates sixteen
 256-frame packets (about 1 MiB). Processing is limited to 256 frames per call and
-the shared canonical mono/stereo processor. Source loss becomes fresh silence;
-historical data and source re-admission are refused. A destination overflow,
-encoding failure or endpoint loss closes only its own queue. Inspect the queue's
-terminal state for failures. Output isolation does not change consent or resume
-failed sources. Cancellation cannot retract bytes already submitted to an OS.
+the shared canonical mono/stereo processor. **Any missing/failed selected source
+returns `Result::source_loss` and terminally closes the whole native generation**,
+including healthy B-only sibling outputs and unrouted selected sources. This is
+an explicit availability reduction: there is no per-output source-loss continuity
+in this attachment. Source-loss notification means admission closed; completion
+still requires the owned lifecycle above. Closed queue pop and partial cursor
+fill overwrite caller PCM with zeros and return the port's terminal state, so
+old queued/delayed/staged audio cannot enter a subsequent callback. Scrubbing is
+performed only after actual quiescence. Already committed native hardware buffers
+are a separate boundary; queue closure cannot retract them.
+
+Expected scheduled silence must arrive as a real bound zero/SILENT native packet;
+it remains admitted. Missing native source input means a failed/missing selected
+source, not ordinary scheduled silence or network packet loss/jitter. Do not
+reuse this terminal source-loss contract as network concealment. Per-output
+source-loss continuity remains separately scoped in [follow-up #104](https://github.com/MGRAFF2006/mixyard/issues/104),
+requiring canonical contributor/epoch metadata and independent qualification;
+the adapter does not parse a second dependency model from Config.
+
+A destination-only `MX_INACTIVE` after successful host processing, native queue
+overflow, encoding failure or render endpoint loss closes only that output.
+Healthy sources and sibling outputs continue. Host-wide policy/input failure
+still closes the generation. Inspect each queue's terminal state for failures.
+
+The minimal additional worker APIs are `myw_port_scrub_quiescent` and
+`RenderCursor::scrub_quiescent` in `worker.h`, `worker_queue.cpp` and
+`worker_render.hpp`. They reject open ports and zero retained PCM/packet metadata
+on closed, actually quiescent storage without resetting SPSC indices or rearming
+the port. Closure alone does not prove producer/consumer quiescence; the low-level
+C API has that explicit precondition, enforced by the owned lifecycle. Core
+concurrent push/pop behavior is unchanged. No live queue/cursor is cleared.
 
 ## Precision and the driver boundary
 
@@ -99,7 +138,9 @@ Release`, and `ctest -C Release`. Supply `MIXYARD_HOST_NATIVE_LIBRARIES` as a CM
 semicolon-separated list from the actual toolchain's `cargo rustc --locked
 --manifest-path adapters/engine/Cargo.toml --lib --release -- --print
 native-static-libs` output; the workflow obtains that list rather than guessing
-Windows Rust standard-library dependencies. The hosted workflow builds against the installed
+Windows Rust standard-library dependencies. CMake preserves actual `/defaultlib:*`
+and other directives as linker options, and library names as libraries. A portable
+regression checks the exact previously failing MSVC token list. The hosted workflow builds against the installed
 Windows SDK and executes **only** injected capture/render COM endpoints and
 injected driver operations. It never enumerates/activates audio endpoints.
 
@@ -111,6 +152,17 @@ checks capture → native SPSC → actual Rust mixer → SDK render byte consume
 and native queue → real StreamProducer → existing driver Delivery byte oracle.
 The Linux static-linked test also runs 512 complete native-queue/host/render
 blocks plus cancellation with zero malloc/calloc/realloc/free operations.
+Linked regressions retain actual nonzero output DSP history in both a native
+queue and a partially consumed cursor across source loss. They check typed
+terminal loss, zero-filled rejected output and the explicit whole-generation
+availability limit, with zero heap operations during invalidation. Actual host
+destination DSP overflow and native queue overflow keep B-only siblings byte
+exact across subsequent blocks. A held owned consumer proves a closed/live
+worker cannot acknowledge completion or trigger a concurrent scrub; a failed
+scrub retains ownership until successful retry after actual exit/join. A separate
+white-box executable inspects every production queue PCM slot and partial-cursor
+byte after actual producer/consumer joins and control scrub. C11 header and strict
+warning builds cover the additive worker API. These are synthetic/injected proofs.
 CI results apply to the exact revision reported by GitHub; source/syntax checks
 alone do not prove this integration.
 

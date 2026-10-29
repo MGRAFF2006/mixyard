@@ -2,12 +2,14 @@
 // Linked production Rust host and C++ queues. Windows additionally uses injected
 // SDK COM endpoints/driver operations. No device API is called by this program.
 #include "bridge.hpp"
+#include "lifecycle.hpp"
 #include "../worker_render.hpp"
 #ifdef _WIN32
 #include "sdk_endpoints.hpp"
 #include "../virtual-input/capture/delivery.hpp"
 #endif
 #include <cstring>
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 
@@ -56,7 +58,7 @@ bool admit(void*, const Endpoint& e, int direction, const Timeline& t) {
         e.consent == "this disposable synthetic test session only" &&
         ((direction == MYW_RENDER) == e.owned_output);
 }
-std::string request(uint64_t generation) {
+std::string request(uint64_t generation, const std::string& output_dsp = {}) {
     // Deliberately scramble Config order: host plan arrays are canonical ID order.
     const std::string config = R"({"schemaVersion":2,"revision":7,"sources":[
       {"id":"b-source","selector":{"kind":"mic","deviceUid":"private-sdk:b-source"}},
@@ -86,22 +88,27 @@ std::string request(uint64_t generation) {
     for (size_t i = 0; i < input.size(); ++i) { if (i) result += ','; result += source_spec(input[i]); }
     result += "],\"outputs\":[";
     for (size_t i = 0; i < output.size(); ++i) { if (i) result += ','; result += output_spec(output[i]); }
-    return result + "]}";
+    result += ']';
+    if (!output_dsp.empty()) result += ",\"outputDsp\":" + output_dsp;
+    return result + '}';
 }
 struct Session {
     mx_host* host = nullptr;
-    std::unique_ptr<Bridge> bridge;
+    std::unique_ptr<Lifecycle> lifecycle;
+    Bridge* bridge = nullptr;
     Timeline time;
-    explicit Session(uint64_t generation = 17) : time(timeline(generation)) {
-        const auto json = request(generation);
+    explicit Session(uint64_t generation = 17, const std::string& output_dsp = {}) : time(timeline(generation)) {
+        const auto json = request(generation, output_dsp);
         std::array<char, 2048> error{};
         const auto result = mx_host_create(reinterpret_cast<const uint8_t*>(json.data()), json.size(), &host, error.data(), error.size());
         if (result != 0) throw std::runtime_error(std::string("actual Rust host create: ") + error.data());
-        if (Bridge::create(host, time, sources(), outputs(), {nullptr, admit}, bridge) != Result::ok) {
+        std::unique_ptr<Bridge> candidate;
+        if (Bridge::create(host, time, sources(), outputs(), {nullptr, admit}, candidate) != Result::ok) {
             mx_host_destroy(host); host = nullptr; throw std::runtime_error("actual host info/Windows bridge binding failed");
         }
+        bridge = candidate.get(); lifecycle = std::make_unique<Lifecycle>(std::move(candidate));
     }
-    ~Session() { bridge.reset(); mx_host_destroy(host); }
+    ~Session() { lifecycle.reset(); mx_host_destroy(host); }
 };
 mx_stamp engine(const Timeline& t, uint64_t sequence, uint64_t first_frame) {
     // Explicit test timeline, no multiplication/offset from QPC or nominal rate.
@@ -110,16 +117,17 @@ mx_stamp engine(const Timeline& t, uint64_t sequence, uint64_t first_frame) {
 const std::array<double, 4> wide{{0.5 + 0x1p-40, -0.25 - 0x1p-41, 0.125 + 0x1p-42, -0.5 - 0x1p-40}};
 const std::array<uint8_t, 12> integer{{0x00, 0x00, 0x20, 0x00, 0x00, 0xc0, 0x00, 0x00, 0x60, 0x00, 0x00, 0xf0}};
 const std::array<double, 4> integer_values{{0.25, -0.5, 0.75, -0.125}};
-std::array<MappedTime, 2> push(Session& s, uint64_t sequence, uint64_t frame, bool second = true) {
+std::array<MappedTime, 2> push(Session& s, uint64_t sequence, uint64_t frame, bool second = true, bool first = true,
+                              const std::array<double, 4>& a = wide) {
     const auto stamp = engine(s.time, sequence, frame);
     std::array<MappedTime, 2> mapped{};
     for (size_t i = 0; i < mapped.size(); ++i) {
         mapped[i] = {stamp, 200000 + frame, 777777777 + sequence * 13, 0};
-        if (i && !second) continue;
+        if ((i && !second) || (!i && !first)) continue;
         myw_stamp native{{s.time.generation, s.time.revision}, s.time.clock_id, sequence, frame,
                          mapped[i].device_frame, mapped[i].qpc_100ns, 0, 0};
         const auto result = i ? myw_port_push(s.bridge->source(i), s24, native, integer.data(), 2, integer.size()) :
-            myw_port_push(s.bridge->source(i), f64, native, wide.data(), 2, sizeof(wide));
+            myw_port_push(s.bridge->source(i), f64, native, a.data(), 2, sizeof(a));
         require(result == MYW_OK, "production native capture queue admission");
     }
     return mapped;
@@ -147,25 +155,196 @@ void oracle(Session& s, bool b = true) {
     }
     consume(s, 0, a); consume(s, 1, narrow); consume(s, 2, c);
 }
+std::string output_effect(const std::string& effect) {
+    return R"([{"name":"regression-output-only","format":{"sampleRateHz":48000,"channels":["FL","FR"]},"effects":[{"name":"regression","enabled":true,"effect":)" + effect + "}]} ,null,null]";
+}
+void loss_retention_check(bool partial) {
+    Session s(17, output_effect(R"({"kind":"delay","frames":2,"wet":1,"dry":0,"feedback":0})"));
+    auto mapped = push(s, 0, 0); process(s, 0, 0, mapped);
+    consume(s, 0, std::array<double, 4>{}); // Actual output DSP has one-block delay.
+    consume(s, 1, std::array<float, 4>{{0.125f, -0.25f, 0.375f, -0.0625f}});
+    consume(s, 2, integer_values);
+    mapped = push(s, 1, 2); process(s, 1, 2, mapped);
+    const double* retained = nullptr; size_t count = 0;
+    require(mx_host_output(s.host, 0, &retained, &count) == MX_OK && count == 4 && retained[0] != 0 && retained[2] != 0,
+        "regression must retain ACTUAL nonzero derived DSP history, not a silence-only fixture");
+    mixyard_worker::RenderCursor cursor;
+    std::array<uint8_t, 16> frame{};
+    uint64_t missing = 0;
+    if (partial) {
+        require(cursor.fill(s.bridge->output(0), {17, 7}, 16, frame.data(), 1, missing) == MYW_OK && !missing,
+            "stage first frame from nonzero delayed native output");
+        require(std::memcmp(frame.data(), retained, frame.size()) == 0 && cursor.offset < cursor.block.frames,
+            "regression must leave a nonzero second frame in native render cursor");
+    }
+    myw_port_revoke(s.bridge->source(0));
+    mapped = push(s, 2, 4, true, false); // Healthy B source, deliberately no A.
+    const auto stamp = engine(s.time, 2, 4);
+#ifdef MIXYARD_ALLOCATION_AUDIT
+    heap_operations = 0; audit_heap = true;
+#endif
+    const auto loss = s.bridge->process(stamp.captured_ns, stamp, 2, mapped.data(), mapped.size());
+    // Both queue and partial cursor must overwrite caller storage with zeros,
+    // rather than merely returning an error alongside retained historical PCM.
+    frame.fill(0xff);
+    const auto cursor_result = cursor.fill(s.bridge->output(0), {17, 7}, 16, frame.data(), 1, missing);
+    std::array<uint8_t, 4096> queued{}; queued.fill(0xff); myw_block block{};
+    const auto queue_result = myw_port_pop(s.bridge->output(0), {17, 7}, queued.data(), queued.size(), &block);
+#ifdef MIXYARD_ALLOCATION_AUDIT
+    audit_heap = false;
+    require(!heap_operations, "source-loss queue/cursor invalidation allocated or freed memory");
+#endif
+    for (auto byte : frame) require(!byte, "staged delayed PCM must never reach next render frame after loss");
+    for (auto byte : queued) require(!byte, "queued delayed PCM must never reach native consumer after loss");
+    require(loss == Result::source_loss, "any selected source loss must terminally close generation with source_loss");
+    require(cursor_result == MYW_STALE && queue_result == MYW_STALE, "acknowledged loss invalidates staged and queued output before copy");
+    require(!block.frames, "revoked queue clears frame metadata");
+    require(myw_port_state(s.bridge->output(1)) == MYW_STALE && myw_port_state(s.bridge->output(2)) == MYW_STALE &&
+            myw_port_state(s.bridge->source(1)) == MYW_STALE,
+        "explicit conservative policy closes even healthy B-only siblings on selected source loss");
+    retained = nullptr; count = 0;
+    require(mx_host_output(s.host, 0, &retained, &count) == MX_INACTIVE && !retained && !count, "source loss also revokes borrowed Rust output");
+}
+void output_dsp_failure_check() {
+    Session s(17, output_effect(R"({"kind":"gain","gain":1.7976931348623157e308,"invertPolarity":false})"));
+    const std::array<double, 4> loud{{8, 8, 8, 8}};
+    const auto mapped = push(s, 0, 0, true, true, loud);
+    const auto stamp = engine(s.time, 0, 0);
+#ifdef MIXYARD_ALLOCATION_AUDIT
+    heap_operations = 0; audit_heap = true;
+#endif
+    const auto result = s.bridge->process(stamp.captured_ns, stamp, 2, mapped.data(), mapped.size());
+#ifdef MIXYARD_ALLOCATION_AUDIT
+    audit_heap = false;
+    require(!heap_operations, "destination DSP failure/isolation allocated or freed memory");
+#endif
+    require(result == Result::ok, "actual host destination DSP overflow must not revoke healthy sibling outputs");
+    const double* samples = nullptr; size_t count = 0;
+    require(mx_host_output(s.host, 0, &samples, &count) == MX_INACTIVE, "real host isolated destination, not alternate C++ mixer");
+    require(myw_port_state(s.bridge->output(0)) == MYW_STALE && myw_port_state(s.bridge->source(0)) == MYW_OK &&
+            myw_port_state(s.bridge->source(1)) == MYW_OK, "destination failure is local and cannot revoke healthy source authority");
+    consume(s, 1, std::array<float, 4>{{0.125f, -0.25f, 0.375f, -0.0625f}});
+    consume(s, 2, integer_values);
+    for (uint64_t sequence = 1; sequence < 4; ++sequence) {
+        const auto next = push(s, sequence, sequence * 2); process(s, sequence, sequence * 2, next);
+        consume(s, 1, std::array<float, 4>{{0.125f, -0.25f, 0.375f, -0.0625f}}); consume(s, 2, integer_values);
+    }
+}
+void output_queue_overflow_check() {
+    Session s;
+    for (uint64_t sequence = 0; sequence <= MYW_SLOTS + 2; ++sequence) {
+        const auto mapped = push(s, sequence, sequence * 2); process(s, sequence, sequence * 2, mapped);
+        // Never consume output 0: its own bounded native queue must overflow.
+        // Siblings must remain byte exact before, at and AFTER that overflow.
+        consume(s, 1, std::array<float, 4>{{0.125f, -0.25f, 0.375f, -0.0625f}}); consume(s, 2, integer_values);
+    }
+    require(myw_port_state(s.bridge->output(0)) == MYW_FULL && myw_port_state(s.bridge->output(1)) == MYW_OK &&
+            myw_port_state(s.bridge->output(2)) == MYW_OK, "actual output queue overflow is terminal and destination-local");
+    std::array<uint8_t, 4096> bytes{}; bytes.fill(0xff); myw_block block{};
+    require(myw_port_pop(s.bridge->output(0), {17, 7}, bytes.data(), bytes.size(), &block) == MYW_FULL, "full port never drains historical output");
+    for (auto byte : bytes) require(!byte, "overflowed output never returns retained PCM");
+}
+class HeldConsumer final : public Worker {
+    myw_port* port_;
+public:
+    std::atomic<bool> ready{false}, release{false}, reject_scrub{true};
+    std::atomic<unsigned> scrub_attempts{0};
+    mixyard_worker::RenderCursor cursor;
+    std::array<uint8_t, 16> frame{};
+    bool staged_nonzero = false, stale_rejected = false, rejected_bytes_zero = false;
+    explicit HeldConsumer(myw_port* port) : port_(port) {}
+    void run(Bridge&) override {
+        uint64_t missing = 0;
+        const auto first = cursor.fill(port_, {17, 7}, 16, frame.data(), 1, missing);
+        staged_nonzero = first == MYW_OK && !missing && cursor.offset < cursor.block.frames &&
+            std::any_of(frame.begin(), frame.end(), [](uint8_t b) { return b != 0; });
+        ready.store(true, std::memory_order_release);
+        // Deliberately hold an OWNED consumer between callbacks to reproduce a
+        // stop that has not yet quiesced. This is test scheduling, not PCM work.
+        while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+        frame.fill(0xff);
+        stale_rejected = cursor.fill(port_, {17, 7}, 16, frame.data(), 1, missing) == MYW_STALE;
+        rejected_bytes_zero = std::all_of(frame.begin(), frame.end(), [](uint8_t b) { return b == 0; });
+    }
+    bool scrub_quiescent() override {
+        scrub_attempts.fetch_add(1, std::memory_order_release);
+        if (reject_scrub.load(std::memory_order_acquire)) return false;
+        frame.fill(0);
+        return cursor.scrub_quiescent(port_) == MYW_OK;
+    }
+};
+void owned_quiescence_check() {
+    Session s(17, output_effect(R"({"kind":"delay","frames":2,"wet":1,"dry":0,"feedback":0})"));
+    auto mapped = push(s, 0, 0); process(s, 0, 0, mapped); consume(s, 0, std::array<double, 4>{});
+    mapped = push(s, 1, 2); process(s, 1, 2, mapped);
+    auto worker = std::make_unique<HeldConsumer>(s.bridge->output(0));
+    auto* observed = worker.get();
+    require(s.lifecycle->add(std::move(worker)), "setup owns actual native consumer storage");
+    struct ReleaseOnExit { HeldConsumer* worker; ~ReleaseOnExit() { worker->release.store(true, std::memory_order_release); } } release_on_exit{observed};
+    require(s.lifecycle->start(), "start actual owned consumer thread");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!observed->ready.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    require(observed->ready.load(std::memory_order_acquire) && observed->staged_nonzero,
+        "actual consumer owns partially staged nonzero historical output");
+    require(s.bridge->scrub_quiescent() == Result::invalid && myw_port_scrub_quiescent(s.bridge->output(0)) == MYW_INVALID,
+        "open/live storage cannot be scrubbed");
+    myw_port_revoke(s.bridge->source(0)); mapped = push(s, 2, 4, true, false);
+    const auto stamp = engine(s.time, 2, 4);
+    require(s.bridge->process(stamp.captured_ns, stamp, 2, mapped.data(), mapped.size()) == Result::source_loss, "close admission without pretending consumer has stopped");
+    s.lifecycle->request_stop();
+    require(s.lifecycle->try_finish_stop() == StopState::pending && s.lifecycle->stop_issue() == StopIssue::workers_running && !observed->scrub_attempts.load(),
+        "closed BUT LIVE consumer cannot acknowledge completion or concurrently scrub cursor");
+    observed->release.store(true, std::memory_order_release);
+    while (!observed->scrub_attempts.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+        (void)s.lifecycle->try_finish_stop(); std::this_thread::yield();
+    }
+    require(observed->scrub_attempts.load() && s.lifecycle->try_finish_stop() == StopState::pending &&
+            s.lifecycle->stop_issue() == StopIssue::worker_scrub_failed,
+        "scrub failure retains actual joined worker and bridge ownership, no completion ACK");
+    require(observed->stale_rejected && observed->rejected_bytes_zero, "later callback rejects/zero-fills retained old frame before write");
+    observed->reject_scrub.store(false, std::memory_order_release);
+    require(s.lifecycle->try_finish_stop() == StopState::complete, "completion only AFTER actual join and successful queue/cursor scrub");
+    for (auto byte : observed->cursor.bytes) require(!byte, "joined consumer cursor actually scrubbed");
+    require(!observed->cursor.block.frames && !observed->cursor.offset, "joined cursor metadata scrubbed");
+}
+void scheduled_silence_check() {
+    Session s;
+    const auto stamp = engine(s.time, 0, 0);
+    std::array<MappedTime, 2> times{{{stamp, 200000, 777777777, 0}, {stamp, 200000, 777777777, 0}}};
+    const myw_stamp native{{17, 7}, 91, 0, 0, 200000, 777777777, 0, 2};
+    require(myw_port_push(s.bridge->source(0), f64, native, wide.data(), 2, sizeof(wide)) == MYW_OK &&
+            myw_port_push(s.bridge->source(1), s24, native, integer.data(), 2, integer.size()) == MYW_OK,
+        "native scheduled silence is an actual bound SILENT packet, not source absence");
+    process(s, 0, 0, times);
+    consume(s, 0, std::array<double, 4>{}); consume(s, 1, std::array<float, 4>{}); consume(s, 2, std::array<double, 4>{});
+    require(myw_port_state(s.bridge->source(0)) == MYW_OK, "expected native silence preserves admission");
+}
 void portable_checks() {
     {
         Session s;
         auto mapped = push(s, 0, 0); process(s, 0, 0, mapped); oracle(s);
-        // Endpoint loss removes only B; historical PCM must never be replayed.
+        // Conservative native policy: any selected source loss closes ALL
+        // outputs, even when the canonical host could render fresh silence.
         myw_port_revoke(s.bridge->source(1));
-        mapped = push(s, 1, 2, false); process(s, 1, 2, mapped); oracle(s, false);
-        // A lost destination cannot poison the remaining independently queued mix.
-        myw_port_revoke(s.bridge->output(1));
-        mapped = push(s, 2, 4, false); process(s, 2, 4, mapped);
-        std::array<double, 4> a{}; for (size_t i = 0; i < a.size(); ++i) a[i] = wide[i] * 0.5;
-        consume(s, 0, a); consume(s, 2, std::array<double, 4>{});
-        s.bridge->cancel();
-        const auto stamp = engine(s.time, 3, 6);
+        mapped = push(s, 1, 2, false);
+        auto stamp = engine(s.time, 1, 2);
+        require(s.bridge->process(stamp.captured_ns, stamp, 2, mapped.data(), mapped.size()) == Result::source_loss,
+            "actual selected source loss requests whole-generation shutdown");
+        stamp = engine(s.time, 2, 4);
         require(s.bridge->process(stamp.captured_ns, stamp, 2, mapped.data(), mapped.size()) == Result::cancelled, "cancel acknowledged on graph owner");
         std::array<uint8_t, 4096> bytes{}; myw_block block{};
         bytes.fill(0xff);
         require(myw_port_pop(s.bridge->output(0), {17, 7}, bytes.data(), bytes.size(), &block) != MYW_OK, "revoke blocks old output");
         for (auto byte : bytes) require(!byte, "no stale data on revoked output");
+    }
+    {
+        Session s;
+        auto mapped = push(s, 0, 0); process(s, 0, 0, mapped); oracle(s);
+        // A lost destination cannot poison the remaining independently queued mix.
+        myw_port_revoke(s.bridge->output(1));
+        mapped = push(s, 1, 2); process(s, 1, 2, mapped);
+        std::array<double, 4> a{}; for (size_t i = 0; i < a.size(); ++i) a[i] = wide[i] * 0.5 + integer_values[i] * 0.25;
+        consume(s, 0, a); consume(s, 2, integer_values);
     }
     {
         Session fresh(18); auto mapped = push(fresh, 0, 0); process(fresh, 0, 0, mapped); oracle(fresh);
@@ -244,17 +423,19 @@ public:
     std::array<uint8_t, 64> bytes{};
     size_t width;
     bool lost = false;
-    uint32_t released = 0, flags = 0;
+    uint32_t released = 0, flags = 0, buffer_calls = 0, release_calls = 0;
     explicit Render(size_t frame_bytes) : width(frame_bytes) {}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void** out) override { if (out) *out = nullptr; return E_NOINTERFACE; }
     ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
     ULONG STDMETHODCALLTYPE Release() override { return 1; }
     HRESULT STDMETHODCALLTYPE GetBuffer(UINT32 frames, BYTE** data) override {
+        ++buffer_calls;
         if (lost) return AUDCLNT_E_DEVICE_INVALIDATED;
         if (!frames || frames * width > bytes.size()) return E_INVALIDARG;
         bytes.fill(0xcc); *data = bytes.data(); return S_OK;
     }
     HRESULT STDMETHODCALLTYPE ReleaseBuffer(UINT32 frames, DWORD native_flags) override {
+        ++release_calls;
         released = frames; flags = native_flags;
         if (flags & AUDCLNT_BUFFERFLAGS_SILENT) bytes.fill(0);
         return S_OK;
@@ -306,21 +487,31 @@ void sdk_checks() {
         require(std::memcmp(narrow_sink.bytes.data(), narrow.data(), sizeof(narrow)) == 0 &&
                 std::memcmp(isolated_sink.bytes.data(), integer_values.data(), sizeof(integer_values)) == 0,
             "SDK destination-only Float32 and independent Float64 oracle");
-        // Actual SDK endpoint-loss error paths and independent surviving output.
-        a.lost = true;
-        require(capture_a.service() == MYW_NATIVE, "SDK capture endpoint loss revokes its source");
-        b.pending = true; b.device += 2; b.qpc += 13;
-        require(capture_b.service() == MYW_OK, "unrelated capture survives endpoint loss");
+        // Actual destination-only SDK failure must remain isolated. Retain a
+        // partial packet at the healthy A render consumer for the next loss.
+        a.pending = b.pending = true; a.device += 2; a.qpc += 13; b.device += 2; b.qpc += 13;
+        require(capture_a.service() == MYW_OK && capture_b.service() == MYW_OK, "next SDK captured block");
         const auto next = engine(s.time, 1, 2);
-        mapped[1] = {next, b.device, b.qpc, 0};
+        mapped = {{{next, a.device, a.qpc, 0}, {next, b.device, b.qpc, 0}}};
         process(s, 1, 2, mapped);
         narrow_sink.lost = true;
         require(render_b.service(2) == MYW_NATIVE, "SDK output loss closes only failed destination");
-        require(render_a.service(2) == MYW_OK && render_c.service(2) == MYW_OK, "sibling SDK output still consumes its mix");
-        for (size_t i = 0; i < expected.size(); ++i) expected[i] = integer_values[i] * 0.25;
-        require(std::memcmp(wide_sink.bytes.data(), expected.data(), sizeof(expected)) == 0, "lost source is fresh silence, never retained PCM");
-        s.bridge->cancel();
-        require(render_a.service(1) != MYW_OK, "cancelled SDK consumer cannot admit another frame");
+        require(render_a.service(1) == MYW_OK && render_c.service(2) == MYW_OK, "healthy SDK outputs survive destination-only failure");
+        require(std::memcmp(wide_sink.bytes.data(), expected.data(), 16) == 0, "SDK consumer stages nonzero old second frame");
+        a.lost = true;
+        require(capture_a.service() == MYW_NATIVE, "SDK capture endpoint loss revokes its source");
+        b.pending = true; b.device += 2; b.qpc += 13;
+        require(capture_b.service() == MYW_OK, "B capture remains healthy until generation loss is observed");
+        const auto loss_stamp = engine(s.time, 2, 4); mapped[1] = {loss_stamp, b.device, b.qpc, 0};
+        require(s.bridge->process(loss_stamp.captured_ns, loss_stamp, 2, mapped.data(), mapped.size()) == Result::source_loss,
+            "SDK selected source loss closes WHOLE generation");
+        const auto buffers = wide_sink.buffer_calls, commits = wide_sink.release_calls;
+        require(render_a.service(1) == MYW_STALE && wide_sink.buffer_calls == buffers && wide_sink.release_calls == commits,
+            "SDK partial old frame cannot be submitted or committed after observed source loss");
+        require(render_c.service(1) == MYW_STALE, "conservative source-loss policy intentionally stops even B-only destination");
+        require(capture_a.scrub_quiescent() && capture_b.scrub_quiescent() && render_a.scrub_quiescent() &&
+                render_b.scrub_quiescent() && render_c.scrub_quiescent(),
+            "actual synchronous injected endpoints are quiescent and their retained storage scrubbed");
     }
     {
         driver.initialize();
@@ -344,13 +535,27 @@ void sdk_checks() {
         std::array<double, 4> a{}; for (size_t i = 0; i < a.size(); ++i) a[i] = wide[i] * 0.5 + integer_values[i] * 0.25;
         // First queued block still belongs to the independent Float64 render sink.
         consume(s, 0, a);
+        require(ingress.scrub_quiescent(), "stopped injected driver consumer storage scrubbed");
     }
 }
 #endif
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc == 2) {
+            const std::string regression(argv[1]);
+            if (regression == "--loss-queued") loss_retention_check(false);
+            else if (regression == "--loss-partial") loss_retention_check(true);
+            else if (regression == "--output-dsp") output_dsp_failure_check();
+            else if (regression == "--output-overflow") output_queue_overflow_check();
+            else throw std::runtime_error("unknown regression case");
+            std::cout << "PASS " << regression << '\n'; return 0;
+        }
+        require(argc == 1, "invalid check arguments");
+        loss_retention_check(false); loss_retention_check(true);
+        output_dsp_failure_check(); output_queue_overflow_check();
+        owned_quiescence_check(); scheduled_silence_check();
         portable_checks();
         sustained_link_checks();
 #ifdef _WIN32

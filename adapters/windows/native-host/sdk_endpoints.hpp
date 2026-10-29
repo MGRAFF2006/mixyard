@@ -21,6 +21,10 @@ public:
     CaptureEndpoint(myw_port* port, IAudioCaptureClient* client) : port_(port), client_(client) {
         if (!client_ || myw_port_info(port_, &format_, &binding_, &clock_) != MYW_OK) myw_port_revoke(port_);
     }
+    bool scrub_quiescent() { // AFTER actual capture worker stop/join.
+        if (!port_ || myw_port_state(port_) == MYW_OK) return false;
+        silence_.fill(0); return true;
+    }
     int service() {
         int result = myw_port_state(port_);
         if (result != MYW_OK) return result;
@@ -60,6 +64,7 @@ public:
     RenderEndpoint(myw_port* port, IAudioRenderClient* client) : port_(port), client_(client) {
         if (!client_ || myw_port_info(port_, &format_, &binding_, &clock_) != MYW_OK) myw_port_revoke(port_);
     }
+    bool scrub_quiescent() { return cursor_.scrub_quiescent(port_) == MYW_OK; }
     int service(uint32_t frames) {
         if (!frames || frames > MYW_MAX_FRAMES) { myw_port_revoke(port_); return MYW_INVALID; }
         const auto state = myw_port_state(port_);
@@ -92,6 +97,10 @@ public:
             myw_port_state(port_) == MYW_OK && producer_.open(format_, binding_, clock_);
     }
     bool close() { myw_port_revoke(port_); return producer_.close(); }
+    bool scrub_quiescent() { // AFTER the IOCTL worker returns/joins.
+        if (!port_ || myw_port_state(port_) == MYW_OK || !producer_.close()) return false;
+        bytes_.fill(0); return true;
+    }
     int service() { // Dedicated IOCTL worker: synchronous calls may block.
         myw_block block{};
         const auto result = myw_port_pop(port_, binding_, bytes_.data(), bytes_.size(), &block);

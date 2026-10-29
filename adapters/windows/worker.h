@@ -40,6 +40,12 @@ typedef struct myw_port myw_port;
 int myw_port_create(myw_format format, myw_binding binding, uint64_t clock_id, myw_port** out);
 void myw_port_destroy(myw_port* port); /* Only after ALL users/workers are joined. */
 void myw_port_revoke(myw_port* port);  /* Irreversible, safe from control thread. */
+/* Control-only, after ALL producer/consumer workers are stopped and joined.
+ * Requires an irreversibly closed port; an open port returns MYW_INVALID.
+ * Zeroes retained PCM/packet metadata WITHOUT rearming/resetting the SPSC.
+ * Closure alone is NOT quiescence. This API cannot prove caller thread joins;
+ * the native host's owned Lifecycle enforces them before invoking it. */
+int myw_port_scrub_quiescent(myw_port* port);
 int myw_port_state(const myw_port* port);
 int myw_port_info(const myw_port* port, myw_format* format, myw_binding* binding, uint64_t* clock_id);
 /* One producer and one consumer, lock-free SPSC. No concurrent producers/consumers.

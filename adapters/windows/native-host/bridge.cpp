@@ -82,6 +82,20 @@ void Bridge::cancel() {
     for (const auto& p : sources_) myw_port_revoke(p->queue);
     for (const auto& p : outputs_) myw_port_revoke(p->queue);
 }
+Result Bridge::scrub_quiescent() {
+    if (!cancelled_.load(std::memory_order_acquire)) return Result::invalid;
+    if (!host_revoked_) { mx_host_revoke(host_); host_revoked_ = true; }
+    for (const auto& p : sources_) {
+        if (myw_port_scrub_quiescent(p->queue) != MYW_OK) return Result::invalid;
+        p->bytes.fill(0);
+    }
+    for (const auto& p : outputs_) {
+        if (myw_port_scrub_quiescent(p->queue) != MYW_OK) return Result::invalid;
+        p->bytes.fill(0);
+    }
+    for (auto& input : inputs_) input = {};
+    return Result::ok;
+}
 Result Bridge::stop(Result result) {
     cancel();
     if (!host_revoked_) { mx_host_revoke(host_); host_revoked_ = true; }
@@ -145,10 +159,16 @@ Result Bridge::process(uint64_t now_ns, mx_stamp engine, uint32_t frames, const 
         inputs_[i].encoding = encoding(p.endpoint.format);
         inputs_[i].sample_rate_hz = p.endpoint.format.rate;
         inputs_[i].channels = p.endpoint.format.channels;
-        inputs_[i].stamp = engine; // Fresh missing input, never historical bytes.
+        inputs_[i].stamp = engine;
         myw_block block{};
         const auto result = myw_port_pop(p.queue, binding, p.bytes.data(), p.bytes.size(), &block);
-        if (result != MYW_OK) continue; // Empty/lost/revoked source is isolated silence.
+        // Host DSP-history clearing alone cannot retract samples already copied
+        // into native queues or partial render cursors. Without a canonical
+        // dependency/epoch attachment, ANY selected source loss closes this
+        // whole generation. Atomic port revocation makes every existing cursor
+        // check fail before copying (and zero its caller buffer on failure).
+        // Do not clear an SPSC/cursor concurrently with its sole consumer.
+        if (result != MYW_OK) return stop(Result::source_loss);
         const auto& mapped = times[i];
         if (block.frames != frames || !stamp_binding(mapped.engine, timeline_) ||
             mapped.engine.sequence != block.stamp.sequence || mapped.engine.first_frame != engine.first_frame ||
@@ -165,7 +185,12 @@ Result Bridge::process(uint64_t now_ns, mx_stamp engine, uint32_t frames, const 
         auto& p = *outputs_[i];
         if (myw_port_state(p.queue) != MYW_OK) continue;
         const double* samples = nullptr; size_t sample_count = 0;
-        if (mx_host_output(host_, i, &samples, &sample_count) != 0 || !samples ||
+        const auto output_result = mx_host_output(host_, i, &samples, &sample_count);
+        // After a successful exclusive host process, MX_INACTIVE is this slot's
+        // local effect/queue failure. A host-wide failure was already rejected
+        // above; no concurrent owner can revoke the host between these calls.
+        if (output_result == MX_INACTIVE) { myw_port_revoke(p.queue); continue; }
+        if (output_result != MX_OK || !samples ||
             sample_count != static_cast<size_t>(frames) * p.endpoint.format.channels) return stop(Result::host);
         if (!encode(p.endpoint.format, samples, sample_count, p.bytes.data())) {
             myw_port_revoke(p.queue); continue;

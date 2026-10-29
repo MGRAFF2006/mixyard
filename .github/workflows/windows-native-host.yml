@@ -50,6 +50,8 @@ jobs:
           $nativeLine = $buildOutput | ForEach-Object { "$_" } | Where-Object { $_ -match 'native-static-libs:' } | Select-Object -Last 1
           if (!$nativeLine) { throw 'Rust toolchain did not report required native link libraries' }
           $nativeLibraries = (($nativeLine -replace '^.*native-static-libs:\s*', '').Trim() -split '\s+') -join ';'
+          # CMake separates library names from /defaultlib:* and other linker
+          # directives. Preserve the actual toolchain tokens without guessing.
           cmake -S adapters/windows/native-host -B "$env:RUNNER_TEMP/mixyard-windows-host-cpp" -A x64 "-DMIXYARD_HOST_LIBRARY=$env:CARGO_TARGET_DIR/release/mixyard_host.lib" "-DMIXYARD_HOST_NATIVE_LIBRARIES=$nativeLibraries"
       - name: Build Windows production bridge and consumer oracle
         shell: pwsh
