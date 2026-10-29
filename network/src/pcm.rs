@@ -1,8 +1,10 @@
+use crate::playout::{Lifecycle, Playout, PlayoutConfig, Revocation};
 use crate::protocol::{Frame, Limits, Offer, Permissions, VERSION};
 use crate::timing::StreamTiming;
 use anyhow::{Result, ensure};
 use serde::Serialize;
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Counters {
@@ -25,6 +27,14 @@ struct Timeline {
     next: u64,
     packets: BTreeMap<u64, Vec<u8>>,
     counters: Counters,
+    lifecycle: Arc<Lifecycle>,
+    playout_claimed: bool,
+}
+
+impl Drop for Timeline {
+    fn drop(&mut self) {
+        self.lifecycle.invalidate();
+    }
 }
 
 /// Bounded reorder/jitter window driven by the consumer's sample timeline.
@@ -77,6 +87,8 @@ impl Receiver {
                 next: 0,
                 packets: BTreeMap::new(),
                 counters: Counters::default(),
+                lifecycle: Arc::new(Lifecycle::new()),
+                playout_claimed: false,
             },
         );
         Ok(())
@@ -98,7 +110,9 @@ impl Receiver {
             self.rejected.unadmitted += 1;
             return;
         };
-        if frame.generation != stream.offer.generation {
+        if !stream.lifecycle.active() {
+            stream.counters.unadmitted += 1;
+        } else if frame.generation != stream.offer.generation {
             stream.counters.stale_generation += 1;
         } else if frame.validate(&stream.offer).is_err() {
             stream.counters.malformed += 1;
@@ -123,8 +137,12 @@ impl Receiver {
             .streams
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("unadmitted stream"))?;
+        ensure!(
+            !stream.playout_claimed,
+            "generation is owned by a playout handle"
+        );
         let silence = || -> Result<Vec<u8>> { Ok(vec![0; stream.offer.spec.payload_bytes()?]) };
-        if !self.connected {
+        if !self.connected || !stream.lifecycle.active() {
             stream.counters.disconnected_silence += 1;
             return silence();
         }
@@ -141,6 +159,67 @@ impl Receiver {
         };
         stream.next = next;
         Ok(payload)
+    }
+
+    /// Worker-only allocation; one exclusive consumer per stream generation.
+    pub fn create_playout(&mut self, id: u64, config: PlayoutConfig) -> Result<Playout> {
+        let stream = self
+            .streams
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("unadmitted stream"))?;
+        ensure!(
+            self.connected && stream.lifecycle.active(),
+            "inactive stream"
+        );
+        ensure!(
+            !stream.playout_claimed && stream.next == 0,
+            "generation already consumed/claimed"
+        );
+        let playout = Playout::new(
+            stream.offer.clone(),
+            config,
+            self.limits.packets_per_stream,
+            Arc::clone(&stream.lifecycle),
+        )?;
+        stream.playout_claimed = true;
+        Ok(playout)
+    }
+
+    /// Bounded worker handoff, not a realtime callback API. Transfers exact PCM
+    /// and publishes the consumer cursor back to ingress's reorder window.
+    pub fn service_playout(&mut self, playout: &mut Playout) -> Result<()> {
+        if !playout.lifecycle.active() {
+            playout.clear();
+            return Ok(());
+        }
+        let stream = self
+            .streams
+            .get_mut(&playout.spec().stream)
+            .ok_or_else(|| anyhow::anyhow!("unadmitted stream"))?;
+        ensure!(
+            Arc::ptr_eq(&stream.lifecycle, &playout.lifecycle),
+            "playout belongs to another receiver/generation"
+        );
+        stream.next = playout.next / u64::from(stream.offer.spec.frames_per_packet);
+        while let Some((sequence, payload)) = stream.packets.pop_first() {
+            playout.insert(sequence, &payload);
+        }
+        Ok(())
+    }
+
+    /// Local receive permission removal. A new Session is needed to permit again.
+    pub fn revoke(&mut self, id: u64) -> Result<Revocation> {
+        // Remove even a not-yet-admitted grant so a racing Offer cannot restore it.
+        let permitted = self.permissions.receive.remove(&id).is_some();
+        if let Some(stream) = self.streams.get_mut(&id) {
+            stream.lifecycle.invalidate();
+            stream.packets.clear();
+            return Ok(stream.lifecycle.receipt());
+        }
+        ensure!(permitted, "unpermitted stream");
+        let lifecycle = Arc::new(Lifecycle::new());
+        lifecycle.invalidate();
+        Ok(lifecycle.receipt())
     }
 
     pub fn counters(&self, id: u64) -> Result<Counters> {
@@ -185,6 +264,7 @@ impl Receiver {
     pub fn disconnect(&mut self) {
         self.connected = false;
         for stream in self.streams.values_mut() {
+            stream.lifecycle.invalidate();
             stream.packets.clear();
         }
     }

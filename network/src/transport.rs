@@ -532,6 +532,28 @@ impl Session {
         receiver.pull(id)
     }
 
+    /// Allocating worker API. The handle renders without this Session's mutex.
+    pub fn create_playout(&self, id: u64, config: crate::PlayoutConfig) -> Result<crate::Playout> {
+        let mut receiver = self.receiver.lock().expect("receiver poisoned");
+        if self.connection.close_reason().is_some() {
+            receiver.disconnect();
+        }
+        receiver.create_playout(id, config)
+    }
+
+    /// Worker-only handoff; do not call from a device callback.
+    pub fn service_playout(&self, playout: &mut crate::Playout) -> Result<()> {
+        let mut receiver = self.receiver.lock().expect("receiver poisoned");
+        if self.connection.close_reason().is_some() {
+            receiver.disconnect();
+        }
+        receiver.service_playout(playout)
+    }
+
+    pub fn revoke_receive(&self, id: u64) -> Result<crate::playout::Revocation> {
+        self.receiver.lock().expect("receiver poisoned").revoke(id)
+    }
+
     pub fn counters(&self, id: u64) -> Result<crate::Counters> {
         self.receiver
             .lock()
