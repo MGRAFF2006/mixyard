@@ -29,6 +29,38 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Keep Windows temporary fixtures below the existing account profile
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "TEMP=$env:LOCALAPPDATA" >> $env:GITHUB_ENV
+          "TMP=$env:LOCALAPPDATA" >> $env:GITHUB_ENV
       - run: cargo fmt --manifest-path control/Cargo.toml -- --check
       - run: cargo clippy --locked --manifest-path control/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --locked --manifest-path control/Cargo.toml
+
+  windows-private-identity:
+    name: Windows private identity ACL and handle regressions
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Keep temporary fixtures below the existing account profile
+        shell: pwsh
+        run: |
+          "TEMP=$env:LOCALAPPDATA" >> $env:GITHUB_ENV
+          "TMP=$env:LOCALAPPDATA" >> $env:GITHUB_ENV
+      - name: Test owned ephemeral ACL, reparse and replacement fixtures
+        run: cargo test --locked --manifest-path control/Cargo.toml --lib identity::windows_store::tests -- --test-threads=1
+      - name: Evidence boundary
+        if: always()
+        shell: pwsh
+        run: "'Tests exercise Windows kernel ACL and handle behavior only in owned ephemeral fixtures. No personal/system/default ACL changes, network shares or cross-account leakage experiment. Power-loss recovery remains unqualified.' >> $env:GITHUB_STEP_SUMMARY"

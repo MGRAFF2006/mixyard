@@ -165,11 +165,31 @@ TLS is Rustls/Tokio-Rustls, 0-RTT is disabled, and no wire parser is handwritten
 ## Persistence, recovery and local audio provisioning
 
 The identity directory permits only `state.json`, `owner.lock` and `pending.json`.
-The existing core filesystem checks reject symlinks/reparse points, foreign files,
-and on Unix group/world access or hardlinks; files are 0600 and directories 0700.
-Windows inherits the parent's ACL: choose a private per-user parent. The trusted
-local-filesystem/cooperating-writer boundary matches the profile store; malicious
-same-user ancestor swapping and network filesystems are outside this contract.
+On Unix, the existing core filesystem checks reject symlinks, foreign files,
+group/world access and hardlinks; files are 0600 and directories 0700. The Unix
+trusted-local-filesystem/cooperating-writer boundary is unchanged.
+
+Windows uses a control-specific secure store, separate from the nonsecret profile
+store. The directory must have an existing, trusted parent on a local fixed NTFS
+volume. It creates the directory, state, pending file and owner lock with an
+explicit current-user owner and a protected DACL granting only that SID full
+access, before writing any key bytes. Existing objects must have that same private
+owner/DACL, the expected type, no reparse point and (for files) exactly one link.
+Every ancestor's owner and replacement/ACL-changing permissions must belong to
+the current SID, LocalSystem, Administrators or TrustedInstaller; unsafe or
+unsupported ACLs fail closed. A parent may permit reading or unrelated child-directory
+creation, but cannot grant an untrusted principal deletion, child deletion,
+owner/DACL changes or rights that could install a reparse point (data, attribute
+or extended-attribute writes). The volume root permits unrelated child creation
+because it cannot become a reparse directory. No existing ACL is repaired or broadened automatically.
+
+The Windows store resolves the drive to its volume GUID and holds directory
+handles without delete sharing for every ancestor throughout ownership. It
+rechecks their ACLs before writes, retains an exclusive owner-lock handle, reads
+state through its validated handle, and renames the still-open private pending
+file by handle. Unsupported paths, missing parents, network filesystems and
+unprovable protection fail closed. This protects against other local accounts;
+it does not isolate secrets from the same account or Windows administrators.
 
 The process exclusively creates `owner.lock` and holds it for its lifetime.
 Updates write a bounded pending file, sync it, atomically rename it and sync the
