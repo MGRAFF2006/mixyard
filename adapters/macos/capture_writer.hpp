@@ -24,7 +24,8 @@ public:
     bool opened = false, hasSignal = false; // Read only after successful stopAndWait.
     uint64_t frames = 0;
 
-    CaptureWriter(CaptureQueue& queue, const char* path, uint32_t rate) {
+    template<class Queue>
+    CaptureWriter(Queue& queue, const char* path, uint32_t rate) {
         worker = std::thread([this, &queue, path = std::string(path), rate] {
             try {
                 WavWriter wav(path.c_str(), rate);

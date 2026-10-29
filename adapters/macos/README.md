@@ -5,8 +5,10 @@ For the separate read-only schema 2 runtime inventory executable, see
 probe below retains its existing v1 envelope and explicit capture commands.
 
 This independent MIT probe implements device discovery, Core Audio process
-inventory, and explicitly selected-process capture to stereo Float32 WAV. It does
-not implement virtual microphone transport, independent bus sends, microphone
+inventory, and explicitly selected-process capture to stereo Float32 WAV through
+the bounded worker bridge described below. A callable explicit-UID output worker
+and a separate authenticated virtual-input fixture provide transport foundations.
+It does not implement production virtual microphone transport, independent bus sends, microphone
 capture, routing recovery, or a product UI. No default device, physical-device
 format, original playback mute, Bluetooth profile, media command registration,
 or OS media-button ownership is changed. There is no dummy media-player session.
@@ -87,8 +89,10 @@ resampling, silent multichannel guessing, volume normalization, Bluetooth qualit
 downgrade or physical-device format change. Core Audio performs the requested
 process stereo mixdown; this is not Mixyard's independent bus mixer.
 
-The HAL callback copies at most 4096 stereo frames into one of 32 preallocated
-slots (~1 MiB); counters use lock-free 32-bit atomics. It performs no allocation,
+The tap callback copies at most 4096 stereo frames into one of eight preallocated
+64 KiB worker slots (512 KiB total payload storage); cursors/faults use lock-free
+32-bit atomics. The slots are shared by the callback producer and writer consumer,
+with a separate writer-owned Float32 drain buffer. It performs no allocation,
 logging, lock acquisition, disk I/O, Objective-C messaging or queue notification.
 A separate writer thread drains the SPSC queue and validates/writes PCM. Queue
 overflow, unexpected buffers, sample-timestamp discontinuity, format changes and
@@ -117,6 +121,108 @@ audio-server restart or cleanup of someone else's aggregate. Failed teardown is
 reported and the process exits immediately rather than freeing potentially live
 callback storage. Forced termination, stale-object behavior and restart recovery
 remain native gates; no recovery capability is advertised.
+
+## Exact PCM worker bridge (2026-10-29)
+
+`worker_bridge.hpp` is the actual SPSC handoff used by `probe.mm`'s selected-tap
+callback and existing threaded WAV writer. Its immutable `Format`, `Binding` and
+`Stamp` mirror the parent runtime worker v1 contract: integer sample rate, exact
+unique ordered channel labels, Float32/Float64 precision, generation/revision,
+explicit clock ID, sequence/first frame and captured/deadline host monotonic
+nanoseconds. The local C++ spelling uses camelCase; fields map one for one to
+the runtime's snake_case fields. It is **not linked to the Rust engine**. A
+generation is session-scoped lifecycle state, never authentication. Provenance
+records the actual tap UID or configured synthetic/adapted source separately;
+a provenance label cannot attest an authenticated peer or successful delivery.
+
+The bridge performs byte copies and planar/interleaved transposition only. It
+preserves signed zero, subnormals and Float64 low bits without an intermediate
+Float32 value. No rate, numeric precision or semantic channel conversion occurs.
+The WAV CLI still explicitly requests Core Audio's stereo Float32 mixdown and
+retains its documented 8–192 kHz format gate; the generic worker has no such rate
+ceiling. Integer/encoded PCM requires a separate exact byte descriptor and is
+not accepted by this float bridge.
+
+This transport admits eight slots, up to 4096 frames and 65,536 bytes per block,
+and up to 32 explicitly labelled channels. The byte bound may limit frame counts
+before the frame bound for wide layouts; excess requests fail without truncation.
+These are visible resource bounds of this implementation, not fixed mix counts
+or a blanket limit on the product's formats. Queue storage is constructed/touched
+off callbacks. Only one producer and one consumer may own each queue; each output
+requires its own queue/cursor. Generation, revision or clock changes require a
+new object. Replay, discontinuity, nonfinite PCM, shape/byte errors, expiration,
+overflow and revocation terminally invalidate that queue. Queued data becomes
+unreadable; the producer does not overwrite slots that a consumer might be
+reading. Empty worker pops clear the destination and never replay old samples.
+Renderer faults zero the whole callback, including an already copied prefix.
+In-flight readers recheck revocation before returning; already completed native
+callbacks cannot be recalled. There is no retry/spin loop on the audio path.
+
+`native_worker.hpp` supplies the production native boundary:
+
+- `CaptureIngress(queue, actualASBD, freshnessNs).receive(...)` validates the
+  actual advertised packed float format, buffer topology and both sample/host
+  timestamps before publication. The current tap command binds its actual tap
+  UID with a two-second freshness deadline and drains on the existing writer.
+  Capture stamps use the tap's **source clock**, not a fabricated common clock.
+- `OutputWorker::open(explicitDeviceUid, adaptedQueue)` admits exactly one current
+  output stream by unique UID, alive state, actual virtual ASBD and ordered native
+  positions `CA:1`, `CA:2`, etc. It registers an owned IOProc but starts nothing.
+  Native positions do not imply speaker labels; the host must explicitly map its
+  semantic channels per destination. Unsupported multistream/integer formats
+  reject. It never changes device rate/format, defaults or another IOProc.
+- The caller must adapt/schedule PCM into that destination's clock, prefill the
+  queue, and explicitly call `startAt(AudioTimeStamp&)`. `Renderer` requires exact
+  destination frame positions, supports partial/multiple producer blocks per
+  callback and outputs silence on mismatch/underflow. HAL may adjust a requested
+  start; mismatched queued positions fail silent. This is not clock adaptation.
+  UID/alive/rate/stream/format/channel changes revoke via property listeners.
+  Only an explicitly labelled adapted-engine queue can enter this API; that
+  label is a host contract, not proof that Rust processing/adaptation ran.
+- `close()` revokes, stops/destroys only its IOProc, then removes owned listeners.
+  False requires retaining callback storage or exiting. The destructor terminates
+  on failed teardown rather than freeing possibly live callback context. The
+  caller must keep the queue alive until native teardown completes.
+
+The `OutputWorker` API is callable native code compiled by hosted SDK checks;
+the CLI does not invoke it. A linked live Rust engine/render graph, native clock
+adaptation/scheduling, actual output callback lifecycle/teardown, TCC revoke,
+hardware format changes and physical PCM/quality remain **unexecuted gates**.
+The source-to-WAV path is integrated; this does not establish a finished router.
+
+`input-broker/packet.hpp` extracts the existing 56-byte fixed-48-kHz-stereo fixture
+wire descriptor and admission predicates used by `broker.mm`. Linux tests now
+exercise those actual native-boundary checks for malformed lengths/formats,
+stale generation/epoch/position/revision and finite credits. Authentication stays
+with the existing exact native NSXPC code requirements/readiness handshake;
+packet fields cannot confer authority. The fixture keeps its existing rejection
+and backpressure behavior and explicitly returns fixture provenance,
+`backendAvailable: false` and `audioApplied: false`. It is not the generic worker
+protocol or a system-bootstrap producer bridge into a hosted HAL driver.
+
+Run the isolated checks without touching audio:
+
+```sh
+bash adapters/macos/worker-check.sh
+```
+
+On Linux this checks the authorized 2 GiB root/10 GiB tmp+shm reserves, compiles
+serially into a private `/dev/shm` directory, enforces a 50 MiB artifact bound and
+removes its artifacts on exit. It uses the installed C++ toolchain with ASan/UBSan,
+no Cargo dependencies, SDK install or root/tmp build cache. Hosted runners use
+their isolated runner scratch and a 10 GiB reserve. `.github/workflows/macos-workers.yml`
+runs Linux fixtures and the actual Apple ABI/timebase with synthetic ingress,
+then compiles the real tap probe. It never enumerates/opens output devices,
+starts capture/render, requests permissions, installs a driver or changes audio
+services/defaults. Apple leak detection remains disabled under the documented
+hosted sanitizer limitation; address/undefined checks remain enabled.
+
+Local Linux checks passed ASan/UBSan exact Float64/Float32 data, signed-zero and
+subnormal preservation, ordered planar interleave, partial render/expiry zeros,
+stale/revoke/restart and sibling isolation, capacity/shape errors, 20,000 threaded
+FIFO transfers and broker packet admission. An allocator guard covers tested
+callback operations. These are synthetic transport results, not Apple callback
+scheduling, external consumer PCM, sound quality, latency or a privacy badge.
 
 ## Separate virtual-input milestone and license audit
 
@@ -170,7 +276,8 @@ keep display names editable, and use a bounded producer bridge carrying mix PCM 
 metadata. Use validity/generation and a bounded freshness deadline; input callbacks
 must output zero for empty/stale producer data, including after producer death.
 Do not loop stale PCM. Rate negotiation, clock adaptation and teardown must be
-proved before adding independent-device mixing. No transport is implemented yet.
+proved before adding independent-device mixing. The worker and authenticated
+anonymous-XPC fixtures above do not implement that production HAL transport.
 
 License decision for this batch: no BlackHole source adoption, linking or bundled
 driver/installer. An externally installed BlackHole may be a fixed-transport
