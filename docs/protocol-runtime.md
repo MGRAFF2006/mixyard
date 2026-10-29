@@ -103,8 +103,13 @@ preserve the same receipt, including copies held by a separately authorized
 destination. Unrelated host generations/raw leases remain independent. The
 receipt contains no native pointer/loan, is never sent as wire authority, and
 does not replace owner, provenance, clock, consent or directional grant checks.
-Native processing also retains inherited input stop signals for this generation
-and its DSP history, with a 1024-signal limit that fails closed. Per-output
+Native processing retains live parent receipts for this generation and its DSP
+history. Dependencies only grow: downstream copies observe restrictions added
+upstream after those copies were produced, without requiring an upstream poll.
+Iterative traversal admits at most 1024 nodes and 4096 edges; cycles or bounds
+fail closed before native processing or external delivery and terminally stop
+only the affected receipt/generation. A short graph mutex protects publication
+and traversal; no owner IO, callbacks or native calls run under it. Per-output
 contributor metadata and canonical exclusions remain unchanged.
 Previously admitted OS IO cannot be recalled; an incomplete HTTP record is not
 released as a complete PCM block.

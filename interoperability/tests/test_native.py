@@ -265,20 +265,103 @@ class ActualNativeHostTests(unittest.TestCase):
                 with self.subTest(output=index), self.assertRaises(PermissionError):
                     outputs[index].accept(pending[index], lambda block: self.fail("stopped input escaped processing"))
 
+    def test_late_upstream_growth_revokes_existing_downstream_converted_rtp_before_upstream_poll(self):
+        from mixyard_interop.runtime import _ProducerReceipt
+        with ExitStack() as stack:
+            av, ass, ao, _, _ = setup_host()
+            a = self.host(stack, av, ass, ao)
+            first = a.process(blocks(ass), now_ns=1_000_000, deadline_ns=2_000_000)[0]
+            bv, bs, bo, _, _ = setup_host()
+            bs[2] = lease(first.spec, "owned-source-shared", "output-0-epoch")[0]
+            for index, old in enumerate(bo):
+                provenance = Provenance(old.spec.provenance.sources, ("fixture", "runtime", "downstream"))
+                bo[index] = lease(replace(old.spec, provenance=provenance),
+                                  old.binding.observed_id, f"output-{index}-epoch")[0]
+            b = stack.enter_context(NativeHost(loan(), json.dumps(bv).encode(), source_leases=bs,
+                                              output_leases=bo, local_peer="downstream", consent=True))
+            incoming = blocks(bs)
+            incoming[2] = first
+            copied = b.process(incoming, now_ns=1_000_000, deadline_ns=2_000_000)
+            converted = {index: convert_processed(block, replace(block.spec, codec="raw-s24-le"),
+                         consent=True, rounding="nearest-ties-even").output for index, block in copied.items()}
+            stopped = threading.Event()
+            later = blocks(ass, 2)
+            later[1] = replace(later[1], _producer=_ProducerReceipt(stopped))
+            a.process(later, now_ns=1_050_000, deadline_ns=2_000_000)
+            stopped.set()
+            # No A-side validation/process/stop is allowed before B's send: the
+            # downstream receipt must see the newly added live dependency itself.
+            for index in (0, 1):
+                with self.subTest(output=index):
+                    block = converted[index]
+                    sender, receiver = udp_pair(stack, block.spec, "downstream", "destination")
+                    dest, _ = lease(block.spec, "owned-conversion", f"output-{index}-epoch")
+                    received = []
+                    try:
+                        LeasedRtpSender(sender, dest, lambda: block,
+                                         **agreement(f"output-{index}-epoch")).send()
+                    except PermissionError:
+                        pass
+                    else:
+                        received.append(receiver.receive().pcm)
+                    self.assertEqual(received, [], "later upstream restrictions must reach existing downstream copies")
+                    self.assertEqual(sender.operations, 0)
+            with self.assertRaises(PermissionError):
+                ao[0].validate(first)
+            for index in (0, 1):
+                with self.assertRaises(PermissionError):
+                    bo[index].validate(copied[index])
+            self.assertEqual((a.quiesce().committed_frames, b.quiesce().committed_frames), (4, 2))
+
     def test_inherited_stop_budget_failure_revokes_existing_processed_copies(self):
-        from mixyard_interop.runtime import MAX_PRODUCER_SIGNALS, _ProducerReceipt
+        from mixyard_interop.runtime import MAX_PRODUCER_NODES, _ProducerReceipt
         with ExitStack() as stack:
             value, sources, outputs, _, _ = setup_host()
             host = self.host(stack, value, sources, outputs)
             pending = host.process(blocks(sources), now_ns=1_000_000, deadline_ns=2_000_000)
             inherited = _ProducerReceipt(threading.Event())
-            inherited._include(_ProducerReceipt(threading.Event()) for _ in range(MAX_PRODUCER_SIGNALS - 1))
+            inherited._include(_ProducerReceipt(threading.Event()) for _ in range(MAX_PRODUCER_NODES - 1))
             incoming = blocks(sources, 2)
             incoming[1] = replace(incoming[1], _producer=inherited)
+            calls = []
+            original_process = host._abi.lib.mx_host_process
+            def tracked_process(*args):
+                calls.append(True)
+                return original_process(*args)
+            host._abi.lib.mx_host_process = tracked_process
             # This host's own independent signal would exceed the bound. Fail
             # before processing and revoke previous copies, never truncate it.
-            with self.assertRaisesRegex(PermissionError, "stop-dependency budget"):
+            with self.assertRaisesRegex(PermissionError, "stop-dependency node budget"):
                 host.process(incoming, now_ns=1_050_000, deadline_ns=2_000_000)
+            self.assertEqual(calls, [], "reject the graph before native process work")
+            for index in (0, 1):
+                with self.assertRaises(PermissionError):
+                    outputs[index].validate(pending[index])
+            self.assertIsNone(host.stop_witness)
+            self.assertEqual(host.quiesce().committed_frames, 2)
+
+    def test_receipt_cycle_rejects_before_native_work_and_preserves_quiesce_ownership(self):
+        from mixyard_interop.runtime import _PRODUCER_GRAPH_LOCK, _ProducerReceipt
+        with ExitStack() as stack:
+            value, sources, outputs, _, _ = setup_host()
+            host = self.host(stack, value, sources, outputs)
+            calls = []
+            original_process = host._abi.lib.mx_host_process
+            def tracked_process(*args):
+                self.assertFalse(_PRODUCER_GRAPH_LOCK.locked(), "no native callback under receipt graph lock")
+                calls.append(True)
+                return original_process(*args)
+            host._abi.lib.mx_host_process = tracked_process
+            pending = host.process(blocks(sources), now_ns=1_000_000, deadline_ns=2_000_000)
+            self.assertEqual(calls, [True])
+            calls.clear()
+            cycle = _ProducerReceipt(threading.Event())
+            cycle._include((host._producer,))
+            incoming = blocks(sources, 2)
+            incoming[1] = replace(incoming[1], _producer=cycle)
+            with self.assertRaisesRegex(PermissionError, "cycle"):
+                host.process(incoming, now_ns=1_050_000, deadline_ns=2_000_000)
+            self.assertEqual(calls, [])
             for index in (0, 1):
                 with self.assertRaises(PermissionError):
                     outputs[index].validate(pending[index])

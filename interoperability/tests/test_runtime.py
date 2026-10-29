@@ -27,6 +27,18 @@ def block(spec, frame=0):
 
 
 class RuntimeLeaseTests(unittest.TestCase):
+    def test_producer_graph_lock_is_released_before_owner_and_consumer_callbacks(self):
+        from mixyard_interop.runtime import _PRODUCER_GRAPH_LOCK, _ProducerReceipt
+        spec, binding, _, actual = fixture()
+        def owner():
+            self.assertFalse(_PRODUCER_GRAPH_LOCK.locked())
+            return binding
+        actual._owner_check = owner
+        guarded = dataclasses.replace(block(spec), _producer=_ProducerReceipt(threading.Event()))
+        def consume(value):
+            self.assertFalse(_PRODUCER_GRAPH_LOCK.locked())
+        actual.accept(guarded, consume)
+
     def test_production_owner_callback_revoke_and_source_loss_admit_no_consumer(self):
         spec, binding, _, _ = fixture()
         holder, consumed = {}, []
@@ -48,6 +60,7 @@ class RuntimeLeaseTests(unittest.TestCase):
         with self.assertRaises(RuntimeSourceLost):
             lost.accept(block(spec), consumed.append)
         self.assertEqual(consumed, [])
+
 
     def test_current_observation_and_exact_block_binding(self):
         spec, binding, state, lease = fixture()
@@ -158,6 +171,69 @@ class RuntimeLeaseTests(unittest.TestCase):
             return block(lease.spec)
         with self.assertRaises(PermissionError):
             lease.read(stale_read)
+
+
+
+class ProducerReceiptTests(unittest.TestCase):
+    def test_late_growth_is_live_without_upstream_self_poll(self):
+        from mixyard_interop.runtime import _ProducerReceipt
+        upstream, downstream = (_ProducerReceipt(threading.Event()) for _ in range(2))
+        downstream._include((upstream,))
+        stopped = threading.Event()
+        upstream._include((_ProducerReceipt(stopped),))
+        stopped.set()
+        with self.assertRaises(RuntimeSourceLost):
+            downstream.check()
+
+    def test_cycle_rejection_and_empty_growth_preserve_monotonic_scoped_restrictions(self):
+        from mixyard_interop.runtime import _ProducerReceipt
+        upstream, affected, dependent, unrelated = (_ProducerReceipt(threading.Event()) for _ in range(4))
+        affected._include((upstream,))
+        affected._include(())
+        dependent._include((affected,))
+        with self.assertRaisesRegex(RuntimeSourceLost, "cycle"):
+            affected._include((dependent,))
+        with self.assertRaises(RuntimeSourceLost):
+            affected.check()
+        with self.assertRaises(RuntimeSourceLost):
+            dependent.check()
+        upstream.check()
+        unrelated.check()
+
+    def test_deep_live_graph_has_exact_node_bound_without_recursive_traversal(self):
+        from mixyard_interop.runtime import _ProducerReceipt
+        stopped = threading.Event()
+        root = _ProducerReceipt(stopped)
+        for _ in range(1023):
+            next_node = _ProducerReceipt(threading.Event())
+            next_node._include((root,))
+            root = next_node
+        root.check()  # 1024 nodes and 1023 edges, exceeding Python recursion depth.
+        excess = _ProducerReceipt(threading.Event())
+        with self.assertRaisesRegex(RuntimeSourceLost, "node budget"):
+            excess._include((root,))
+        root.check()  # The rejected dependent cannot revoke its healthy upstream.
+        stopped.set()
+        with self.assertRaises(RuntimeSourceLost):
+            root.check()
+
+    def test_shared_dag_counts_edges_and_rejects_later_overflow_without_truncation(self):
+        from mixyard_interop.runtime import _ProducerReceipt
+        leaves = [_ProducerReceipt(threading.Event()) for _ in range(64)]
+        branches = [_ProducerReceipt(threading.Event()) for _ in range(63)]
+        for branch in branches:
+            branch._include(leaves)
+        hub = _ProducerReceipt(threading.Event())
+        hub._include(branches)  # 4095 edges, shared leaves are valid DAG ancestors.
+        boundary = _ProducerReceipt(threading.Event())
+        boundary._include((hub,))  # Exactly 4096 edges.
+        boundary.check()
+        excess = _ProducerReceipt(threading.Event())
+        with self.assertRaisesRegex(RuntimeSourceLost, "edge budget"):
+            excess._include((boundary,))
+        with self.assertRaises(RuntimeSourceLost):
+            excess.check()
+        boundary.check()
 
 
 if __name__ == "__main__":

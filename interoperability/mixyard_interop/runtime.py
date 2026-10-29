@@ -13,8 +13,12 @@ import time
 from .core import Spec, _identifier, _integer
 
 MAX_BLOCK_BYTES = 1024 * 1024
-MAX_PRODUCER_SIGNALS = 1024
+MAX_PRODUCER_NODES = 1024
+MAX_PRODUCER_EDGES = 4096
 U64 = 2**64 - 1
+# Protect only bounded receipt publication/traversal. No owner callback, IO or
+# native call runs under this lock; terminal Event notification never takes it.
+_PRODUCER_GRAPH_LOCK = threading.Lock()
 
 
 class RuntimeBusy(RuntimeError):
@@ -31,37 +35,83 @@ class _ProducerReceipt:
     Copies and explicit conversions retain this restriction. It contains no
     context pointer, library handle, callback or clock/provenance assertion.
     """
-    __slots__ = ("_signals",)
+    __slots__ = ("_stopped", "_parents")
 
     def __init__(self, stopped):
         if type(stopped) is not threading.Event:
             raise TypeError("producer terminal signal required")
-        self._signals = (stopped,)
+        self._stopped = stopped
+        self._parents = ()
 
     def _include(self, receipts):
-        # The exclusive producer can only add restrictions. Flattening keeps
-        # validation bounded and retains stop dependencies for DSP history.
-        signals = list(self._signals)
-        seen = {id(signal) for signal in signals}
-        for receipt in receipts:
+        # Keep live parents, not their current signals: upstream DSP history
+        # can acquire further restrictions after a downstream copy was made.
+        incoming = []
+        try:
+            for index, receipt in enumerate(receipts):
+                if index >= MAX_PRODUCER_EDGES:
+                    raise RuntimeSourceLost("producer stop-dependency input budget exceeded")
+                if type(receipt) is not _ProducerReceipt:
+                    raise TypeError("invalid inherited producer receipt")
+                incoming.append(receipt)
+            with _PRODUCER_GRAPH_LOCK:
+                parents = list(self._parents)
+                seen = {id(parent) for parent in parents}
+                for receipt in incoming:
+                    if id(receipt) not in seen:
+                        parents.append(receipt)
+                        seen.add(id(receipt))
+                candidate = tuple(parents)
+                self._validate_graph(candidate)
+                self._parents = candidate
+        except BaseException:
+            # Rejected graph growth cannot leave earlier copies eligible.
+            self._stopped.set()
+            raise
+
+    def _validate_graph(self, candidate=None):
+        # Caller holds the graph lock. Iterative DFS bounds nodes, edges and
+        # stack work, accepts shared DAG ancestors, and rejects every cycle.
+        active, complete = set(), set()
+        nodes, edges = 0, 0
+        stack = [(self, False)]
+        while stack:
+            receipt, leaving = stack.pop()
             if type(receipt) is not _ProducerReceipt:
-                raise TypeError("invalid inherited producer receipt")
-            for signal in receipt._signals:
-                if id(signal) not in seen:
-                    if len(signals) >= MAX_PRODUCER_SIGNALS:
-                        raise RuntimeSourceLost("producer stop-dependency budget exceeded")
-                    signals.append(signal)
-                    seen.add(id(signal))
-        self._signals = tuple(signals)
-        self.check()
+                raise RuntimeSourceLost("invalid producer stop dependency")
+            key = id(receipt)
+            if leaving:
+                active.remove(key)
+                complete.add(key)
+                continue
+            if key in active:
+                raise RuntimeSourceLost("producer stop-dependency cycle")
+            if key in complete:
+                continue
+            if receipt._stopped.is_set():
+                raise RuntimeSourceLost("processed producer generation stopped")
+            nodes += 1
+            if nodes > MAX_PRODUCER_NODES:
+                raise RuntimeSourceLost("producer stop-dependency node budget exceeded")
+            active.add(key)
+            parents = candidate if receipt is self and candidate is not None else receipt._parents
+            edges += len(parents)
+            if edges > MAX_PRODUCER_EDGES:
+                raise RuntimeSourceLost("producer stop-dependency edge budget exceeded")
+            stack.append((receipt, True))
+            stack.extend((parent, False) for parent in reversed(parents))
+        if self._stopped.is_set():
+            raise RuntimeSourceLost("processed producer generation stopped")
 
     def check(self):
-        for signal in self._signals:
-            if signal.is_set():
-                raise RuntimeSourceLost("processed producer generation stopped")
-        # Recheck this generation after scanning inherited restrictions.
-        if self._signals[0].is_set():
-            raise RuntimeSourceLost("processed producer generation stopped")
+        with _PRODUCER_GRAPH_LOCK:
+            try:
+                self._validate_graph()
+            except BaseException:
+                # Stop this producer only; parents/unrelated producers retain
+                # their own independent authority and terminal signals.
+                self._stopped.set()
+                raise
 
 
 @dataclass(frozen=True)
