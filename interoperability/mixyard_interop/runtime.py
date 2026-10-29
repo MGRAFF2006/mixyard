@@ -79,6 +79,7 @@ class LeaseBinding:
     revision: int
     source_epoch: str
     clock_id: int
+    clock_evidence: ClockEvidence
 
     def __post_init__(self):
         _identifier(self.observed_id)
@@ -87,6 +88,10 @@ class LeaseBinding:
             raise ValueError("exact observed Spec required")
         for name in ("generation", "revision", "clock_id"):
             _integer(getattr(self, name), 1, U64, name)
+        if (type(self.clock_evidence) is not ClockEvidence
+                or self.clock_evidence.clock_id != self.clock_id
+                or self.clock_evidence.source_epoch != self.source_epoch):
+            raise ValueError("owner binding must attest the complete source clock mapping")
 
 
 class RuntimeLease:
@@ -121,7 +126,8 @@ class RuntimeLease:
             raise ValueError("canonical observed Spec required")
         if any(set(s.groups).intersection(excluded) for s in spec.provenance.sources):
             raise PermissionError("excluded source in premix; reject whole lease")
-        self._binding = LeaseBinding(observed_id, spec, generation, revision, source_epoch, clock.clock_id)
+        self._binding = LeaseBinding(observed_id, spec, generation, revision, source_epoch,
+                                     clock.clock_id, clock)
         self._clock = clock
         self._owner_check = owner_check
         self._deadline = time.monotonic() + lifetime_seconds
@@ -129,6 +135,7 @@ class RuntimeLease:
         self._next_frame = clock.base_frame
         self._lock = threading.RLock()
         self._busy = False
+        self._checking = False
         self.check()
 
     @property
@@ -146,9 +153,24 @@ class RuntimeLease:
     def _check_locked(self):
         if not self._active or time.monotonic() >= self._deadline:
             raise PermissionError("runtime owner lease revoked or expired")
-        if self._owner_check() != self._binding:
+        if self._checking:
             self._active = False
-            raise PermissionError("runtime owner identity/format/generation/revision/epoch changed")
+            raise RuntimeBusy("runtime owner observation reentry")
+        self._checking = True
+        try:
+            current = self._owner_check()
+        except BaseException:
+            self._active = False
+            raise
+        finally:
+            self._checking = False
+        # Owner code may revoke reentrantly on this RLock or run past expiry.
+        # No downstream consumer may be admitted on that callback's return.
+        if not self._active or time.monotonic() >= self._deadline:
+            raise PermissionError("runtime owner lease revoked or expired during observation")
+        if current != self._binding:
+            self._active = False
+            raise PermissionError("runtime owner identity/format/generation/revision/epoch/clock mapping changed")
 
     def check(self):
         with self._lock:

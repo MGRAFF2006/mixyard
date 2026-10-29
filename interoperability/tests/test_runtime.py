@@ -10,11 +10,12 @@ from mixyard_interop.runtime import ClockEvidence, LeaseBinding, LeasedBlock, Ru
 def fixture(codec="raw-f64-le", groups=()):
     spec = Spec(1, "owned", codec, 48000, ("FL", "FR"), 2,
                 Provenance((Source("source", "generator", groups),), ("source",)))
-    binding = LeaseBinding("observed-generator", spec, 7, 3, "epoch-1", 11)
+    clock = ClockEvidence(11, "epoch-1", 0, 1000000)
+    binding = LeaseBinding("observed-generator", spec, 7, 3, "epoch-1", 11, clock)
     state = [binding]
     lease = RuntimeLease(spec, observed_id=binding.observed_id, generation=7,
                          revision=3, source_epoch="epoch-1",
-                         clock=ClockEvidence(11, "epoch-1", 0, 1000000),
+                         clock=clock,
                          owner_check=lambda: state[0], consent=True)
     return spec, binding, state, lease
 
@@ -55,6 +56,38 @@ class RuntimeLeaseTests(unittest.TestCase):
         self.assertEqual([b.base_frame for b in received], [0, 2])
         _, _, _, fresh = fixture()
         fresh.accept(block(spec), received.append)
+
+    def test_reentrant_owner_revoke_or_observation_never_invokes_consumer(self):
+        for action in ("revoke", "check", "accept"):
+            with self.subTest(action=action):
+                spec, binding, state, lease = fixture()
+                consumed = []
+                def owner_check():
+                    if action == "revoke":
+                        lease.revoke()
+                    else:
+                        try:
+                            if action == "check":
+                                lease.check()
+                            else:
+                                lease.accept(block(spec), consumed.append)
+                        except RuntimeBusy:
+                            pass  # Even a callback swallowing reentry cannot rearm.
+                    return binding
+                lease._owner_check = owner_check
+                with self.assertRaises((PermissionError, RuntimeBusy)):
+                    lease.accept(block(spec), consumed.append)
+                self.assertEqual(consumed, [])
+
+    def test_owner_attests_complete_clock_mapping_not_only_numeric_id(self):
+        for field, value in (("base_frame", 1), ("base_time_ns", 1000001),
+                             ("qualification", "qualified-owner-common-clock")):
+            with self.subTest(field=field):
+                spec, binding, state, lease = fixture()
+                state[0] = dataclasses.replace(binding, clock_evidence=dataclasses.replace(
+                    binding.clock_evidence, **{field: value}))
+                with self.assertRaises(PermissionError):
+                    lease.accept(block(spec), lambda _: self.fail("stale clock reached sink"))
 
     def test_busy_sink_does_not_queue_and_failed_sink_cannot_retry(self):
         spec, _, _, lease = fixture()
