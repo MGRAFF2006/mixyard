@@ -18,6 +18,7 @@ MODULES = {
     "libpipewire-module-protocol-native", "libpipewire-module-client-node",
     "libpipewire-module-access", "libpipewire-module-spa-node-factory",
     "libpipewire-module-link-factory",
+    "libpipewire-module-metadata",
 }
 
 
@@ -75,7 +76,19 @@ def snapshot_bytes(command, env, timeout=5):
 
 
 def snapshot(env):
-    objects = json.loads(snapshot_bytes(["pw-dump", "--remote", "mixyard-private"], env))
+    try:
+        raw = snapshot_bytes(["pw-dump", "--remote", "mixyard-private"], env)
+    except RuntimeError as error:
+        # Registry enumeration does not bind each advertised object. Preserve
+        # actual IDs/types/versions for a bind failure; never infer type from a
+        # numeric global ID or use this diagnostic to pass the isolation gate.
+        try:
+            registry = snapshot_bytes(["pw-cli", "--remote", "mixyard-private", "list-objects"], env)
+            diagnostic = registry[:8192].decode("utf-8", errors="replace")
+        except RuntimeError as registry_error:
+            diagnostic = str(registry_error)[:8192]
+        raise RuntimeError(f"{error}; readOnlyRegistryPrefix={diagnostic!r}") from error
+    objects = json.loads(raw)
     if not isinstance(objects, list) or len(objects) > 256:
         raise RuntimeError("unexpected private graph size")
     ids = [item["id"] for item in objects]

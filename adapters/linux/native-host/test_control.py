@@ -24,6 +24,19 @@ def private_snapshot():
 
 
 class Isolation(unittest.TestCase):
+    def test_failed_bind_reports_dynamic_registry_but_never_qualifies(self):
+        env = {"PIPEWIRE_REMOTE": "mixyard-private"}
+        listing = b'id 42, type PipeWire:Interface:Metadata/3\n'
+        with mock.patch.object(qualify, "snapshot_bytes", side_effect=[RuntimeError("owned bind error"), listing]) as capture:
+            with self.assertRaisesRegex(RuntimeError, "owned bind error.*id 42.*Metadata/3"):
+                qualify.snapshot(env)
+            self.assertEqual(capture.call_args_list, [
+                mock.call(["pw-dump", "--remote", "mixyard-private"], env),
+                mock.call(["pw-cli", "--remote", "mixyard-private", "list-objects"], env)])
+        with mock.patch.object(qualify, "snapshot_bytes", side_effect=[RuntimeError("owned bind error"), RuntimeError("registry unavailable")]):
+            with self.assertRaisesRegex(RuntimeError, "owned bind error.*registry unavailable"):
+                qualify.snapshot(env)
+
     def test_snapshot_capture_preserves_failure_cause_and_bounds_both_pipes(self):
         # Real owned Python control children, never PipeWire/native APIs.
         def capture(script, **kwargs):
@@ -55,6 +68,7 @@ class Isolation(unittest.TestCase):
             config = Path(env["PIPEWIRE_CONFIG_DIR"])
             self.assertEqual(Path(argv[2]), config / env["PIPEWIRE_CONFIG_NAME"])
             self.assertIn("core.daemon = true", (config / "private.conf").read_text())
+            self.assertIn("{ name = libpipewire-module-metadata }", (config / "private.conf").read_text())
             self.assertNotIn("core.daemon", (config / "client.conf").read_text())
             self.assertIn("{ name = libpipewire-module-metadata }", (config / "client.conf").read_text())
             self.assertEqual(env["PIPEWIRE_REMOTE"], "mixyard-private")
