@@ -23,8 +23,9 @@ Do not upload fixture directories: they contain private disposable TLS identitie
 and one-use invitations. Only test reports are suitable evidence artifacts.
 
 Scenarios cover OOB pairing and invitation replay, frozen queued targets, canonical
-stored writes, nested signed-zero/low-bit/subnormal Float64 offline DSP, client and
-server restart, role 403 preserving authority, revoked 401 clearing authority,
+stored writes, nested signed-zero/low-bit/subnormal Float64 offline DSP, client
+reconstruction from the boundary vault and real server restart, role 403
+preserving authority, revoked 401 clearing authority,
 certificate/hostname mismatch, rejected redirect and failed vault writes/forget.
 The TLS redirect server is a negative test fixture only; successful scenarios use
 the production service. All endpoints are owned loopback. No microphone, speaker,

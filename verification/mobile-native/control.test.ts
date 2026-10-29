@@ -157,11 +157,14 @@ test('shipping native pinned control client against owned production TLS service
       const pairA = a.provisioning()
       await client.ok(pairA); scope = await client.session()
       assert.equal(scope.deviceId, a.trust.deviceId)
+      const beforeA = envelope(await client.request(scope, '/api/profiles/read', {})).body
+      const queuedEdit = { expectedRevision: beforeA.storeRevision, edit: { kind: 'draft', config: JSON.parse(readFileSync(new URL('../../apps/web/src/example-config.json', import.meta.url), 'utf8')) } }
       await client.ok({ op: 'capture', key: 'queued-a' })
       await client.ok(b.provisioning()); const scopeB = await client.session()
-      assert.equal((await client.request(scope, '/api/profiles/read', {}, 'queued-a')).ok, false)
       const readB = envelope(await client.request(scopeB, '/api/profiles/read', {}))
       assert.equal(readB.deviceId, b.trust.deviceId); initialB = readB.body.draft
+      assert.equal((await client.request(scope, '/api/profiles/edit', queuedEdit, 'queued-a')).ok, false)
+      assert.deepEqual(envelope(await client.request(scopeB, '/api/profiles/read', {})).body.draft, initialB, 'queued A write never retargets B')
       assert.equal((await client.call(pairA)).ok, false, 'used invitation cannot pair twice')
       await client.ok(a.provisioning()); scope = await client.session()
     })
@@ -227,7 +230,7 @@ test('shipping native pinned control client against owned production TLS service
       // loopback with that same trusted cert to make the hostname actually wrong.
       const state = JSON.parse(readFileSync(join(a.directory, 'identity/state.json'), 'utf8'))
       let connections = 0; let requests = 0
-      const mismatch = createServer({ cert: a.trust.certificatePem, key: createPrivateKey({ key: Buffer.from(state.private_key_pkcs8), type: 'pkcs8', format: 'der' }) }, (_req, res) => { requests++; res.writeHead(500); res.end() })
+      const mismatch = createServer({ cert: a.trust.certificatePem, key: createPrivateKey({ key: Buffer.from(state.privateKeyPkcs8), type: 'pkcs8', format: 'der' }) }, (_req, res) => { requests++; res.writeHead(500); res.end() })
       mismatch.on('connection', () => { connections++ })
       try {
         mismatch.listen(0, '::1'); await once(mismatch, 'listening')
@@ -242,7 +245,7 @@ test('shipping native pinned control client against owned production TLS service
       const state = JSON.parse(readFileSync(join(a.directory, 'identity/state.json'), 'utf8'))
       let destinationRequests = 0
       let redirectRequests = 0
-      redirect = createServer({ cert: a.trust.certificatePem, key: createPrivateKey({ key: Buffer.from(state.private_key_pkcs8), type: 'pkcs8', format: 'der' }) }, (req, res) => {
+      redirect = createServer({ cert: a.trust.certificatePem, key: createPrivateKey({ key: Buffer.from(state.privateKeyPkcs8), type: 'pkcs8', format: 'der' }) }, (req, res) => {
         if (req.url === '/sink') { destinationRequests++; res.writeHead(500); res.end(); return }
         redirectRequests++
         res.writeHead(307, { Location: `https://127.0.0.1:${(redirect!.address() as any).port}/sink` }); res.end()
