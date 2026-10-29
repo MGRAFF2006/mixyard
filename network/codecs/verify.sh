@@ -11,28 +11,23 @@ cd -- "$source_dir"
 pkg-config --atleast-version=1.4.0 libzstd
 pkg-config --atleast-version=1.3.0 opus
 features=(--cfg 'feature="system-zstd"' --cfg 'feature="system-opus"')
+# Use the same selected-artifact validation and private link names as Cargo.
+# Parsing directives as data avoids eval or a second, divergent linker policy.
+mkdir -p -- "$target_dir/selected-libraries"
+rustc --edition 2024 build.rs -D warnings -C debuginfo=0 -C opt-level=s \
+    -C strip=symbols -o "$target_dir/link-setup"
+target_os=linux
+if [[ $(uname -s) == Darwin ]]; then target_os=macos; fi
+CARGO_FEATURE_SYSTEM_ZSTD=1 CARGO_FEATURE_SYSTEM_OPUS=1 \
+    CARGO_CFG_TARGET_OS=$target_os CARGO_CFG_TARGET_ENV= \
+    OUT_DIR="$target_dir/selected-libraries" "$target_dir/link-setup" > "$target_dir/link-directives.txt"
 links=()
-for codec in ZSTD OPUS; do
-    kind_var="MIXYARD_${codec}_LINK_KIND"
-    name_var="MIXYARD_${codec}_LIB_NAME"
-    dir_var="MIXYARD_${codec}_LIB_DIR"
-    kind=${!kind_var-dylib}
-    default_name=zstd
-    if [[ $codec == OPUS ]]; then default_name=opus; fi
-    name=${!name_var-$default_name}
-    [[ $kind == dylib || $kind == static ]] || { echo "Invalid $kind_var" >&2; exit 1; }
-    [[ $name =~ ^[a-zA-Z0-9_-]+$ ]] || { echo "Invalid $name_var" >&2; exit 1; }
-    if [[ -n ${!dir_var+x} ]]; then
-        [[ ${!dir_var} == /* && -d ${!dir_var} ]] || { echo "Invalid $dir_var" >&2; exit 1; }
-        [[ ${!dir_var} != *$'\n'* && ${!dir_var} != *$'\r'* ]] || { echo "Invalid $dir_var" >&2; exit 1; }
-        file="lib$name.so"
-        if [[ $(uname -s) == Darwin ]]; then file="lib$name.dylib"; fi
-        if [[ $kind == static ]]; then file="lib$name.a"; fi
-        [[ -f ${!dir_var}/$file ]] || { echo "$dir_var is missing selected library $file" >&2; exit 1; }
-        links+=(-L "native=${!dir_var}")
-    fi
-    links+=(-l "$kind=$name")
-done
+while IFS= read -r directive; do
+    case $directive in
+        cargo:rustc-link-search=*) links+=(-L "${directive#cargo:rustc-link-search=}") ;;
+        cargo:rustc-link-lib=*) links+=(-l "${directive#cargo:rustc-link-lib=}") ;;
+    esac
+done < "$target_dir/link-directives.txt"
 rustc --edition 2024 --test src/lib.rs "${features[@]}" "${links[@]}" -D warnings -C debuginfo=0 -o "$target_dir/tests"
 "$target_dir/tests" --test-threads=1
 rustc --edition 2024 --test src/lib.rs -D warnings -C debuginfo=0 -o "$target_dir/tests"

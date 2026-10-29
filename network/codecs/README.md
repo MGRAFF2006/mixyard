@@ -14,8 +14,12 @@ select an explicit directory, linkage and bare library name. The same variables
 with `OPUS` replace `ZSTD` for Opus. Defaults are platform linker paths, `dylib`
 and `zstd`/`opus`. A supplied directory must be absolute and exist; malformed
 settings fail. Missing native libraries fail the build, without codec fallback.
-No extra installation or probing occurs. Direct-rustc `verify.sh` passes the
-same selections with `-L`/`-l` and is a Unix/Bash verification path.
+No extra installation or probing occurs. Explicit selected artifacts are tracked
+for rebuild and staged with private link names to prevent cross-directory
+shadowing. Direct-rustc `verify.sh` runs the same std-only selection script and
+passes its `-L`/`-l` directives; it is a Unix/Bash verification path. Dynamic
+runtime loading remains the caller's responsibility, independently of link input
+selection; hosted qualification checks actual loaded bytes.
 
 See [platform build/loader and hosted evidence](../../docs/network-codec-platforms.md)
 for Windows MSVC/vcpkg, macOS/Homebrew and Linux package-manager paths. Optional

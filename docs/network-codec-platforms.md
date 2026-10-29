@@ -22,8 +22,13 @@ workspace depends on it. Raw-only builds ignore them and emit no native link
 directives. A supplied directory must contain the selected import library, shared object or
 archive; missing files cannot fall through to a different system installation.
 Bad settings or absent dependencies fail; there is no automatic
-raw/lossy fallback. Direct `verify.sh` passes equivalent explicit `rustc -L/-l`
-options and still requires pkg-config metadata. It does not invoke `build.rs`.
+raw/lossy fallback. Explicit selections are tracked as Cargo filesystem inputs
+(directory, linker file and resolved symlink target). The exact selected bytes
+are staged in Cargo's private `OUT_DIR` under content/path-specific link names;
+global native search paths cannot substitute the other codec's same-name file.
+The private name is a collision guard, not a cryptographic provenance claim.
+Direct `verify.sh` compiles and runs this same std-only build script, parses its
+link directives as data and still requires pkg-config version metadata.
 Use separate private target directories when qualifying different linkage modes.
 
 The default artifact names consumed by the linker are:
@@ -34,16 +39,15 @@ The default artifact names consumed by the linker are:
 | macOS | `libzstd.dylib`, `libopus.dylib` | `libzstd.a`, `libopus.a` | The dylibs and their package-provided versioned install names |
 | Windows MSVC/vcpkg | `zstd.lib`, `opus.lib` import libraries | `zstd.lib`, `opus.lib` archives in the separate static triplet | `zstd.dll`, `opus.dll` from the dynamic triplet's `bin` |
 
-Direct-rustc callers must pass the corresponding flags themselves after the
-hardcoded `#[link]` attributes are removed: for example, `-L native=/chosen/lib`
-and `-l dylib=zstd -l dylib=opus`, or explicit `-l static=zstd -l static=opus`.
-Pass selections when compiling the codec rlib and when linking its test/example
-consumers, as [`verify.sh`](../network/codecs/verify.sh) does. Cargo callers use
-the build script automatically. Neither route sets loader paths for consumers.
+Direct-rustc callers must consume the build script's `rustc-link-search` and
+`rustc-link-lib` directives after the hardcoded `#[link]` attributes are removed,
+as [`verify.sh`](../network/codecs/verify.sh) does. Pass those selections when
+compiling the codec rlib and linking its test/example consumers. Cargo callers
+use the build script automatically. Neither route sets loader paths for consumers.
 
 | Hosted OS | Dependency source / build | Runtime loading |
 | --- | --- | --- |
-| Ubuntu | Public apt `libzstd-dev`, `libopus-dev`; pkg-config absolute lib directories | Dynamic job sets `LD_LIBRARY_PATH` to those exact directories; ELF imports captured with `ldd` |
+| Ubuntu | Public apt `libzstd-dev`, `libopus-dev`; exact `.so`/`.a` resolved from `dpkg-query -L`, requiring one existing candidate; pkg-config used for version checks only | Dynamic job sets `LD_LIBRARY_PATH` to those exact directories; ELF imports captured with `ldd` |
 | macOS | Public Homebrew `zstd`, `opus` bottles; `brew --prefix` lib directories | Dynamic job uses those exact `DYLD_LIBRARY_PATH` directories and captures Mach-O dependencies with `otool -L`; bottle install names may also be absolute |
 | Windows x64 MSVC | Public vcpkg ports, release-only owned triplets; explicit installed `lib` directory | Dynamic tests prepend only the selected triplet's `bin` to normal `PATH`; the loopback additionally gets owned DLL copies beside its executable, with hashes and PE imports captured |
 
@@ -60,6 +64,10 @@ Rust target; this is not a cross-compilation or universal-binary promise.
 No `rpath`, DLL copying, PATH mutation or system installation is performed by
 the production crate. A distributor must provide the selected runtime libraries
 and configure its own loader/package. CI's owned DLL copying is fixture setup.
+Private link aliases do not change ELF SONAME, Mach-O install names or Windows
+import-library DLL names; they pin link inputs, not a distributor's runtime
+loader. CI verifies runtime bytes separately rather than inferring them from
+link input hashes or version strings.
 Static archives can require platform libraries beyond the codec archive; provide
 those explicitly for other packaging configurations. Dynamic dependency errors
 are packaging failures, not an unsupported OS or permission to suppress features.
@@ -93,7 +101,17 @@ The example prints versions by calling the linked Zstd/Opus runtime functions,
 then reports actual bytes, wall durations, context observations, lookahead and
 synthetic waveform SNR. The harness rejects missing version reports or modes,
 dynamic jobs without both codec imports, and static jobs still importing either
-codec dynamically. CPU observations remain Linux-only; no CPU numbers are
+codec dynamically. The actual TCP process reports encode/decode symbol owner
+paths with `dladdr` on Unix. Windows resolves exports in the already-loaded
+canonical codec DLLs, then obtains their owner paths (import pointers may be
+executable thunks); PE imports independently verify the DLL dependency. SHA256
+of those loaded module files must equal the selected runtime bytes, or the
+executable itself for static linkage. Dynamic jobs additionally run that same
+production example with an owned modified library decoy, retaining the same
+codec version and ABI, and require the byte check to reject it. macOS decoy
+copies are ad-hoc signed after modification; no installed files are changed.
+Missing selected files are also tested after a successful cached Cargo check
+with unchanged settings/source, requiring build-script rejection. CPU observations remain Linux-only; no CPU numbers are
 invented for Windows/macOS.
 
 Jobs use private `RUNNER_TEMP` target/download/package/build directories, two
@@ -102,9 +120,10 @@ Cargo/native build jobs, zero debug/incremental output, no binary-cache copies,
 bounded test/example subprocess times. Matrix parallelism is two. Artifacts keep
 logs/notices for 14 days, not executables or redistributed codec libraries.
 
-At authoring, only source, formatter, YAML and script checks were performed
-locally under the 2 MiB generated-data limit; no native build, SDK install or
-dependency acquisition was run on the homelab. Hosted execution is **pending**
+At authoring, source, formatter, YAML and script checks plus a small std-only
+build-script regression harness were run locally under the 2 MiB generated-data
+limit. No codec native build, SDK install or dependency acquisition was run on
+the homelab. Hosted execution is **pending**
 until its exact revision's jobs complete. The workflow's platform names are job
 targets, not a statement of passing evidence. Failed SDK/package/link/runtime
 steps remain visible; the root observes runs and records their actual results.
