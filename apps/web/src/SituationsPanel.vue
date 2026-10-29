@@ -26,7 +26,8 @@ const props = defineProps<{
 const s = reactive(new SituationSession(props.api))
 watch(() => props.api.epoch ?? props.epoch, () => s.disconnect(), { flush: 'sync' })
 const activationPanel = ref<InstanceType<typeof SituationActivation> | null>(null)
-defineExpose({ hasUnsavedDrafts: () => s.dirty || !!jsonText.value || !!activationPanel.value?.hasUnsavedDrafts() })
+const presetPanel = ref<InstanceType<typeof SituationPreset> | null>(null)
+defineExpose({ hasUnsavedDrafts: () => s.dirty || !!jsonText.value || !!activationPanel.value?.hasUnsavedDrafts() || !!presetPanel.value?.hasUnsavedDrafts() || !!editor.value?.querySelector(':invalid') })
 const selectedId = ref(s.request.graph.root), nodeId = ref(selectedId.value), jsonText = ref(''), editor = ref<HTMLFormElement | null>(null)
 const selected = computed(() => s.request.graph.nodes.find(n => n.id === selectedId.value))
 const issues = computed(() => graphIssues(s.request.graph))
@@ -145,7 +146,8 @@ function exportConfig() {
   }
 }
 async function importText() {
-  if (await s.import(jsonText.value)) {
+  const epoch = props.api.epoch ?? props.epoch
+  if (await s.import(jsonText.value) && epoch === (props.api.epoch ?? props.epoch)) {
     selectedId.value = s.request.graph.root
     jsonText.value = ''
     await replaceEditor()
@@ -156,12 +158,13 @@ async function importFile(event: Event) {
   input.value = ''
   if (!file) return
   s.invalidate()
-  const generation = s.generation
+  const generation = s.generation, epoch = props.api.epoch ?? props.epoch
   if (file.size > MAX_AUTOMATION_BYTES) { s.fail('Automation import exceeds 1 MiB. Previous configuration kept.'); return }
   try {
     const text = await file.text()
+    if (epoch !== (props.api.epoch ?? props.epoch)) return
     if (generation !== s.generation) { s.fail('Import skipped because editing continued while the file was read.'); return }
-    if (await s.import(text)) { selectedId.value = s.request.graph.root; await replaceEditor() }
+    if (await s.import(text) && epoch === (props.api.epoch ?? props.epoch)) { selectedId.value = s.request.graph.root; await replaceEditor() }
   } catch (error) { if (generation === s.generation) s.fail(error) }
 }
 
@@ -189,7 +192,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
     <p v-if="!ready" class="message warning">Service session unavailable. Local editing and export remain available. Use Refresh in the console, then retry validation or context collection.</p>
     <p v-if="s.error" class="message error" role="alert">{{ s.error }}</p><p v-if="s.notice" class="message success" role="status">{{ s.notice }}</p>
     <SituationActivation ref="activationPanel" :api="api" :epoch="epoch" :ready="ready" :visible="visible ?? true" :graph="s.request.graph" :catalog="s.request.catalog" :builder-generation="s.generation" :builder-ready="builderReady" @load-saved-graph="loadSavedGraph" />
-    <SituationPreset :profiles="profiles" :config="config" @build="preset" />
+    <SituationPreset ref="presetPanel" :profiles="profiles" :config="config" @build="preset" />
     <form :key="editorRevision" ref="editor" @submit.prevent="evaluate">
       <div class="situation-fields situation-identity">
         <label class="situation-field">Graph ID<input :value="s.request.graph.id" @input="s.edit(r => { r.graph.id = ($event.target as HTMLInputElement).value })" /></label>

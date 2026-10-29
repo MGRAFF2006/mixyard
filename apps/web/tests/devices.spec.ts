@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { readFileSync } from 'node:fs'
 import { previewFixture } from './dsp-fixture.ts'
 import { config, liveFixture, savedSettings, status } from './activation-fixture.ts'
 import { copyDsp, dspJson } from '../src/dsp-json.ts'
@@ -61,6 +62,37 @@ const switchTo = (page: Page, id: string) => page.getByLabel('Manage device', { 
 const tab = (page: Page, name: string) => page.getByRole('button', { name, exact: true }).click()
 const gain = (page: Page) => page.getByRole('slider', { name: 'mic to Call gain', exact: true })
 const activation = (page: Page) => page.getByRole('region', { name: 'Automatic selection', exact: true })
+
+for (const draft of [
+  { tab: 'Processing', label: 'Delay observation frames', value: '4096' },
+  { tab: 'Situations', label: 'Exact device UID', value: 'my-headphones' },
+  { tab: 'Processing', label: 'Channel level (dB)', value: '-7' },
+]) test(`${draft.label} alone guards close and remains guarded on a hidden target`, async ({ page }) => {
+  await fixture(page)
+  expect(await page.evaluate(() => window.deviceHarness.hasUnsaved())).toBe(false)
+  await tab(page, draft.tab)
+  await page.getByLabel(draft.label, { exact: true }).fill(draft.value)
+  expect(await page.evaluate(() => window.deviceHarness.hasUnsaved())).toBe(true)
+  await switchTo(page, 'B')
+  await expect(page.getByRole('button', { name: 'Save draft', exact: true })).toBeEnabled()
+  expect(await page.evaluate(() => window.deviceHarness.hasUnsaved())).toBe(true)
+  expect(await page.evaluate(() => !window.dispatchEvent(new Event('beforeunload', { cancelable: true })))).toBe(true)
+  await switchTo(page, 'A')
+  await expect(page.getByLabel(draft.label, { exact: true })).toHaveValue(draft.value)
+})
+
+test('an inventory-only import guards close after its paste field clears and on a hidden target', async ({ page }) => {
+  await fixture(page)
+  await page.getByText('Import / export JSON', { exact: false }).click()
+  const inventory = readFileSync(new URL('../src/example-inventory.json', import.meta.url), 'utf8')
+  await page.getByLabel('Or paste inventory JSON', { exact: true }).fill(inventory)
+  await page.getByRole('button', { name: 'Import pasted inventory', exact: true }).click()
+  await expect(page.getByLabel('Or paste inventory JSON', { exact: true })).toHaveValue('')
+  expect(await page.evaluate(() => window.deviceHarness.hasUnsaved())).toBe(true)
+  await switchTo(page, 'B')
+  expect(await page.evaluate(() => window.deviceHarness.hasUnsaved())).toBe(true)
+  expect(await page.evaluate(() => !window.dispatchEvent(new Event('beforeunload', { cancelable: true })))).toBe(true)
+})
 
 test('A/B retain complete drafts and invalid settings DOM; in-flight save stays with A and no stale state reaches native host', async ({ page }) => {
   const f = await fixture(page)

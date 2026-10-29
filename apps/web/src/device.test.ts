@@ -9,6 +9,7 @@ import { copy, readConfig } from './model.ts'
 import type { Snapshot } from './model.ts'
 import { ActivationSession } from './activation-session.ts'
 import { SituationSession } from './situation-session.ts'
+import { reactive, watch } from 'vue'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -220,4 +221,61 @@ test('independent settings grant remains usable without view; permission denial 
   await assert.rejects(api.post('/api/status'), e => e instanceof ApiError && e.code === 'permission-denied')
   assert.equal(api.connected, true)
   assert.deepEqual(await api.post('/api/automation/settings/read'), { settings: 'settings-only result' })
+})
+
+test('consumer continuations cannot restore validation, inspection or a snapshot after concurrent authority loss', async () => {
+  const snapshot: Snapshot = { format: 'mixyard-local-drafts', schemaVersion: 1, storeRevision: 0, configRevision: 1, profiles: [], draft: config(), previousDraft: null }
+  const inventory = JSON.parse(readFileSync(new URL('./example-inventory.json', import.meta.url), 'utf8'))
+  const api = reactive(new Api(async path => {
+    if (path === '/api/session') return Response.json({ apiVersion: 1, csrfToken: 'local', audioAvailable: false })
+    if (path === '/api/profiles/read' || path === '/api/profiles/edit') return Response.json(snapshot)
+    if (path === '/api/status') return Response.json({ connected: false, snapshot: null, error: null })
+    if (path === '/api/validate') return Response.json({ valid: true })
+    if (path === '/api/inspect') return Response.json({ schemaVersion: 1, mode: 'routing-inspection', configRevision: config().revision, inventoryRevision: inventory.revision, inventoryEvidence: inventory.evidence, nativeState: 'unknown', liveLevels: null, planAvailable: false, preflightError: 'Fixture boundary', plan: null, findings: [], sources: [], mixes: [], sends: [], outputs: [], capacity: [] })
+    throw Error(`Unexpected fixture route ${String(path)}`)
+  }))
+  const session = reactive(new ConsoleSession(api))
+  const stop = watch(() => api.epoch, () => session.invalidate(), { flush: 'sync' })
+  const post = api.post.bind(api)
+  let revokeAfter = ''
+  api.post = (path, body) => {
+    const result = post(path, body)
+    // Observe a real Api completion before its awaiting consumer resumes. This
+    // models a concurrent revocation in the promise-continuation gap.
+    void result.then(() => { if (path === revokeAfter) api.disconnect('Controller revoked') }, () => {})
+    return result
+  }
+  try {
+    for (const path of ['/api/validate', '/api/inspect', '/api/profiles/edit']) {
+      revokeAfter = ''; await session.refresh(); session.inventory = inventory
+      revokeAfter = path
+      if (path === '/api/validate') await session.validate()
+      else if (path === '/api/inspect') await session.inspect()
+      else await session.edit({ kind: 'draft', config: config() })
+      assert.equal(api.connected, false)
+      assert.equal(session.validated, false)
+      assert.equal(session.inspection, null)
+      assert.equal(session.snapshot, null)
+      assert.equal(session.notice, '')
+    }
+  } finally { stop() }
+})
+
+test('a rejected old save cannot pause writes after a fresh successful reconnect', async () => {
+  const s = await service('A')
+  try {
+    const session = new ConsoleSession(s.api())
+    await session.refresh()
+    const held = s.hold(), old = session.edit({ kind: 'draft', config: copy(session.local!) })
+    await held.arrived.promise
+    session.api.disconnect(); session.invalidate(); await session.refresh()
+    assert.equal(session.needsRefresh, false)
+    assert.equal(session.canWrite, true)
+    const fresh = session.snapshot
+    held.release.resolve(); await old
+    assert.equal(session.snapshot, fresh)
+    assert.equal(session.needsRefresh, false)
+    assert.equal(session.canWrite, true)
+    assert.equal(session.error, '')
+  } finally { await s.close() }
 })
