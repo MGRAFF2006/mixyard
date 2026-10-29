@@ -3,6 +3,7 @@ import copy
 import os
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest import mock
 import qualify
@@ -23,6 +24,23 @@ def private_snapshot():
 
 
 class Isolation(unittest.TestCase):
+    def test_snapshot_capture_preserves_failure_cause_and_bounds_both_pipes(self):
+        # Real owned Python control children, never PipeWire/native APIs.
+        def capture(script, **kwargs):
+            return qualify.snapshot_bytes([sys.executable, "-I", "-c", script], dict(os.environ), **kwargs)
+
+        self.assertEqual(capture("import sys; sys.stdout.write('[]')"), b"[]")
+        with self.assertRaisesRegex(RuntimeError, "stdoutBytes=2 stderrBytes=19.*owned-fixture-error"):
+            capture("import sys; sys.stdout.write('[]'); sys.stderr.write('owned-fixture-error')")
+        with self.assertRaisesRegex(RuntimeError, "returncode=3.*owned-exit-error"):
+            capture("import sys; sys.stderr.write('owned-exit-error'); sys.exit(3)")
+        with self.assertRaisesRegex(RuntimeError, "reason=stdout-limit.*stdoutBytes=1048577"):
+            capture("import sys; sys.stdout.buffer.write(b'x' * (2 * 1024 * 1024))")
+        with self.assertRaisesRegex(RuntimeError, "reason=stderr-limit.*stderrBytes=4097"):
+            capture("import sys; sys.stderr.buffer.write(b'x' * 8192)")
+        with self.assertRaisesRegex(RuntimeError, "reason=timeout"):
+            capture("import time; time.sleep(10)", timeout=0.05)
+
     def test_daemon_launcher_selects_server_config_without_starting_native_code(self):
         class BeforeNativeLaunch(Exception):
             pass

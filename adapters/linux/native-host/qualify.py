@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import selectors
 import signal
 import stat
 import subprocess
@@ -20,12 +21,61 @@ MODULES = {
 }
 
 
+def snapshot_bytes(command, env, timeout=5):
+    """Owned control subprocess; bound capture before allocation, retain cause."""
+    process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    limits = {"stdout": 1024 * 1024, "stderr": 4096}
+    deadline = time.monotonic() + timeout
+    reason = None
+    try:
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout, selectors.EVENT_READ, "stdout")
+            ready.register(process.stderr, selectors.EVENT_READ, "stderr")
+            while ready.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    reason = "timeout"
+                    break
+                events = ready.select(remaining)
+                if not events:
+                    reason = "timeout"
+                    break
+                for key, _ in events:
+                    name = key.data
+                    # One byte beyond the limit proves overflow without reading
+                    # or allocating the unbounded remainder of either pipe.
+                    chunk = os.read(key.fd, min(65536, limits[name] - len(buffers[name]) + 1))
+                    if not chunk:
+                        ready.unregister(key.fileobj)
+                    else:
+                        buffers[name].extend(chunk)
+                        if len(buffers[name]) > limits[name]:
+                            reason = name + "-limit"
+                            break
+                if reason:
+                    break
+        if not reason:
+            try:
+                process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                reason = "timeout"
+    finally:
+        if process.poll() is None:
+            process.kill()  # This handle belongs only to our pw-dump child.
+            process.wait(timeout=1)
+        process.stdout.close()
+        process.stderr.close()
+    if reason or process.returncode or buffers["stderr"]:
+        diagnostic = bytes(buffers["stderr"][:2048]).decode("utf-8", errors="replace")
+        raise RuntimeError(f"private graph observation rejected: reason={reason or 'exit-or-stderr'} "
+                           f"returncode={process.returncode} stdoutBytes={len(buffers['stdout'])} "
+                           f"stderrBytes={len(buffers['stderr'])} stderrPrefix={diagnostic!r}")
+    return bytes(buffers["stdout"])
+
+
 def snapshot(env):
-    result = subprocess.run(["pw-dump", "--remote", "mixyard-private"], env=env,
-                            capture_output=True, timeout=5, check=True)
-    if len(result.stdout) > 1024 * 1024 or result.stderr:
-        raise RuntimeError("unbounded or ambiguous private graph observation")
-    objects = json.loads(result.stdout)
+    objects = json.loads(snapshot_bytes(["pw-dump", "--remote", "mixyard-private"], env))
     if not isinstance(objects, list) or len(objects) > 256:
         raise RuntimeError("unexpected private graph size")
     ids = [item["id"] for item in objects]
