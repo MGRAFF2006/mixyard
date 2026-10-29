@@ -1,0 +1,38 @@
+name: macOS worker bridge (synthetic PCM, no audio devices)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'adapters/macos/**'
+      - '.github/workflows/macos-workers.yml'
+  pull_request:
+    paths:
+      - 'adapters/macos/**'
+      - '.github/workflows/macos-workers.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    name: Worker transport fixtures (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Portable SPSC/PCM and Apple ABI synthetic ingress
+        run: bash adapters/macos/worker-check.sh
+      - name: Compile actual process tap path (never execute capture/render)
+        if: runner.os == 'macOS'
+        run: bash adapters/macos/build.sh
+      - name: Record proof boundary
+        if: always()
+        shell: bash
+        run: |
+          echo 'Synthetic PCM/SPSC and Apple SDK checks only. No physical audio, HAL install, permissions or default-device changes.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Rust engine linkage, clock adaptation, system-broker authority, external virtual inputs, fidelity and latency remain unqualified. backendAvailable=false audioApplied=false.' >> "$GITHUB_STEP_SUMMARY"
