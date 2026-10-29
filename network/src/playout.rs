@@ -205,6 +205,17 @@ impl Playout {
         self.offer.generation
     }
 
+    /// Explicit local delay adjustment. Increasing causes counted overlap/prebuffer
+    /// silence; decreasing causes counted skips on the next render, never replay.
+    pub fn set_target_buffer_frames(&mut self, frames: u64) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            frames <= self.capacity_frames,
+            "target buffer exceeds admitted window"
+        );
+        self.config.target_buffer_frames = frames;
+        Ok(())
+    }
+
     pub(crate) fn insert(&mut self, sequence: u64, payload: &[u8]) {
         let next_packet = self.next / u64::from(self.offer.spec.frames_per_packet);
         if sequence < next_packet {

@@ -4,6 +4,11 @@ Standalone Rust workspace for paired, authenticated QUIC audio transport. It doe
 not open an audio device, mix sources, publish native endpoints or modify defaults.
 See [the protocol, security boundary and qualification gates](../docs/network-audio.md).
 
+An explicit [authenticated fragmented-block transport](../docs/network-fragment-transport.md)
+also carries raw blocks whose sample frames exceed the datagram MTU. It reuses
+mutual TLS and exact pins with separate directional grants and reliable version-2
+agreement. The default v1 endpoint remains unchanged; no native device opens.
+
 Run the isolated proof (ephemeral certificates, loopback sockets only):
 
 ```sh
