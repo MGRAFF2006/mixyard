@@ -15,6 +15,7 @@ mod inventory_state;
 pub mod linux_audio;
 #[cfg(any(target_os = "macos", windows, test))]
 mod native_inventory;
+pub mod recording;
 pub mod worker;
 pub use client::{
     Availability, Backend, Capabilities, Lifecycle, LifecycleEvent, NativeAudioProof,
