@@ -16,6 +16,7 @@
 #include <spa/buffer/meta.h>
 #include <json-c/json.h>
 #include "mixyard_host.h"
+#include "timeline.h"
 
 #define ROUTES 3
 #define FRAMES 128
@@ -48,7 +49,8 @@ struct app {
     _Atomic uint32_t clock_id;
     _Atomic unsigned command, command_done, phase, error;
     _Atomic uint64_t delivered[ROUTES], silence[ROUTES], mismatches, rendered, dropped, heap_ops;
-    uint64_t sequence, generation, quiet_rendered;
+    uint64_t generation, quiet_rendered;
+    mx_graph_timeline timeline;
     uint64_t quiet_silence[ROUTES];
     _Atomic uint32_t role_clock[3];
     unsigned ticks, stage, last_ack;
@@ -178,10 +180,11 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
         if (!atomic_load_explicit(&in_port->format_ok, memory_order_acquire) ||
             !atomic_load_explicit(&out_port->format_ok, memory_order_acquire)) fresh = false;
     }
-    mx_stamp stamp = { .generation = a->generation, .revision = 1,
-        .clock_id = pos->clock.id, .sequence = a->sequence++,
-        .first_frame = pos->clock.position, .captured_ns = pos->clock.nsec,
-        .deadline_ns = pos->clock.nsec + 100000000 };
+    mx_stamp stamp = {0};
+    if (a->host && command == 1 && fresh && !mx_graph_stamp(&a->timeline,
+        pos->clock.id, pos->clock.position, pos->clock.nsec, n, a->generation, &stamp)) {
+        fresh = false; fail(a, 25);
+    }
     for (unsigned s = 0; s < ROUTES; ++s) {
         inputs[s] = (mx_input){ .encoding = MX_F64LE, .sample_rate_hz = 48000, .channels = 2, .stamp = stamp };
         input[s] = pw_filter_dequeue_buffer(e->in[s]);
@@ -384,7 +387,8 @@ static int replace_host(struct spa_loop *loop, bool async, uint32_t seq, const v
     (void)loop; (void)async; (void)seq; (void)data; (void)size;
     struct replacement *r = userdata;
     r->old = r->a->host; r->a->host = r->next;
-    r->a->generation = r->generation; r->a->sequence = 0; r->a->last_ack = 0;
+    r->a->generation = r->generation; r->a->last_ack = 0;
+    r->a->timeline = (mx_graph_timeline){ .clock_id = atomic_load_explicit(&r->a->clock_id, memory_order_acquire) };
     atomic_store_explicit(&r->a->command_done, 0, memory_order_release);
     atomic_store_explicit(&r->a->command, r->next ? 1 : 0, memory_order_release);
     return 0;
@@ -419,6 +423,7 @@ static bool install_host(struct app *a, uint64_t generation) {
     if (!valid) { json_object_put(request); fail(a, 52); return false; }
     const char *text = json_object_to_json_string_ext(request, JSON_C_TO_STRING_PLAIN);
     mx_host *host = NULL; char error[1024] = {0};
+    if (mx_host_abi_version() != MX_HOST_ABI_VERSION) { json_object_put(request); fail(a, 59); return false; }
     int result = mx_host_create((const uint8_t *)text, strlen(text), &host, error, sizeof(error));
     if (result || !host) { fprintf(stderr, "shared engine create: %s (%d)\n", error, result); json_object_put(request); fail(a, 53); return false; }
     if (mx_host_source_count(host) != ROUTES || mx_host_output_count(host) != ROUTES) {

@@ -10,9 +10,9 @@ cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
   -o "$MIXYARD_NATIVE_BUILD/native-graph.o"
 export CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0
 export CARGO_TARGET_DIR="$MIXYARD_NATIVE_BUILD/rust"
-cargo build --locked --manifest-path "$root/adapters/engine/Cargo.toml"
+cargo build --locked --manifest-path "$root/adapters/engine/Cargo.toml" --release
 cc "$MIXYARD_NATIVE_BUILD/native-graph.o" \
-  "$CARGO_TARGET_DIR/debug/libmixyard_host.a" \
+  "$CARGO_TARGET_DIR/release/libmixyard_host.a" \
   -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free,--wrap=posix_memalign,--wrap=aligned_alloc \
   $(pkg-config --libs libpipewire-0.3 json-c) -lpthread -ldl -lm -lrt -lutil \
   -o "$MIXYARD_NATIVE_BUILD/native-graph"

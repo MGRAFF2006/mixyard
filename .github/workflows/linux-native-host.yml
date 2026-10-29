@@ -15,7 +15,6 @@ jobs:
       CARGO_INCREMENTAL: 0
       CARGO_BUILD_JOBS: 1
       CARGO_PROFILE_DEV_DEBUG: 0
-      MIXYARD_NATIVE_BUILD: ${{ runner.temp }}/mixyard-native-build
     steps:
       - uses: actions/checkout@v4
       - name: Check control-plane isolation guards
@@ -26,10 +25,11 @@ jobs:
           sudo apt-get install --no-install-recommends -y pipewire pipewire-bin libpipewire-0.3-dev libspa-0.2-dev libjson-c-dev pkg-config
       - name: Build actual canonical Rust engine and native transport
         run: |
+          export MIXYARD_NATIVE_BUILD="$RUNNER_TEMP/mixyard-native-build"
           mkdir -m 700 "$MIXYARD_NATIVE_BUILD"
           bash adapters/linux/native-host/build.sh
       - name: Exercise isolated native source to engine to consumer
-        run: python3 -B adapters/linux/native-host/qualify.py "$MIXYARD_NATIVE_BUILD/native-graph" "$RUNNER_TEMP/native-evidence.json"
+        run: python3 -B adapters/linux/native-host/qualify.py "$RUNNER_TEMP/mixyard-native-build/native-graph" "$RUNNER_TEMP/native-evidence.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

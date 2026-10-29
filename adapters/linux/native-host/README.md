@@ -17,7 +17,9 @@ Generators are synthetic nodes external to the engine, never relabeled engine
 outputs. Actual observed registry node/port IDs and object serials replace
 fixture observed IDs. The private driver supplies the common graph timeline;
 headers carry the actual native frame position/time and the host verifies them.
-Equal nominal rates alone do not authorize a common clock.
+The first admitted native frame is explicitly mapped to engine frame zero for
+each new host generation; native nanoseconds stay unchanged. Clock changes and
+frame gaps fail closed. Equal nominal rates alone do not authorize a common clock.
 
 The hosted runner installs distro PipeWire and development SDKs. `qualify.py`
 creates new mode-0700 runtime/config/home directories with one private socket,
@@ -71,3 +73,12 @@ host, and no SDK was installed there.
 Native API references: [PipeWire filter](https://docs.pipewire.org/group__pw__filter.html),
 [raw format utilities](https://docs.pipewire.org/audio_2format-utils_8h.html),
 [link factory](https://docs.pipewire.org/page_module_link_factory.html).
+
+`host_oracle.c` exercises this adapter's request, three independent destinations
+and explicit frame-epoch mapper against the actual Rust static library without
+loading PipeWire. It is injection/ABI evidence only. On the constrained
+implementation host, 512 blocks pass the literal Float64/DSP oracle, clock/gap
+rejection and revoke, with zero wrapped callback malloc/calloc/realloc/free
+operations. The private generated files occupied 7,891,978 bytes at link
+(16 MiB budget) and were deleted; the parent's library was read read-only.
+This does not replace the hosted native SDK and private graph checks.
