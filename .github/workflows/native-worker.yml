@@ -1,0 +1,24 @@
+name: Bounded native PCM handoff
+on:
+  workflow_dispatch:
+  push:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/audio.rs', 'src/runtime/**', 'tests/runtime_worker.rs', '.github/workflows/native-worker.yml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/audio.rs', 'src/runtime/**', 'tests/runtime_worker.rs', '.github/workflows/native-worker.yml']
+permissions:
+  contents: read
+jobs:
+  handoff:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked --test runtime_worker
