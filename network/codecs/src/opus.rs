@@ -1,7 +1,6 @@
 use super::{Error, Format, OpusParameters, Result, Sample, require};
 use std::ffi::{CStr, c_char, c_int, c_void};
 
-#[link(name = "opus")]
 unsafe extern "C" {
     fn opus_get_version_string() -> *const c_char;
     fn opus_encoder_get_size(channels: c_int) -> c_int;

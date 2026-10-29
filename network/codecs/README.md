@@ -7,7 +7,18 @@ See [the contract, evidence and limits](../../docs/network-codecs.md).
 Default features provide raw envelopes without native dependencies. Enable
 `system-zstd` and/or `system-opus` to link installed public libraries; this crate
 does not download, build or install them. libzstd >= 1.4 and libopus >= 1.3 with
-linker-visible `zstd`/`opus` libraries are required for those features. Optional
+linker-visible `zstd`/`opus` libraries are required for those features. Cargo uses
+the std-only `build.rs`; per-library `MIXYARD_ZSTD_LIB_DIR`,
+`MIXYARD_ZSTD_LINK_KIND` (`dylib` or `static`) and `MIXYARD_ZSTD_LIB_NAME`
+select an explicit directory, linkage and bare library name. The same variables
+with `OPUS` replace `ZSTD` for Opus. Defaults are platform linker paths, `dylib`
+and `zstd`/`opus`. A supplied directory must be absolute and exist; malformed
+settings fail. Missing native libraries fail the build, without codec fallback.
+No extra installation or probing occurs. Direct-rustc `verify.sh` passes the
+same selections with `-L`/`-l` and is a Unix/Bash verification path.
+
+See [platform build/loader and hosted evidence](../../docs/network-codec-platforms.md)
+for Windows MSVC/vcpkg, macOS/Homebrew and Linux package-manager paths. Optional
 library presence alone is not device, platform or distribution qualification.
 Mixyard code is MIT; upstream Zstd offers BSD/GPL alternatives and Opus a BSD
 license plus its upstream patent terms. Distributors must retain applicable

@@ -352,7 +352,6 @@ fn opus_profile_capacity_is_forwarded_and_large_valid_packets_decode() {
 
     // Use libopus's public padding API to produce a valid maximum-capacity
     // packet deterministically, regardless of its chosen native output bitrate.
-    #[link(name = "opus")]
     unsafe extern "C" {
         fn opus_packet_pad(data: *mut u8, len: i32, new_len: i32) -> i32;
     }

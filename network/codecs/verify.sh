@@ -11,13 +11,30 @@ cd -- "$source_dir"
 pkg-config --atleast-version=1.4.0 libzstd
 pkg-config --atleast-version=1.3.0 opus
 features=(--cfg 'feature="system-zstd"' --cfg 'feature="system-opus"')
-rustc --edition 2024 --test src/lib.rs "${features[@]}" -D warnings -C debuginfo=0 -o "$target_dir/tests"
+links=()
+for codec in ZSTD OPUS; do
+    kind_var="MIXYARD_${codec}_LINK_KIND"
+    name_var="MIXYARD_${codec}_LIB_NAME"
+    dir_var="MIXYARD_${codec}_LIB_DIR"
+    kind=${!kind_var-dylib}
+    default_name=zstd
+    if [[ $codec == OPUS ]]; then default_name=opus; fi
+    name=${!name_var-$default_name}
+    [[ $kind == dylib || $kind == static ]] || { echo "Invalid $kind_var" >&2; exit 1; }
+    [[ $name =~ ^[a-zA-Z0-9_-]+$ ]] || { echo "Invalid $name_var" >&2; exit 1; }
+    if [[ -n ${!dir_var+x} ]]; then
+        [[ ${!dir_var} == /* && -d ${!dir_var} ]] || { echo "Invalid $dir_var" >&2; exit 1; }
+        links+=(-L "native=${!dir_var}")
+    fi
+    links+=(-l "$kind=$name")
+done
+rustc --edition 2024 --test src/lib.rs "${features[@]}" "${links[@]}" -D warnings -C debuginfo=0 -o "$target_dir/tests"
 "$target_dir/tests" --test-threads=1
 rustc --edition 2024 --test src/lib.rs -D warnings -C debuginfo=0 -o "$target_dir/tests"
 "$target_dir/tests" --test-threads=1
 rustc --edition 2024 --crate-type rlib --crate-name mixyard_network_codecs src/lib.rs \
-    "${features[@]}" -D warnings -C debuginfo=0 -C opt-level=2 -o "$target_dir/libmixyard_network_codecs.rlib"
+    "${features[@]}" "${links[@]}" -D warnings -C debuginfo=0 -C opt-level=2 -o "$target_dir/libmixyard_network_codecs.rlib"
 rustc --edition 2024 examples/loopback.rs "${features[@]}" -D warnings -C debuginfo=0 -C opt-level=2 \
-    --extern "mixyard_network_codecs=$target_dir/libmixyard_network_codecs.rlib" -o "$target_dir/loopback"
+    "${links[@]}" --extern "mixyard_network_codecs=$target_dir/libmixyard_network_codecs.rlib" -o "$target_dir/loopback"
 "$target_dir/loopback"
 du -sh -- "$target_dir"

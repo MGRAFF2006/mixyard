@@ -1,0 +1,144 @@
+"""Hosted-only production codec checks; never installs dependencies itself."""
+
+import hashlib
+import os
+from pathlib import Path
+import platform
+import shutil
+import subprocess
+import sys
+
+
+TARGET = Path(os.environ["CARGO_TARGET_DIR"])
+EVIDENCE = TARGET / "evidence"
+EVIDENCE.mkdir(parents=True, exist_ok=True)
+MANIFEST = "network/codecs/Cargo.toml"
+
+
+def run(label, args, timeout=180, env=None, rejection=None):
+    result = subprocess.run(
+        args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, errors="replace", timeout=timeout, check=False, env=env,
+    )
+    (EVIDENCE / f"{label}.txt").write_text(result.stdout, encoding="utf-8")
+    print(result.stdout, flush=True)
+    if rejection is None:
+        result.check_returncode()
+    elif result.returncode == 0 or rejection not in result.stdout:
+        raise RuntimeError(f"{label}: missing expected build rejection {rejection}")
+    return result.stdout
+
+
+def digest(path):
+    return f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path}\n"
+
+
+def main():
+    if shutil.disk_usage(TARGET).free < 10 * 2**30:
+        raise RuntimeError("Less than 10 GiB free before codec qualification")
+    revision = run("checkout", ["git", "rev-parse", "HEAD"]).strip()
+    run("rust", ["rustc", "-vV"])
+    kind = os.environ["MIXYARD_ZSTD_LINK_KIND"]
+    assert kind == os.environ["MIXYARD_OPUS_LINK_KIND"]
+    # Reapply here: macOS can strip DYLD_* while launching a protected shell.
+    # Child codec binaries must see only the explicitly selected library dirs.
+    if kind == "dylib" and os.name != "nt":
+        loader = "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
+        os.environ[loader] = os.pathsep.join(
+            os.environ[f"MIXYARD_{codec}_LIB_DIR"] for codec in ["ZSTD", "OPUS"])
+    (EVIDENCE / "scope.txt").write_text(
+        f"checkout={revision}\nsource={os.environ['CODEC_SOURCE_SHA']}\n"
+        f"platform={platform.platform()} machine={platform.machine()}\n"
+        f"link_kind={kind}\n"
+        "Synthetic workers/TCP only; no physical/native-engine/browser proof.\n",
+        encoding="utf-8",
+    )
+    keys = [f"MIXYARD_{codec}_{suffix}" for codec in ["ZSTD", "OPUS"]
+            for suffix in ["LIB_DIR", "LIB_NAME", "LINK_KIND"]]
+    keys += ["CODEC_DLL_DIR", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"]
+    (EVIDENCE / "link-settings.txt").write_text(
+        "".join(f"{key}={os.environ.get(key, '<default>')}\n" for key in keys), encoding="utf-8")
+    # Single-feature builds catch accidental linkage to an unselected library.
+    for feature in ["system-zstd", "system-opus"]:
+        run(feature, ["cargo", "test", "--locked", "--offline", "--manifest-path",
+                      MANIFEST, "--no-default-features", "--features", feature,
+                      "--all-targets", "--", "--test-threads=1"])
+    run("clippy", ["cargo", "clippy", "--locked", "--offline", "--manifest-path",
+                   MANIFEST, "--all-features", "--all-targets"])
+    run("tests", ["cargo", "test", "--locked", "--offline", "--manifest-path",
+                  MANIFEST, "--all-features", "--all-targets", "--",
+                  "--test-threads=1", "--nocapture"])
+    run("build", ["cargo", "build", "--locked", "--offline", "--manifest-path",
+                  MANIFEST, "--all-features", "--example", "loopback"])
+    exe = TARGET / "debug" / "examples" / ("loopback.exe" if os.name == "nt" else "loopback")
+    if os.name == "nt":
+        vswhere = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
+        vs = run("visual-studio", [str(vswhere), "-latest", "-products", "*",
+                                  "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                                  "-property", "installationPath"]).strip()
+        dumpbins = sorted(Path(vs).glob("VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"))
+        if not dumpbins:
+            raise RuntimeError("MSVC dumpbin unavailable; cannot qualify PE imports")
+        dumpbin = str(dumpbins[-1])
+        links = run("linked-libraries", [dumpbin, "/dependents", str(exe)])
+        if kind == "dylib":
+            # Windows searches beside the executable first. Keep these owned
+            # copies and their hashes with the actual fixture's import evidence.
+            dlls = sorted(Path(os.environ["CODEC_DLL_DIR"]).glob("*.dll"))
+            if not dlls:
+                raise RuntimeError("Missing runtime DLLs from selected vcpkg triplet")
+            for dll in dlls:
+                shutil.copy2(dll, exe.parent / dll.name)
+            (EVIDENCE / "runtime-dll-sha256.txt").write_text(
+                "".join(digest(exe.parent / dll.name) for dll in dlls), encoding="utf-8")
+    elif sys.platform == "darwin":
+        links = run("linked-libraries", ["otool", "-L", str(exe)])
+    else:
+        links = run("linked-libraries", ["ldd", str(exe)])
+    for library in ["zstd", "opus"]:
+        present = library in links.lower()
+        if present != (kind == "dylib"):
+            raise RuntimeError(f"{library}: unexpected {kind} runtime linkage")
+    # Preserve linker directives/archive paths as well as PE/Mach-O/ELF imports.
+    build_outputs = sorted((TARGET / "debug" / "build").glob("mixyard-network-codecs-*/output"))
+    (EVIDENCE / "cargo-link-directives.txt").write_text(
+        "".join(f"{path}\n{path.read_text(encoding='utf-8')}\n" for path in build_outputs),
+        encoding="utf-8",
+    )
+    hashes = [digest(exe)]
+    if kind == "static":
+        for codec in ["ZSTD", "OPUS"]:
+            directory = Path(os.environ[f"MIXYARD_{codec}_LIB_DIR"])
+            name = os.environ.get(f"MIXYARD_{codec}_LIB_NAME", codec.lower())
+            archive = directory / (f"{name}.lib" if os.name == "nt" else f"lib{name}.a")
+            hashes.append(digest(archive))
+    (EVIDENCE / "sha256.txt").write_text("".join(hashes), encoding="utf-8")
+    output = run("loopback", [str(exe)], timeout=60)
+    if "linked_runtime_zstd=Some(" not in output or 'linked_runtime_opus=Some("' not in output:
+        raise RuntimeError("Full-feature loopback did not report both linked runtime versions")
+    for marker in ["Raw rate=", "Zstd {", "rate=16000 channels=1 blocks=64",
+                   "rate=48000 channels=2 blocks=64"]:
+        if marker not in output:
+            raise RuntimeError(f"Missing production loopback mode: {marker}")
+    # Exercise configuration rejection through Cargo's actual build script.
+    # Missing selected files must not fall through to another installed library.
+    empty = TARGET / "empty-library-directory"
+    empty.mkdir(exist_ok=True)
+    check = ["cargo", "check", "--locked", "--offline", "--manifest-path", MANIFEST]
+    for codec in ["ZSTD", "OPUS"]:
+        for suffix, value, message in [
+            ("LINK_KIND", "auto", "must be dylib or static"),
+            ("LIB_NAME", "../codec", "must be a bare library name"),
+            ("LIB_DIR", "relative-directory", "must be an existing absolute directory"),
+            ("LIB_DIR", str(empty), "is missing selected library"),
+        ]:
+            run(f"reject-{codec}-{suffix}-{len(value)}",
+                check + ["--features", f"system-{codec.lower()}"],
+                env={**os.environ, f"MIXYARD_{codec}_{suffix}": value}, rejection=message)
+    run("raw-ignores-native-settings", check + ["--no-default-features"],
+        env={**os.environ, "MIXYARD_ZSTD_LINK_KIND": "auto", "MIXYARD_OPUS_LINK_KIND": "auto"})
+    print(f"Qualified synthetic production workers: {platform.system()} / {kind}")
+
+
+if __name__ == "__main__":
+    main()
