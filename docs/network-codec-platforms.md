@@ -26,6 +26,21 @@ raw/lossy fallback. Direct `verify.sh` passes equivalent explicit `rustc -L/-l`
 options and still requires pkg-config metadata. It does not invoke `build.rs`.
 Use separate private target directories when qualifying different linkage modes.
 
+The default artifact names consumed by the linker are:
+
+| Target | `dylib` linker files | `static` linker files | Dynamic runtime files |
+| --- | --- | --- | --- |
+| Linux | `libzstd.so`, `libopus.so` | `libzstd.a`, `libopus.a` | Package-provided SONAME files, usually `libzstd.so.1`, `libopus.so.0` |
+| macOS | `libzstd.dylib`, `libopus.dylib` | `libzstd.a`, `libopus.a` | The dylibs and their package-provided versioned install names |
+| Windows MSVC/vcpkg | `zstd.lib`, `opus.lib` import libraries | `zstd.lib`, `opus.lib` archives in the separate static triplet | `zstd.dll`, `opus.dll` from the dynamic triplet's `bin` |
+
+Direct-rustc callers must pass the corresponding flags themselves after the
+hardcoded `#[link]` attributes are removed: for example, `-L native=/chosen/lib`
+and `-l dylib=zstd -l dylib=opus`, or explicit `-l static=zstd -l static=opus`.
+Pass selections when compiling the codec rlib and when linking its test/example
+consumers, as [`verify.sh`](../network/codecs/verify.sh) does. Cargo callers use
+the build script automatically. Neither route sets loader paths for consumers.
+
 | Hosted OS | Dependency source / build | Runtime loading |
 | --- | --- | --- |
 | Ubuntu | Public apt `libzstd-dev`, `libopus-dev`; pkg-config absolute lib directories | Dynamic job sets `LD_LIBRARY_PATH` to those exact directories; ELF imports captured with `ldd` |

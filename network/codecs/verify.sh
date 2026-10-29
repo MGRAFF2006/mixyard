@@ -24,6 +24,11 @@ for codec in ZSTD OPUS; do
     [[ $name =~ ^[a-zA-Z0-9_-]+$ ]] || { echo "Invalid $name_var" >&2; exit 1; }
     if [[ -n ${!dir_var+x} ]]; then
         [[ ${!dir_var} == /* && -d ${!dir_var} ]] || { echo "Invalid $dir_var" >&2; exit 1; }
+        [[ ${!dir_var} != *$'\n'* && ${!dir_var} != *$'\r'* ]] || { echo "Invalid $dir_var" >&2; exit 1; }
+        file="lib$name.so"
+        if [[ $(uname -s) == Darwin ]]; then file="lib$name.dylib"; fi
+        if [[ $kind == static ]]; then file="lib$name.a"; fi
+        [[ -f ${!dir_var}/$file ]] || { echo "$dir_var is missing selected library $file" >&2; exit 1; }
         links+=(-L "native=${!dir_var}")
     fi
     links+=(-l "$kind=$name")
