@@ -12,11 +12,25 @@ python3 -B verification/native-linux/selfcheck.py
 python3 -B verification/native-linux/qualify.py --output verification/local-evidence/native-linux-UNIQUE
 ```
 
-The output directory must be new and inside the ignored local-evidence tree.
+The output directory must be new and inside the actually ignored local-evidence tree.
+Every evidence directory component is opened without following symlinks and kept
+pinned by a file descriptor. The evidence tree must be current-user-owned and
+mode 0700. Raw files and the report use exclusive, non-following mode-0600 opens;
+existing files, report links and shared directories are rejected.
 The harness first verifies Tailscale `Self.HostName=laptop`. It invokes only
 read-only `/usr/bin/pw-dump`, with a 12-second deadline and 8 MiB per-output
-file limit. It checks unique numeric object identities, recognized interface
-names and one observed core. Empty/malformed/ambiguous snapshots block; successful
+file limit. The same bounds apply to host/source checks. Owned commands run in new process
+groups with bounded output files. Timeout, SIGINT and SIGTERM kill the owned
+group and reap its leader before reporting completion; normal exit also cleans
+lingering group members. The leader stays unreaped until group cleanup, avoiding
+a reused-PID target. This is process-group containment, not a sandbox against a
+malicious program that deliberately escapes its group.
+
+The checker rejects duplicate JSON keys, nonfinite JSON constants, object IDs
+outside the exact unsigned 32-bit range, more than 8192 objects, duplicate IDs,
+unrecognized full interface names and missing/duplicate cores. Unknown interface
+suffixes never enter public summaries. Stderr, malformed and ambiguous output
+block the check. Empty/malformed/ambiguous snapshots block; successful
 snapshots remain **partial**, never complete inventory. Exit 0 means the stated
 metadata assertions passed; exit 2 means blocked. Fixtures test the checker,
 not a native backend. No dependency installation or compilation is involved.
@@ -28,7 +42,12 @@ sanitary object counts, claims and gaps. Do not publish raw inputs or transcript
 No source revision claim establishes correspondence to an application binary:
 this harness runs the installed discovery tool, not Mixyard.
 
-## Actual laptop baseline — 2026-10-29
+## Historical laptop baseline — 2026-10-29
+
+These captures used the earlier checker committed in `9063eb5`. They predate
+the path, process-cleanup and strict-decoder repairs below. Their hashes and
+limited observations are retained as historical evidence; they do not qualify
+the revised checker. No new laptop capture has been run for these repairs.
 
 - Tailscale identity: `laptop`; assigned T3 worktree branch
   `agent/laptop-silent-native-2026-10-29`, initially clean at
@@ -46,6 +65,17 @@ this harness runs the installed discovery tool, not Mixyard.
   no existing session was stopped. No persistent test processes were started.
 - Open PRs were checked once: only held experimental #16 was published.
   Its module/tooling was neither enabled nor exercised.
+
+## Checker repair verification
+
+Eleven fixture/process tests cover symlinked roots and ancestors, pinned-directory
+creation, report no-overwrite, private modes, strict JSON and object-ID bounds,
+unknown type disclosure, stderr/nonzero/oversize handling, timed-out descendants,
+normal-exit descendants and SIGTERM cancellation. These run on Linux without
+invoking native discovery or audio. Focused CI runs the same command.
+
+A fresh authorized laptop capture remains pending. No revised-checker result,
+runtime readiness, PipeWire isolation or audio delivery is inferred from fixtures.
 
 ## Application gates and prerequisite handoff
 
