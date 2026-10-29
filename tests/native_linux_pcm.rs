@@ -9,7 +9,8 @@ use mixyard::{AudioFormat, Config, Inventory, OutputObservation, Target};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 struct Allocator;
 thread_local! { static OPS: Cell<Option<usize>> = const { Cell::new(None) }; }
@@ -41,24 +42,38 @@ unsafe impl GlobalAlloc for Allocator {
 #[global_allocator]
 static ALLOCATOR: Allocator = Allocator;
 
+static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
 struct Directory(PathBuf);
 impl Directory {
     fn new() -> Self {
         let root = std::env::var_os("MIXYARD_LINUX_TEST_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
-        let path = root.join(format!(
-            "mixyard-linux-pcm-{}-{}",
-            std::process::id(),
+        Self::at(
+            &root,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+        )
+    }
+    fn at(root: &Path, timestamp: u128) -> Self {
+        // Concurrent tests can observe the same clock tick. Keep exclusive
+        // creation and fail on real filesystem errors instead of retrying them.
+        let sequence = NEXT_DIRECTORY
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .expect("test directory sequence exhausted");
+        let path = root.join(format!(
+            "mixyard-linux-pcm-{}-{timestamp}-{sequence}",
+            std::process::id(),
         ));
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&path)
-            .unwrap();
+            .unwrap_or_else(|error| {
+                panic!("create private test directory {}: {error}", path.display())
+            });
         Self(path)
     }
 }
@@ -66,6 +81,31 @@ impl Drop for Directory {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.0).unwrap();
     }
+}
+
+#[test]
+fn concurrent_file_fixtures_are_private_and_independent_on_the_same_clock_tick() {
+    let root = Directory::new();
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| Directory::at(&root.0, 42));
+        let second = scope.spawn(|| Directory::at(&root.0, 42));
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    assert_ne!(first.0, second.0);
+    for directory in [&first, &second] {
+        assert_eq!(
+            std::fs::metadata(&directory.0).unwrap().mode() & 0o777,
+            0o700
+        );
+    }
+    std::fs::write(first.0.join("bytes"), b"first").unwrap();
+    std::fs::write(second.0.join("bytes"), b"second").unwrap();
+    let first_path = first.0.clone();
+    drop(first);
+    assert!(!first_path.exists());
+    assert_eq!(std::fs::read(second.0.join("bytes")).unwrap(), b"second");
+    drop(second);
+    assert_eq!(std::fs::read_dir(&root.0).unwrap().count(), 0);
 }
 
 fn fixtures() -> (Config, Inventory) {
