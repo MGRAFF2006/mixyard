@@ -14,6 +14,7 @@ public final class NativeHostWorker {
     private native int bindOutput(long handle, int index, ByteBuffer bytes);
     private native int bindStamps(long handle, ByteBuffer stamps);
     private native int process(long handle, long nowNs, int frames);
+    private native int outputStatus(long handle, int index);
     private native void revoke(long handle);
     private native void destroy(long handle);
     private static void require(boolean value, String label) {
@@ -23,15 +24,19 @@ public final class NativeHostWorker {
         return ByteBuffer.allocateDirect(size).order(ByteOrder.LITTLE_ENDIAN);
     }
     public static void main(String[] args) throws Exception {
-        require(args.length == 2 || args.length == 3, "native library, owned fixture and optional denied fixture required");
+        require(args.length >= 2 && args.length <= 4, "native library, owned fixture and optional denied fixture required");
         System.load(Path.of(args[0]).toAbsolutePath().toString());
         var api = new NativeHostWorker();
-        if (args.length == 3) {
+        if (args.length >= 3) {
             long denied = api.create(Files.readAllBytes(Path.of(args[2])));
             if (denied != 0) api.destroy(denied);
             require(denied == 0, "excluded call return must reject before native activation");
         }
-        long handle = api.create(Files.readAllBytes(Path.of(args[1])));
+        probe(api, Path.of(args[1]), false);
+        if (args.length == 4) probe(api, Path.of(args[3]), true);
+    }
+    private static void probe(NativeHostWorker api, Path fixture, boolean failedOutput) throws Exception {
+        long handle = api.create(Files.readAllBytes(fixture));
         require(handle != 0, "actual host admission");
         try {
             int sources = 3, outputs = 2, frames = 4;
@@ -58,10 +63,13 @@ public final class NativeHostWorker {
                 stamps.putLong(offset + 40, 100); stamps.putLong(offset + 48, 1_000_000);
             }
             require(api.bindStamps(handle, stamps) == 0, "bind stamps");
-            require(api.process(handle, 200, frames) == 0, "actual JNI to canonical Rust process");
+            int result = api.process(handle, 200, frames);
+            require(result == 0, "actual JNI to Rust process, failedOutput=" + failedOutput + ", result=" + result);
             for (int i = 0; i < outputs; i++) {
                 String info = api.info(handle, true, i);
-                double expected = info.contains("owned-consumer-call") ? 2 : 1;
+                boolean call = info.contains("owned-consumer-call");
+                double expected = call ? 2 : failedOutput ? 0 : 1;
+                if (failedOutput) require(api.outputStatus(handle, i) == (call ? 0 : 7), "failed output isolated status");
                 for (int sample = 0; sample < frames * 2; sample++)
                     require(output[i].getDouble(sample * 8) == expected, "canonical policy and independent DSP output");
             }

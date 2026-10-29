@@ -13,6 +13,10 @@ retains native raw buffers. Each block carries the explicit engine binding and
 common clock stamp. Kotlin supports the positive signed-Long subset of u64 stamps;
 sample rate retains the full positive u32 domain. Native host failures revoke the
 graph and clear copied output. Buffers are worker-owned, never WebView/JSON PCM.
+An independently failed engine output is zeroed and retains its C ABI failure
+status while healthy outputs continue. `outputStatus` reports engine state only,
+not native device, route or permission availability. Input/binding faults still
+revoke the whole graph and scrub all owned staging.
 
 The host's processed mono/stereo and finite Float64 limits remain authoritative.
 An integer or F32 ingress requires the host's explicit conversion; arbitrary raw

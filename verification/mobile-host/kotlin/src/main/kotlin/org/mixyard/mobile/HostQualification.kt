@@ -24,16 +24,19 @@ fun main(args: Array<String>) {
         }
     }
     val sources = ports("sources"); val outputs = ports("outputs")
+    fun seed(worker: NativeHostWorker) {
+        for ((index, level) in listOf(999.0, 4.0, 2.0).withIndex()) {
+            val buffer = worker.input(index)
+            for (sample in 0 until 8) buffer.putDouble(sample * 8, level)
+        }
+    }
     var rejectedMixMinus = false
     try { NativeHostWorker(request.toString(), 4, sources, outputs).close() }
     catch (_: IllegalStateException) { rejectedMixMinus = true }
     check(rejectedMixMinus) { "excluded-call-return-admitted" }
     NativeHostWorker(admitted, 4, sources, outputs).use { worker ->
         check(!worker.backendAvailable && !worker.audioApplied)
-        for ((index, level) in listOf(999.0, 4.0, 2.0).withIndex()) {
-            val buffer = worker.input(index)
-            for (sample in 0 until 8) buffer.putDouble(sample * 8, level)
-        }
+        seed(worker)
         val stamp = NativeHostWorker.Stamp(7, 1, 11, 0, 0, 100, 1000)
         worker.process(200, stamp, List(sources.size) { stamp })
         for ((index, expected) in listOf(2.0, 1.0).withIndex()) {
@@ -55,5 +58,20 @@ fun main(args: Array<String>) {
             for (byte in 0 until buffer.capacity()) check(buffer.get(byte) == 0.toByte()) { "revoked-input-retained" }
         }
     }
-    println("PASS: actual Kotlin/JNI/canonical Rust offline policy, mix-minus, independent DSP, worker fence and revoke scrubbing; no native audio qualification")
+    val failedOutput = JSONObject(admitted)
+    failedOutput.getJSONArray("outputDsp").getJSONObject(1).getJSONArray("effects").getJSONObject(0).getJSONObject("effect").put("gain", Double.MAX_VALUE)
+    NativeHostWorker(failedOutput.toString(), 4, sources, outputs).use { worker ->
+        seed(worker)
+        for (sequence in 0L..1L) {
+            val captured = if (sequence == 0L) 100L else 83_434L
+            val stamp = NativeHostWorker.Stamp(7, 1, 11, sequence, sequence * 4, captured, 1_000_000)
+            worker.process(captured + 100, stamp, List(sources.size) { stamp })
+            for (index in outputs.indices) {
+                check(worker.outputStatus(index) == if (index == 0) 0 else 7) { "output-failure-not-isolated" }
+                val buffer = worker.output(index)
+                for (sample in 0 until 8) check(buffer.getDouble(sample * 8) == if (index == 0) 2.0 else 0.0)
+            }
+        }
+    }
+    println("PASS: actual Kotlin/JNI/canonical Rust offline policy, mix-minus, independent DSP/output failure, worker fence and revoke scrubbing; no native audio qualification")
 }

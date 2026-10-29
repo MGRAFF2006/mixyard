@@ -34,6 +34,7 @@ public final class NativeHostWorker {
     private var inputStorage: [UnsafeMutableRawBufferPointer] = []
     private var outputStorage: [UnsafeMutableRawBufferPointer] = []
     private var inputs: [mx_input] = []
+    private var outputStatuses: [Int32] = []
     public let backendAvailable = false, audioApplied = false
 
     public init(requestJSON: String, frames: Int, sources: [HostPort], outputs: [HostPort]) throws {
@@ -42,6 +43,7 @@ public final class NativeHostWorker {
               sources.allSatisfy({ !$0.observedId.isEmpty && $0.mapping.count == $0.format.channels.count }),
               outputs.allSatisfy({ !$0.observedId.isEmpty && $0.mapping.count == $0.format.channels.count && $0.format.sample == .f64le }) else { throw MobileError.invalid("exact-host-format-required") }
         let bytes = Array(requestJSON.utf8)
+        outputStatuses = Array(repeating: 7, count: outputs.count)
         var error = [CChar](repeating: 0, count: 512)
         let errorCapacity = error.count
         let result = bytes.withUnsafeBufferPointer { pointer in
@@ -103,6 +105,11 @@ public final class NativeHostWorker {
         borrowed = true; defer { borrowed = false }
         return try body(UnsafeRawBufferPointer(outputStorage[index]))
     }
+    /// Last C ABI result, never an indication of device/permission/route availability.
+    public func outputStatus(_ index: Int) throws -> Int32 {
+        try owned(); guard outputStatuses.indices.contains(index) else { throw MobileError.invalid("host-port-index") }
+        return outputStatuses[index]
+    }
     public func process(nowNs: UInt64, engine: HostStamp, sourceStamps: [HostStamp]) throws {
         try owned()
         do {
@@ -113,7 +120,10 @@ public final class NativeHostWorker {
             for index in outputs.indices {
                 var samples: UnsafePointer<Double>?
                 var count = 0
-                guard mx_host_output(host, index, &samples, &count) == 0, let samples,
+                let status = mx_host_output(host, index, &samples, &count)
+                outputStatuses[index] = status
+                if status == 7 { outputStorage[index].initializeMemory(as: UInt8.self, repeating: 0); continue }
+                guard status == 0, let samples,
                       count == outputStorage[index].count / MemoryLayout<Double>.size else { throw MobileError.invalid("host-output-buffer") }
                 outputStorage[index].initializeMemory(as: UInt8.self, repeating: 0)
                 outputStorage[index].baseAddress!.copyMemory(from: samples, byteCount: count * MemoryLayout<Double>.size)
@@ -124,6 +134,7 @@ public final class NativeHostWorker {
         if let host { mx_host_revoke(host) }
         for storage in inputStorage { storage.initializeMemory(as: UInt8.self, repeating: 0) }
         for storage in outputStorage { storage.initializeMemory(as: UInt8.self, repeating: 0) }
+        for index in outputStatuses.indices { outputStatuses[index] = 7 }
     }
     public func revoke() throws { try owned(); revokeOwned() }
     public func close() throws { try owned(); release() }
@@ -132,7 +143,7 @@ public final class NativeHostWorker {
         if let host { mx_host_destroy(host); self.host = nil }
         for storage in inputStorage { storage.initializeMemory(as: UInt8.self, repeating: 0); storage.deallocate() }
         for storage in outputStorage { storage.deallocate() }
-        inputStorage.removeAll(); outputStorage.removeAll(); inputs.removeAll()
+        inputStorage.removeAll(); outputStorage.removeAll(); inputs.removeAll(); outputStatuses.removeAll()
     }
     deinit { release() }
 }

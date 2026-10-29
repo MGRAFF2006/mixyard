@@ -70,6 +70,8 @@ class NativeHostWorker(
     private fun owned() { check(Thread.currentThread().id == owner && handle != 0L) { "exclusive-worker-required" } }
     fun input(index: Int): ByteBuffer { owned(); return inputs[index] }
     fun output(index: Int): ByteBuffer { owned(); return views[index].apply { clear() } }
+    /** Last C ABI output result; not native device/permission/route availability. */
+    fun outputStatus(index: Int): Int { owned(); return outputStatus(handle, index) }
     private fun stamp(index: Int, value: Stamp) {
         require(value.generation > 0 && value.revision >= 0 && value.clockId > 0 && value.sequence >= 0 && value.firstFrame >= 0 && value.capturedNs >= 0 && value.deadlineNs > value.capturedNs)
         val offset = index * 56
@@ -96,6 +98,7 @@ class NativeHostWorker(
     private external fun bindOutput(handle: Long, index: Int, bytes: ByteBuffer): Int
     private external fun bindStamps(handle: Long, stamps: ByteBuffer): Int
     private external fun process(handle: Long, nowNs: Long, frames: Int): Int
+    private external fun outputStatus(handle: Long, index: Int): Int
     private external fun revoke(handle: Long)
     private external fun destroy(handle: Long)
     companion object { init { System.loadLibrary("mixyard_mobile_host") } }

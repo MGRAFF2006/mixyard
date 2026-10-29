@@ -12,6 +12,7 @@ struct Worker {
     std::vector<mx_input> inputs;
     std::vector<uint8_t*> outputs;
     std::vector<size_t> output_sizes;
+    std::vector<int> output_statuses;
     uint8_t* stamps = nullptr;
     size_t stamp_bytes = 0;
     ~Worker() { if (host) mx_host_destroy(host); }
@@ -29,8 +30,10 @@ void scrub(Worker* value) {
     mx_host_revoke(value->host);
     for (const auto& input : value->inputs)
         if (input.bytes) std::memset(const_cast<uint8_t*>(input.bytes), 0, input.byte_count);
-    for (size_t i = 0; i < value->outputs.size(); ++i)
+    for (size_t i = 0; i < value->outputs.size(); ++i) {
         if (value->outputs[i]) std::memset(value->outputs[i], 0, value->output_sizes[i]);
+        value->output_statuses[i] = MX_INACTIVE;
+    }
 }
 }
 extern "C" JNIEXPORT jlong JNICALL
@@ -48,6 +51,7 @@ Java_org_mixyard_mobile_host_NativeHostWorker_create(JNIEnv* env, jobject, jbyte
     value->inputs.resize(mx_host_source_count(value->host));
     value->outputs.resize(mx_host_output_count(value->host));
     value->output_sizes.resize(value->outputs.size());
+    value->output_statuses.resize(value->outputs.size(), MX_INACTIVE);
     return reinterpret_cast<jlong>(value.release());
     } catch (...) { return 0; } // Allocation failure cannot unwind across JNI.
 }
@@ -114,13 +118,22 @@ Java_org_mixyard_mobile_host_NativeHostWorker_process(JNIEnv*, jobject, jlong ha
     const auto result = mx_host_process(value->host, static_cast<uint64_t>(now), stamp, static_cast<size_t>(frames), value->inputs.data(), value->inputs.size());
     if (result != MX_OK) { scrub(value); return result; }
     for (size_t i = 0; i < value->outputs.size(); ++i) {
+        if (!value->outputs[i] || value->output_sizes[i] == 0) { scrub(value); return MX_BUFFER; }
         const double* samples = nullptr; size_t count = 0;
         const auto status = mx_host_output(value->host, i, &samples, &count);
+        value->output_statuses[i] = status;
+        if (status == MX_INACTIVE) { std::memset(value->outputs[i], 0, value->output_sizes[i]); continue; }
         if (status != MX_OK || !samples || count != value->output_sizes[i] / sizeof(double) || !value->outputs[i]) { scrub(value); return MX_BUFFER; }
         std::memset(value->outputs[i], 0, value->output_sizes[i]);
         std::memcpy(value->outputs[i], samples, count * sizeof(double));
     }
     return MX_OK;
+}
+extern "C" JNIEXPORT jint JNICALL
+Java_org_mixyard_mobile_host_NativeHostWorker_outputStatus(JNIEnv*, jobject, jlong handle, jint index) {
+    auto* value = worker(handle);
+    if (!value || index < 0 || static_cast<size_t>(index) >= value->output_statuses.size()) return MX_INVALID;
+    return value->output_statuses[static_cast<size_t>(index)];
 }
 extern "C" JNIEXPORT void JNICALL
 Java_org_mixyard_mobile_host_NativeHostWorker_revoke(JNIEnv*, jobject, jlong handle) { scrub(worker(handle)); }
