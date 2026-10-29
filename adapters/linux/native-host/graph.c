@@ -21,6 +21,7 @@
 #include "destination.h"
 #include "private_modules.h"
 #include "native_format.h"
+#include "native_diagnostics.h"
 
 #define ROUTES 3
 #define FRAMES 128
@@ -58,6 +59,7 @@ struct app {
     struct spa_source *timer;
     struct endpoint nodes[3];
     struct format_report formats[3][2][ROUTES];
+    struct mx_native_first_failure chunk_failure, mismatch_failure;
     struct global globals[MAX_GLOBALS];
     size_t global_count;
     struct pw_proxy *links[ROUTES * 2];
@@ -131,17 +133,54 @@ static void fail(struct app *a, unsigned error) {
 static struct spa_meta_header *header(struct pw_buffer *b) {
     return spa_buffer_find_meta_data(b->buffer, SPA_META_Header, sizeof(struct spa_meta_header));
 }
-static double *samples(struct app *a, struct pw_buffer *b, bool input, uint32_t frames) {
-    if (b->buffer->n_datas != 1 || !b->buffer->datas[0].data || frames > FRAMES) {
-        fail(a, 10); return NULL;
+static void observe_failure(struct endpoint *e, unsigned port, bool input,
+                            struct pw_buffer *b, uint32_t frames,
+                            const struct spa_io_position *pos, unsigned error,
+                            struct mx_native_first_failure *failure,
+                            uint32_t sample_index, double actual, double expected) {
+    if (atomic_load_explicit(&failure->state, memory_order_relaxed)) return;
+    struct mx_native_observation value = { .error = error, .role = e->role, .port = port,
+        .direction = input ? PW_DIRECTION_INPUT : PW_DIRECTION_OUTPUT, .frames = frames,
+        .phase = atomic_load_explicit(&e->app->phase, memory_order_relaxed),
+        .command = atomic_load_explicit(&e->app->command, memory_order_relaxed),
+        .n_datas = b->buffer->n_datas, .buffer_frames = b->size,
+        .clock_id = pos->clock.id, .clock_frame = pos->clock.position,
+        .clock_ns = pos->clock.nsec, .clock_duration = pos->clock.duration,
+        .rate_num = pos->clock.rate.num, .rate_denom = pos->clock.rate.denom,
+        .sample_index = sample_index };
+    memcpy(&value.actual_bits, &actual, sizeof(actual));
+    memcpy(&value.expected_bits, &expected, sizeof(expected));
+    if (b->buffer->n_datas) {
+        const struct spa_data *data = &b->buffer->datas[0];
+        value.data_type = data->type; value.data_flags = data->flags;
+        value.maxsize = data->maxsize; value.mapoffset = data->mapoffset;
+        value.chunk_present = data->chunk != NULL;
+        if (data->chunk) {
+            value.offset = data->chunk->offset; value.size = data->chunk->size;
+            value.stride = data->chunk->stride; value.flags = data->chunk->flags;
+        }
     }
-    struct spa_data *d = &b->buffer->datas[0];
-    if (!d->chunk || d->maxsize < frames * STRIDE) { fail(a, 11); return NULL; }
-    if (input && (d->chunk->offset != 0 || d->chunk->size != frames * STRIDE ||
-                  d->chunk->stride != (int32_t)STRIDE || d->chunk->flags != 0)) {
-        fail(a, 12); return NULL;
+    const struct spa_meta_header *h = header(b);
+    value.header_present = h != NULL;
+    if (h) { value.header_flags = h->flags; value.header_seq = h->seq; value.header_pts = h->pts; }
+    mx_native_record_first(failure, &value);
+}
+static double *samples(struct endpoint *e, unsigned port, struct pw_buffer *b,
+                       bool input, uint32_t frames, const struct spa_io_position *pos) {
+    struct app *a = e->app;
+    unsigned error = 0;
+    if (b->buffer->n_datas != 1 || !b->buffer->datas[0].data || frames > FRAMES) error = 10;
+    else {
+        struct spa_data *d = &b->buffer->datas[0];
+        if (!d->chunk || d->maxsize < frames * STRIDE) error = 11;
+        else if (input && (d->chunk->offset != 0 || d->chunk->size != frames * STRIDE ||
+                          d->chunk->stride != (int32_t)STRIDE || d->chunk->flags != 0)) error = 12;
     }
-    return d->data;
+    if (error) {
+        observe_failure(e, port, input, b, frames, pos, error, &a->chunk_failure, 0, 0.0, 0.0);
+        fail(a, error); return NULL;
+    }
+    return b->buffer->datas[0].data;
 }
 static void submit(void *port, struct pw_buffer *b, uint32_t frames,
                    const struct spa_io_position *pos, bool silent) {
@@ -168,7 +207,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
             if (s == 0 && atomic_load_explicit(&a->source_missing, memory_order_acquire)) continue;
             struct pw_buffer *b = pw_filter_dequeue_buffer(e->out[s]);
             if (!b) continue;
-            double *p = samples(a, b, false, n);
+            double *p = samples(e, s, b, false, n, pos);
             if (!p) { pw_filter_queue_buffer(e->out[s], b); continue; }
             if (p) for (unsigned f = 0; f < n; ++f)
                 for (unsigned ch = 0; ch < 2; ++ch) p[2*f+ch] = s == 0 && atomic_load_explicit(&a->phase, memory_order_relaxed) == 2 ? NAN : s == 0 ? program_value(a, pos->clock.position+f, ch) : source_value(s, pos->clock.position+f, ch);
@@ -183,7 +222,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
             if (r == 2 && atomic_load_explicit(&a->phase, memory_order_relaxed) == 1) continue;
             struct pw_buffer *b = pw_filter_dequeue_buffer(e->in[r]);
             if (!b) continue;
-            double *p = samples(a, b, true, n);
+            double *p = samples(e, r, b, true, n, pos);
             struct spa_meta_header *h = header(b);
             if (!h) fail(a, 21);
             else if (p && (h->flags & SPA_META_HEADER_FLAG_GAP)) {
@@ -193,7 +232,11 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
                 for (unsigned f = 0; f < n; ++f) for (unsigned ch = 0; ch < 2; ++ch) {
                     double expected = oracle(a, r, h->seq+f, ch);
                     // Canonical mixing may normalize signed zero. Nonzero low bits must survive.
-                    if (p[2*f+ch] != expected) atomic_fetch_add_explicit(&a->mismatches, 1, memory_order_relaxed);
+                    if (p[2*f+ch] != expected) {
+                        observe_failure(e, r, true, b, n, pos, 0, &a->mismatch_failure,
+                            2*f+ch, p[2*f+ch], expected);
+                        atomic_fetch_add_explicit(&a->mismatches, 1, memory_order_relaxed);
+                    }
                 }
                 atomic_fetch_add_explicit(&a->delivered[r], 1, memory_order_relaxed);
             }
@@ -230,7 +273,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
         }
         input[s] = pw_filter_dequeue_buffer(e->in[s]);
         if (!input[s]) { fresh = false; continue; }
-        double *p = samples(a, input[s], true, n);
+        double *p = samples(e, s, input[s], true, n, pos);
         struct spa_meta_header *h = header(input[s]);
         if (!h || h->flags || h->seq != pos->clock.position || h->pts != (int64_t)pos->clock.nsec || !p) {
             fresh = false; continue;
@@ -253,7 +296,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
     for (unsigned r = 0; r < ROUTES; ++r) {
         struct pw_buffer *b = pw_filter_dequeue_buffer(e->out[r]);
         if (!b) { atomic_fetch_add_explicit(&a->dropped, 1, memory_order_relaxed); continue; }
-        double *p = samples(a, b, false, n);
+        double *p = samples(e, r, b, false, n, pos);
         if (!p) { pw_filter_queue_buffer(e->out[r], b); continue; }
         bool silent;
         int result = mx_destination_copy(a->host, r, rendered, p, 2*n, &silent);
@@ -648,7 +691,10 @@ static void print_format_reports(const struct app *a) {
                 printf("%s%u", ch ? "," : "", r->raw.position[ch]);
             printf("]}");
         }
-    printf("]}\n");
+    printf("]");
+    mx_native_print_first_failure("firstChunkFailure", &a->chunk_failure);
+    mx_native_print_first_failure("firstSampleMismatch", &a->mismatch_failure);
+    printf("}\n");
 }
 static void quit(void *userdata, int signal) {
     (void)signal; struct app *a = userdata; a->cancelled = true; pw_main_loop_quit(a->loop);

@@ -24,7 +24,15 @@ media/encoding/rate/count/flags/positions and role/direction/index). The first
 rejection per port is retained through shutdown. The control owner prints these
 bounded records in final JSON only after native contexts are destroyed; no
 logging, JSON or dynamic allocation is added to the process callback. Diagnostics
-never admit a different descriptor or replace the sample/lifecycle oracle. The only
+never admit a different descriptor or replace the sample/lifecycle oracle.
+The first malformed native chunk and first sample mismatch are also retained
+independently in fixed preallocated records, including role/port/direction,
+phase/command, actual offset/size/stride/flags/data shape, native clock/frame and
+header timeline. Sample mismatches include exact expected/actual Float64 bits.
+Control reporting occurs only after quiescence, and later callback/shutdown
+observations cannot overwrite the first failure. Chunk checks, warnings and
+sample mismatch assertions remain unchanged; diagnostic fields are not a
+conversion, partial-PCM acceptance or gap reconstruction policy. The only
 mixer/policy/clock/DSP implementation is `adapters/engine`; source aliases in the
 canonical fixture configuration do not represent discovered external apps.
 Generators are synthetic nodes external to the engine, never relabeled engine

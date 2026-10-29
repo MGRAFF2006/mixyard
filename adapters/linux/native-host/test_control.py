@@ -26,6 +26,45 @@ def private_snapshot():
 
 
 class Isolation(unittest.TestCase):
+    def test_first_native_failure_retains_exact_chunk_timeline_and_sample_bits(self):
+        base = Path(__file__).resolve().parent
+        program = r'''#include <assert.h>
+#include "native_diagnostics.h"
+int main(void) {
+    struct mx_native_first_failure failure = {0}, empty = {0};
+    struct mx_native_observation first = { .error = 12, .role = 2, .port = 1,
+        .frames = 128, .chunk_present = true, .offset = 32, .size = 2048,
+        .stride = 16, .flags = 1, .clock_id = 19, .clock_frame = 9007199254740993ULL,
+        .header_present = true, .header_seq = 9007199254740865ULL, .header_pts = -7,
+        .sample_index = 3, .actual_bits = 0x8000000000000000ULL,
+        .expected_bits = 0x3ff0000000000001ULL };
+    mx_native_record_first(&failure, &first);
+    struct mx_native_observation late = { .error = 11, .size = 0 };
+    for (unsigned i = 0; i < 1024; ++i) mx_native_record_first(&failure, &late);
+    assert(atomic_load(&failure.state) == 2);
+    printf("{\"owned\":true"); mx_native_print_first_failure("failure", &failure);
+    mx_native_print_first_failure("empty", &empty); puts("}");
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="mixyard-diagnostic-", dir="/dev/shm") as root:
+            source, binary = Path(root) / "diagnostic.c", Path(root) / "diagnostic"
+            source.write_text(program)
+            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                            "-I", str(base), str(source), "-o", str(binary)],
+                           env=dict(os.environ, TMPDIR=root), check=True, capture_output=True)
+            result = qualify.json.loads(subprocess.run([str(binary)], check=True,
+                capture_output=True, text=True).stdout)
+        self.assertIsNone(result["empty"])
+        report = result["failure"]
+        self.assertEqual((report["error"], report["role"], report["port"]), (12, 2, 1))
+        self.assertEqual((report["offset"], report["size"], report["stride"], report["flags"]),
+                         (32, 2048, 16, 1))
+        self.assertEqual((report["clockId"], report["clockFrame"], report["headerSeq"], report["headerPts"]),
+                         (19, 9007199254740993, 9007199254740865, -7))
+        self.assertEqual((report["actualBits"], report["expectedBits"], report["sampleIndex"]),
+                         (0x8000000000000000, 0x3ff0000000000001, 3))
+
     def test_actual_c_module_guard_matches_server_and_python_isolation(self):
         base = Path(__file__).resolve().parent
         configured = re.findall(r'\{ name = (libpipewire-module-[\w-]+)',
