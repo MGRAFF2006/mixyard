@@ -5,6 +5,7 @@
 
 use crate::{plan, AudioFormat, Config, Inventory, Plan, ResolutionStatus};
 
+pub mod clock;
 pub mod pcm;
 
 mod sealed {
