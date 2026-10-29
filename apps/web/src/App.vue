@@ -15,6 +15,7 @@ let stored: string | null = null
 try { stored = localStorage.getItem('mixyard-management-target') } catch { /* Storage is optional. */ }
 const selected = ref(targets.some(t => t.id === stored) ? stored! : targets[0]!.id)
 const current = computed(() => targets.find(t => t.id === selected.value)!)
+const retained = new Map<string, InstanceType<typeof ConsoleWorkspace>>()
 const workspace = ref<InstanceType<typeof ConsoleWorkspace> | null>(null)
 function choose(event: Event) {
   const id = (event.target as HTMLSelectElement).value
@@ -27,7 +28,12 @@ watch(() => [selected.value, current.value.api.epoch, current.value.api.connecte
   const api = current.value.api, identity = api.identity
   emit('session-state', { deviceId: identity?.deviceId ?? null, authorityId: identity?.authorityId ?? null, revision: identity?.revision ?? null, displayName: current.value.displayName, connected: api.connected, epoch: api.epoch })
 }, { immediate: true, flush: 'sync' })
-defineExpose({ navigate: (page: Page) => workspace.value?.navigate(page) })
+function remember(value: unknown) {
+  if (!value) return
+  workspace.value = value as InstanceType<typeof ConsoleWorkspace>
+  retained.set(current.value.id, workspace.value)
+}
+defineExpose({ navigate: (page: Page) => workspace.value?.navigate(page), hasUnsavedDrafts: () => [...retained.values()].some(view => view.hasUnsavedDrafts()) })
 </script>
 <template>
   <section class="device-target" aria-label="Management target">
@@ -41,5 +47,5 @@ defineExpose({ navigate: (page: Page) => workspace.value?.navigate(page) })
     <p v-if="current.api.mode === 'control'">Trusted control transport supplied by the host. Remote live decisions, review and arm are unsupported; use the owning local service.</p>
     <p v-else>Remote pairing and certificate trust require a supported trusted transport. This local connection cannot authenticate another device.</p>
   </section>
-  <KeepAlive><ConsoleWorkspace :key="current.id" ref="workspace" :api="current.api" /></KeepAlive>
+  <KeepAlive><ConsoleWorkspace :key="current.id" :ref="remember" :api="current.api" /></KeepAlive>
 </template>

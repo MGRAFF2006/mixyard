@@ -14,7 +14,7 @@ import SituationGraph from './SituationGraph.vue'
 import SituationPreset from './SituationPreset.vue'
 import SituationActivation from './SituationActivation.vue'
 const props = defineProps<{
-  api: Pick<Api, 'post'>
+  api: Pick<Api, 'post'> & Partial<Pick<Api, 'epoch'>>
   epoch?: number
   ready: boolean
   profiles: Profile[]
@@ -24,7 +24,9 @@ const props = defineProps<{
   visible?: boolean
 }>()
 const s = reactive(new SituationSession(props.api))
-watch(() => props.epoch, () => s.disconnect(), { flush: 'sync' })
+watch(() => props.api.epoch ?? props.epoch, () => s.disconnect(), { flush: 'sync' })
+const activationPanel = ref<InstanceType<typeof SituationActivation> | null>(null)
+defineExpose({ hasUnsavedDrafts: () => s.dirty || !!jsonText.value || !!activationPanel.value?.hasUnsavedDrafts() })
 const selectedId = ref(s.request.graph.root), nodeId = ref(selectedId.value), jsonText = ref(''), editor = ref<HTMLFormElement | null>(null)
 const selected = computed(() => s.request.graph.nodes.find(n => n.id === selectedId.value))
 const issues = computed(() => graphIssues(s.request.graph))
@@ -186,7 +188,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
     <p class="situation-hint">Browser draft only. Export to keep your work. Format 1 / Graph revision {{ s.request.graph.revision }}.</p>
     <p v-if="!ready" class="message warning">Service session unavailable. Local editing and export remain available. Use Refresh in the console, then retry validation or context collection.</p>
     <p v-if="s.error" class="message error" role="alert">{{ s.error }}</p><p v-if="s.notice" class="message success" role="status">{{ s.notice }}</p>
-    <SituationActivation :api="api" :epoch="epoch" :ready="ready" :visible="visible ?? true" :graph="s.request.graph" :catalog="s.request.catalog" :builder-generation="s.generation" :builder-ready="builderReady" @load-saved-graph="loadSavedGraph" />
+    <SituationActivation ref="activationPanel" :api="api" :epoch="epoch" :ready="ready" :visible="visible ?? true" :graph="s.request.graph" :catalog="s.request.catalog" :builder-generation="s.generation" :builder-ready="builderReady" @load-saved-graph="loadSavedGraph" />
     <SituationPreset :profiles="profiles" :config="config" @build="preset" />
     <form :key="editorRevision" ref="editor" @submit.prevent="evaluate">
       <div class="situation-fields situation-identity">

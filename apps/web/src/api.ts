@@ -107,7 +107,7 @@ export class Api {
         if (object(value).status !== response.status) { this.disconnect('Control response status mismatch.'); throw Error(this.connectionError) }
       } else if (!response.ok) {
         const error = this.apiError(response.status, value)
-        if ([401, 403].includes(response.status) || (control && response.status === 409)) this.disconnect(`${error.code}: ${error.message}`)
+        if (response.status === 401 || (!control && response.status === 403) || (control && (response.status === 409 || error.code === 'invalid-origin'))) this.disconnect(`${error.code}: ${error.message}`)
         throw error
       }
       return value

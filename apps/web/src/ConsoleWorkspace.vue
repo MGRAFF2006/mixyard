@@ -14,6 +14,8 @@ const props = defineProps<{ api: ApiClient }>()
 const s = reactive(new ConsoleSession(props.api))
 watch(() => s.api.epoch, () => s.invalidate(), { flush: 'sync' })
 const page = ref<'Routing' | 'Profiles' | 'Inspect' | 'Processing' | 'Situations'>('Routing')
+const processingPanel = ref<InstanceType<typeof ProcessingPanel> | null>(null)
+const situationsPanel = ref<InstanceType<typeof SituationsPanel> | null>(null)
 const configText = ref(''), inventoryText = ref('')
 const profileId = ref(''), profileName = ref(''), newMixName = ref('')
 const selected = computed(() => s.snapshot?.profiles.find(p => p.id === profileId.value))
@@ -84,11 +86,12 @@ async function undo() { if (canReplace('Restore the previous stored draft')) awa
 function saveDraft() { if (s.local) void s.edit({ kind: 'draft', config: copy(s.local) }) }
 function saveProfile(id: string | null) { if (s.local && profileName.value.trim()) void s.edit({ kind: 'save', id, name: profileName.value.trim(), config: copy(s.local) }) }
 function selectProfile() { profileName.value = selected.value?.name ?? '' }
-function beforeUnload(event: BeforeUnloadEvent) { if (s.dirty) { event.preventDefault(); event.returnValue = '' } }
+function hasUnsavedDrafts() { return s.dirty || !!configText.value || !!inventoryText.value || !!newMixName.value || !!profileName.value || !!processingPanel.value?.hasUnsavedDrafts() || !!situationsPanel.value?.hasUnsavedDrafts() }
+function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsavedDrafts()) { event.preventDefault(); event.returnValue = '' } }
 onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onActivated(() => { void s.refresh() })
 onDeactivated(() => s.api.disconnect())
-defineExpose({ navigate: (value: typeof page.value) => { page.value = value } })
+defineExpose({ hasUnsavedDrafts, navigate: (value: typeof page.value) => { page.value = value } })
 onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
 </script>
 
@@ -107,7 +110,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
     <main id="workspace" tabindex="-1">
       <div v-if="s.error" class="message error" role="alert"><strong>Action failed.</strong> {{ s.error }} <span v-if="s.needsRefresh">Refresh before another store write.</span></div>
       <div v-if="s.statusError || s.status?.error" class="message warning"><p>Runtime is not connected. Draft editing is still available.</p><details><summary>Connection details</summary>{{ s.statusError || s.status?.error }}</details></div>
-      <div v-if="s.needsRefresh && !s.busy" class="message warning">Store writes paused. Start the local service if needed, then <button @click="s.refresh()">Refresh and review</button>. Local edits are kept; no write is retried automatically.</div>
+      <div v-if="s.needsRefresh && !s.busy && s.canRead" class="message warning">Store writes paused. Start the local service if needed, then <button @click="s.refresh()">Refresh and review</button>. Local edits are kept; no write is retried automatically.</div>
       <p v-if="s.notice && page !== 'Processing' && page !== 'Situations'" class="message success" role="status">{{ s.notice }}</p>
       <div v-show="page !== 'Processing' && page !== 'Situations'" class="draft-bar">
         <div><strong>{{ s.dirty ? 'Unsaved draft edits' : s.local ? 'Draft matches stored copy' : 'No draft loaded' }}</strong>
@@ -186,9 +189,9 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         <details v-if="s.status"><summary>Last read-only runtime snapshot</summary><pre>{{ JSON.stringify(s.status, null, 2) }}</pre></details>
       </section>
 
-      <SituationsPanel v-show="page === 'Situations'" :visible="page === 'Situations'" :api="s.api" :epoch="s.api.epoch" :ready="s.api.connected && !s.busy" :profiles="s.snapshot?.profiles ?? []" :config="s.local" :store-revision="s.snapshot?.storeRevision ?? 0" :inventory="s.inventory" />
+      <SituationsPanel ref="situationsPanel" v-show="page === 'Situations'" :visible="page === 'Situations'" :api="s.api" :epoch="s.api.epoch" :ready="s.api.connected && !s.busy" :profiles="s.snapshot?.profiles ?? []" :config="s.local" :store-revision="s.snapshot?.storeRevision ?? 0" :inventory="s.inventory" />
 
-      <ProcessingPanel v-show="page === 'Processing'" :api="s.api" :epoch="s.api.epoch" :ready="s.api.connected && !s.busy" />
+      <ProcessingPanel ref="processingPanel" v-show="page === 'Processing'" :api="s.api" :epoch="s.api.epoch" :ready="s.api.connected && !s.busy" />
 
       <details v-show="page !== 'Processing' && page !== 'Situations'" class="imports"><summary>Import / export JSON <span>Config and inventory, schema 2</span></summary>
         <div class="import-grid"><div><h3>Configuration</h3><p>Imports are shape-checked and validated by the core before replacing local edits. Full JSON fields are kept.</p><label for="config-file">Import config file (up to 128 KiB)</label><input id="config-file" type="file" accept=".json,application/json" :disabled="s.busy" @change="importFile('config', $event)" /><label for="config-json">Or paste config JSON</label><textarea id="config-json" v-model="configText" rows="5" spellcheck="false" :disabled="s.busy"></textarea><button :disabled="s.busy || !configText.trim()" @click="importText('config', configText)">Import pasted config</button></div>

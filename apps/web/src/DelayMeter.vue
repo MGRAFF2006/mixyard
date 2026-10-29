@@ -9,13 +9,14 @@ import type { DelayRequest, DelayResult, Feature } from './latency.ts'
 import { alignment } from './channels.ts'
 import DspNumber from './DspNumber.vue'
 
-const props = defineProps<{ api: Pick<Api, 'post'>; ready: boolean; epoch?: number; config: ChainConfig; bypassed: boolean }>()
+const props = defineProps<{ api: Pick<Api, 'post'> & Partial<Pick<Api, 'epoch' | 'connectionError'>>; ready: boolean; epoch?: number; config: ChainConfig; bypassed: boolean }>()
 const emit = defineEmits<{ append: [effects: EffectConfig[]]; export: [value: { request: DelayRequest; result: DelayResult }] }>()
 const d = reactive(new DelayDraft())
 const block = ref(128), windowFrames = ref(2048), amplitude = ref(1), threshold = ref(0)
 const references = ref<string[]>([]), selected = ref<string[]>([]), feature = ref<Feature>('first-response')
 const busy = ref(false), error = ref(''), notice = ref(''), form = ref<HTMLFormElement | null>(null)
-watch(() => props.epoch, () => { d.changed(); busy.value = false; error.value = ''; notice.value = '' }, { flush: 'sync' })
+const sessionEpoch = computed(() => props.api.epoch ?? props.epoch)
+watch(sessionEpoch, () => { d.changed(); busy.value = false; error.value = ''; notice.value = '' }, { flush: 'sync' })
 watch(() => props.config.format.channels.slice(), ids => {
   references.value = [...ids]; selected.value = [...ids]
 }, { immediate: true })
@@ -26,12 +27,13 @@ function milliseconds(frames: number) { return (frames / props.config.format.sam
 function position(frame: number | null) { return frame === null ? 'No detected response' : `${frame} samples / ${milliseconds(frame)} ms` }
 async function measure() {
   if (busy.value || !form.value?.reportValidity()) return
+  const epoch = sessionEpoch.value
   busy.value = true; error.value = ''; notice.value = ''
   try {
     const request = { config: readChain(props.config), probe: { blockFrames: block.value, observationFrames: windowFrames.value, referenceChannels: references.value, amplitude: amplitude.value, detectionThreshold: threshold.value, bypassed: props.bypassed }, alignment: selected.value.length >= 2 ? { channels: selected.value, feature: feature.value } : null }
     if (!await d.measure(props.api, request)) notice.value = 'Chain or probe changed during measurement; discarded the old result.'
-  } catch (e) { error.value = e instanceof Error ? e.message : String(e) }
-  finally { busy.value = false }
+  } catch (e) { if (epoch === sessionEpoch.value) error.value = e instanceof Error ? e.message : String(e) }
+  finally { if (epoch === sessionEpoch.value) busy.value = false }
 }
 function apply() {
   if (!canApply.value) return
