@@ -85,7 +85,11 @@ is provided. In-process data tests use one synthetic clock domain.
 
 `evidence.py` writes `provenance.json` before native work and again for partial
 artifacts on every outcome. It requires complete Git history and unambiguous,
-resolvable commits. The workflow fetches the PR's target branch independently
+resolvable commits. Every Git subprocess disables replacement objects, legacy
+grafts and commit-graph traversal through process-local options. Parent order
+and complete-history checks therefore read actual commit objects; missing or
+corrupt ancestors fail even when a pre-existing commit graph caches them. No
+Git configuration is changed. The workflow fetches the PR's target branch independently
 into `refs/remotes/origin/<base.ref>` (`main` outside PR events); it never derives
 target approval from the PR head or the executed merge's first parent.
 

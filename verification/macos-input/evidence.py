@@ -16,11 +16,15 @@ SOURCE_PATHS = ('adapters/macos/virtual-input', 'adapters/macos/input-broker',
 
 def capture(root, status):
     errors = []
-    # Inspect actual objects, never local replacement history.
-    git_env = dict(os.environ, GIT_NO_REPLACE_OBJECTS='1')
+    # Every subprocess, including failure-manifest queries, uses actual objects.
+    # Legacy grafts and commit-graph caches must not replace ordered parents or
+    # hide a missing/corrupt ancestor during the complete-history traversal.
+    git_env = dict(os.environ, GIT_NO_REPLACE_OBJECTS='1', GIT_GRAFT_FILE=os.devnull)
 
     def run_git(*args):
-        return subprocess.run(['git', '-c', 'core.warnAmbiguousRefs=true', *args],
+        return subprocess.run(['git', '-c', 'core.warnAmbiguousRefs=true',
+                               '-c', 'core.commitGraph=false',
+                               '-c', 'advice.graftFileDeprecated=false', *args],
                               capture_output=True, env=git_env)
 
     def git(*args):

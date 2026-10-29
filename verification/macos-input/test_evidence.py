@@ -207,6 +207,36 @@ class ProvenanceTests(unittest.TestCase):
         m = self.capture(valid=False)
         self.assertTrue(any('rev-list' in error for error in m['provenance_errors']))
 
+    def test_graft_cannot_disguise_reversed_raw_parents(self):
+        wrong = self.merge_commit(self.source, self.actual_base)
+        raw = self.git('cat-file', 'commit', wrong)
+        self.assertEqual([line[7:] for line in raw.splitlines() if line.startswith('parent ')],
+                         [self.source, self.actual_base])
+        self.write('.git/info/grafts', f'{wrong} {self.actual_base} {self.source}\n')
+        # A quiet graft must not make synthetic history count as actual parents.
+        self.env.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='advice.graftFileDeprecated',
+                        GIT_CONFIG_VALUE_0='false')
+        self.assertEqual(self.git('show', '-s', '--format=%P', wrong).split(),
+                         [self.actual_base, self.source])
+        m = self.capture(valid=False)
+        self.assertEqual(m['executed_parents'], [self.source, self.actual_base])
+
+    def test_commit_graph_cannot_hide_missing_or_corrupt_ancestor(self):
+        self.git('commit-graph', 'write', '--reachable')
+        path = self.repo / '.git/objects' / self.initial[:2] / self.initial[2:]
+        original = path.read_bytes()
+        for contents in (None, b'not a compressed Git object'):
+            with self.subTest(contents=contents):
+                if contents is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(contents)
+                # All required tips still resolve: ancestor objects must be read too.
+                self.assertEqual(self.git('rev-parse', self.source), self.source)
+                m = self.capture(valid=False)
+                self.assertTrue(any('rev-list' in error for error in m['provenance_errors']))
+                path.write_bytes(original)
+
     def test_missing_or_ambiguous_refs_rejected(self):
         for name, value in (('MIXYARD_SOURCE_HEAD', 'missing-source'),
                             ('MIXYARD_CURRENT_BASE', 'missing-base'),
