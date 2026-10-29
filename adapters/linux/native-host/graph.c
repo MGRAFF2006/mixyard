@@ -319,7 +319,8 @@ static void global_added(void *userdata, uint32_t id, uint32_t permissions, cons
         const char *module = spa_dict_lookup(props, PW_KEY_MODULE_NAME);
         if (!module || (strcmp(module, "libpipewire-module-protocol-native") &&
             strcmp(module, "libpipewire-module-client-node") && strcmp(module, "libpipewire-module-access") &&
-            strcmp(module, "libpipewire-module-spa-node-factory") && strcmp(module, "libpipewire-module-link-factory"))) fail(a, 43);
+            strcmp(module, "libpipewire-module-spa-node-factory") && strcmp(module, "libpipewire-module-link-factory") &&
+            strcmp(module, "libpipewire-module-metadata"))) fail(a, 43);
         return;
     }
     struct global *g = &a->globals[a->global_count++];

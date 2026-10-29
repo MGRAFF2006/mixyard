@@ -31,6 +31,13 @@ rejects unexpected modules/devices/nodes while observing its graph. Cleanup
 stops only subprocess handles it created and destroys only its own native nodes
 and nonlingering links. No system services or defaults change.
 
+Metadata/3 protocol marshalling is explicitly registered in both owned server
+and client contexts. The exact server allowlist includes that single metadata
+module, and the native registry guard accepts the same list. Stderr remains a
+fatal pre-PCM observation error. A rejected observation may include a bounded
+read-only registry listing for actual global IDs/types/versions; that diagnostic
+never qualifies the graph or assumes stable numeric IDs.
+
 The callback borrows exact native buffers and calls the Rust host directly.
 There is no interthread PCM queue or use of the Rust exclusive worker queue as
 SPSC. Native transport queues are owned by libpipewire. Callback work uses fixed
