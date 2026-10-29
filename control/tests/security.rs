@@ -285,6 +285,90 @@ fn admin_envelope(session: &Value, body: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn singleton_settings_reads_and_saves_only_settings_without_view() {
+    let fixture = Fixture::new();
+    let mut identity = fixture.initialize();
+    let id = identity.device_id().to_owned();
+    let tls = connector(&identity.trust().certificate_pem);
+    let invite = identity.invite(vec![Permission::Settings], 300).unwrap();
+    let control = Control::bind(identity, fixture.options()).await.unwrap();
+    let address = control.address();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(control.serve_until(async {
+        let _ = stop_rx.await;
+    }));
+    let (_, pair) = request(
+        &tls,
+        address,
+        "/control/pair",
+        None,
+        json!({"deviceId":id,"invitation":invite["invitation"],"name":"settings only"}),
+        &[],
+    )
+    .await;
+    let credential = pair["credential"].as_str().unwrap();
+    let (_, session) = request(
+        &tls,
+        address,
+        "/control/session",
+        Some(credential),
+        json!({}),
+        &[],
+    )
+    .await;
+    assert_eq!(session["permissions"], json!(["settings"]));
+    let (status, snapshot) = request(
+        &tls,
+        address,
+        "/control/request",
+        Some(credential),
+        envelope(&session, "/api/automation/settings/read", json!({})),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        status, 200,
+        "settings editor must read its revision before saving"
+    );
+    let (status, saved) = request(&tls, address, "/control/request", Some(credential), envelope(&session, "/api/automation/settings/write", json!({"expectedSettingsRevision":snapshot["body"]["settingsRevision"],"settings":snapshot["body"]["settings"]})), &[]).await;
+    assert_eq!(status, 200);
+    assert_eq!(saved["body"]["settingsRevision"], 1);
+    for route in [
+        "/api/status",
+        "/api/profiles/read",
+        "/api/profiles/edit",
+        "/api/automation/context",
+    ] {
+        assert_eq!(
+            request(
+                &tls,
+                address,
+                "/control/request",
+                Some(credential),
+                envelope(&session, route, json!({})),
+                &[]
+            )
+            .await
+            .0,
+            403,
+            "Settings must not imply View or Control"
+        );
+    }
+    let (_, current) = request(
+        &tls,
+        address,
+        "/control/session",
+        Some(credential),
+        json!({}),
+        &[],
+    )
+    .await;
+    assert_eq!(current["permissions"], json!(["settings"]));
+    stop_tx.send(()).unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_tls_authorization_revision_rotation_revoke_and_restart() {
     let fixture = Fixture::new();
     let mut identity = fixture.initialize();

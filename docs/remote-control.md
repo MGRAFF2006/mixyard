@@ -139,7 +139,7 @@ Roles are independent, with no implicit administrator or wildcard-route grant:
 | --- | --- |
 | `view` | `/api/status`, `/api/validate`, `/api/inspect`, `/api/profiles/read`, `/api/dsp/{preview,validate,delay}`, `/api/automation/{status,validate,evaluate,context}`, `/api/automation/settings/read` |
 | `control` | `/api/profiles/edit`, `/api/automation/{disarm,manual}` |
-| `settings` | `/api/automation/settings/write` and credential administration below |
+| `settings` | `/api/automation/settings/read`, `/api/automation/settings/write` and credential administration below; no runtime/profile/context View grant |
 
 All other canonical paths fail closed. Profile edits remain stored intent with
 the existing sensitive-route reporting, not fresh microphone or playback consent.
