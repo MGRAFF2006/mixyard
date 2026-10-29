@@ -81,16 +81,23 @@ export class Api {
       if (v.deviceId !== scope.deviceId || v.authorityId !== scope.authorityId || !Number.isSafeInteger(v.revision) || (v.revision as number) < scope.revision || !Number.isInteger(v.status) || !('body' in v)) {
         this.disconnect('Response identity does not match the requested device session.'); throw Error(this.connectionError)
       }
-      if (!this.identity || (v.revision as number) < this.identity.revision) throw new StaleSessionError()
-      this.identity = { ...scope, revision: v.revision as number }
+      let error: ApiError | null = null
       if ((v.status as number) < 200 || (v.status as number) >= 300) {
-        const error = this.apiError(v.status as number, v.body)
+        try { error = this.apiError(v.status as number, v.body) }
+        catch (cause) { this.disconnect('Control error reply is malformed. Refresh to reconnect.'); throw cause }
         // Canonical conflicts arrive inside a verified scope as well as at the
         // transport boundary. Native hosts revoke their generation on either;
         // every consumer must require a fresh session immediately too.
-        if (error.status === 401 || error.status === 409 || error.code === 'invalid-origin') this.disconnect(`${error.code}: ${error.message}`)
-        throw error
+        if (error.status === 401 || error.status === 409 || error.code === 'invalid-origin') {
+          this.disconnect(`${error.code}: ${error.message}`)
+          throw error
+        }
       }
+      // A later successful operation may have advanced the profile revision
+      // before this reply arrived. That cannot cancel a same-epoch revocation.
+      if (!this.identity || (v.revision as number) < this.identity.revision) throw new StaleSessionError()
+      this.identity = { ...scope, revision: v.revision as number }
+      if (error) throw error
       return v.body
     }
     if (!this.token) throw new Error('Service session unavailable. Refresh to reconnect.')
