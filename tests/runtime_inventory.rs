@@ -419,7 +419,10 @@ fn cleanup_observer_waits_for_live_descendant_after_leader_is_reaped() {
     r.mode("orphan");
     let mut unrelated = sentinel();
     let mut helper = OwnedChild(
-        Command::new(r.directory.join("helper"))
+        // Execute the stable interpreter; the newly written owned script is
+        // input data, not a text executable subject to concurrent ETXTBSY.
+        Command::new("/usr/bin/python3")
+            .arg(r.directory.join("helper"))
             .process_group(0)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
