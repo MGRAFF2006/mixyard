@@ -22,7 +22,8 @@ With a separate Cargo target, set `MIXYARD_CONTROL_BINARY` to that binary.
 On constrained hosts, coordinate a private target/cache budget before building.
 
 The checks cover certificate mismatch, one-use pairing, missing authorization,
-view versus stored-control rights, A/B store isolation, concurrent stale writes,
+view versus stored-control rights, a singleton Settings grant completing the
+actual settings editor's read/save flow without View, A/B store isolation, concurrent stale writes,
 discarded in-flight responses after reconnect, stable stored intent after service
 restart, changed service authority, credential revocation and rotation. Unsupported remote
 automation arming remains denied. Every mutation is explicit; the clients never

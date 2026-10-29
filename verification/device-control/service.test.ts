@@ -8,6 +8,7 @@ import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { Api } from '../../apps/web/src/api.ts'
+import { ActivationSession } from '../../apps/web/src/activation-session.ts'
 import { pinnedFetch } from './pinned-fetch.ts'
 
 const binary = process.env.MIXYARD_CONTROL_BINARY
@@ -29,7 +30,7 @@ class Device {
     // not expose static files. Reuse the repository's small real HTML entry.
     writeFileSync(join(directory, 'assets/index.html'), '<!doctype html><title>Owned control fixture</title>')
     this.trust = this.cli('init', '--ip', '127.0.0.1')
-    for (const permissions of ['view,control,settings', 'view']) {
+    for (const permissions of ['view,control,settings', 'view', 'settings']) {
       this.invitations[permissions] = this.cli('invite', '--permissions', permissions, '--ttl-seconds', '300').invitation
     }
   }
@@ -98,6 +99,7 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
     const ownerA = await a.pair('view,control,settings')
     const ownerB = await b.pair('view,control,settings')
     const viewer = await a.pair('view')
+    const settingsOwner = await a.pair('settings')
     assert.ok((await a.post('/control/pair', { deviceId: a.trust.deviceId, invitation: a.invitations.view, name: 'Replay' })).status >= 400, 'pairing grant cannot be reused')
     const unauthorized = await a.post('/control/session', {})
     assert.equal(unauthorized.status, 401, 'TLS without application authorization cannot administer a device')
@@ -167,6 +169,25 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
     await rotatedApi.connect()
     assert.deepEqual((await rotatedApi.post('/api/profiles/read') as { draft: unknown }).draft, saved.draft)
     assert.deepEqual((await apiB.post('/api/profiles/read') as { draft: unknown }).draft, initialB.draft)
+
+    // Exercise the real Settings consumer rather than merely a route fixture.
+    // Its status inspection needs View, but a denied inspection must neither
+    // revoke Settings nor prevent its independent read-before-save workflow.
+    const settingsApi = a.api(settingsOwner.credential)
+    await settingsApi.connect()
+    assert.deepEqual(settingsApi.identity?.permissions, ['settings'])
+    await assert.rejects(settingsApi.post('/api/profiles/read'), 'Settings does not imply View')
+    const settings = new ActivationSession(settingsApi)
+    await settings.read()
+    assert.ok(settings.saved, settings.error)
+    assert.equal(settings.needsRead, false)
+    assert.match(settings.statusError, /permission-denied|View/i)
+    settings.edit(draft => { draft.observer.hostLabel = 'Owned settings-only controller' })
+    assert.equal(await settings.save(), true, settings.error)
+    await settings.read()
+    assert.equal(settings.saved!.settings.observer.hostLabel, 'Owned settings-only controller')
+    assert.equal(settingsApi.connected, true, 'denied View inspection preserves independently granted Settings')
+    assert.deepEqual(settingsApi.identity?.permissions, ['settings'])
 
     if (process.env.MIXYARD_CONTROL_BROWSER === '1') {
       const c = new Device(join(directory, 'c')); devices.push(c)

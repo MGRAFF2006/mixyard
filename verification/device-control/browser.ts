@@ -15,7 +15,7 @@ export async function verifyBrowser(root: string, directory: string, targets: Ta
   const { default: vue } = await import(pathToFileURL(require.resolve('@vitejs/plugin-vue')).href)
   const { chromium, expect } = require('@playwright/test')
   const output = join(directory, 'browser')
-  await build({ configFile: false, root, cacheDir: join(directory, 'vite-cache'), plugins: [vue()], logLevel: 'warn', build: { outDir: output, emptyOutDir: true, rollupOptions: { input: join(root, 'verification/device-control/browser.html') } } })
+  await build({ configFile: false, root, cacheDir: join(directory, 'vite-cache'), plugins: [vue()], resolve: { alias: { vue: require.resolve('vue/dist/vue.runtime.esm-bundler.js') } }, logLevel: 'warn', build: { outDir: output, emptyOutDir: true, rollupOptions: { input: join(root, 'verification/device-control/browser.html') } } })
   const server = createServer((request, response) => {
     const path = resolve(output, '.' + new URL(request.url ?? '/', 'http://127.0.0.1').pathname)
     if (!path.startsWith(output + '/')) { response.writeHead(404).end(); return }
