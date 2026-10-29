@@ -87,7 +87,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libwebkit2gtk-4.1-dev librsvg2-dev \
             libayatana-appindicator3-dev webkit2gtk-driver \
-            xvfb xauth xdotool openbox dbus-x11 fonts-dejavu-core patchelf libfuse2t64
+            xvfb xauth xdotool openbox dbus-x11 fonts-dejavu-core patchelf libfuse2t64 x11-utils imagemagick
       - name: Locked independent desktop dependencies
         working-directory: apps/desktop
         run: |
@@ -139,6 +139,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
+          python3 -B verification/desktop-native/test_window_evidence.py
           python3 -B verification/desktop-native/test_process_exit.py
           python3 -B verification/desktop-native/test_native_input.py
           echo 'bash verification/desktop-native/run-linux.sh apps/desktop/src-tauri/target/release/mixyard-desktop target/headless-runtime/release/mixyard-runtime target/headless-runtime/release/mixyard target/headless-runtime/release/mixyard-web evidence' > evidence/lifecycle-command.txt

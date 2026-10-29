@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 
 from evidence import binary_info, disk_guard, inventory
+from window_evidence import capture as capture_native
 
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'
 
@@ -75,9 +76,12 @@ class Driver:
             self.session = None
 
 
-def window():
+def window(trace=None):
     result = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^Mixyard$'],
                             capture_output=True, text=True, timeout=10)
+    if trace is not None:
+        trace.append({'monotonic_seconds': time.monotonic(), 'exit_code': result.returncode,
+                      'stdout': result.stdout.strip(), 'stderr': result.stderr.strip()})
     return result.stdout.strip().splitlines()[0] if result.returncode == 0 else None
 
 
@@ -420,6 +424,12 @@ def main(binary, runtime, cli, web, output):
         wait_for(web_ready, 'production console service ready')
         report['console-service'] = {'pid': web_child.pid, 'port': port, 'store': str(store),
             'owner': 'harness; independent of UI', 'audio_available': False}
+        # Subscribe to owned X-root map/property events without waiting for the
+        # WM or changing window selection/startup timing. Capture full state only
+        # on failure so diagnostics cannot act as an accidental readiness delay.
+        with (output / 'x11-events.log').open('w') as log:
+            processes.append(subprocess.Popen(['stdbuf', '-oL', 'xev', '-root', '-event', 'substructure', '-event', 'property'],
+                stdout=log, stderr=log, start_new_session=True))
         with (output / 'wm.log').open('w') as log:
             processes.append(subprocess.Popen(['openbox'], stdout=log, stderr=log, start_new_session=True))
         with (output / 'tauri-driver.log').open('w') as log:
@@ -434,15 +444,19 @@ def main(binary, runtime, cli, web, output):
         wait_for(ready, 'tauri-driver ready')
 
         for action in ['native-close', 'close-window', 'quit-ui', 'runtime-shutdown']:
+            session_started = time.monotonic()
             session = driver.request('POST', '/session', {'capabilities': {'alwaysMatch': {
                 'browserName': 'wry', 'tauri:options': {'application': str(binary)}}}})
             driver.session = session['sessionId']
             report['steps'].append({'action': 'session-created', 'case': action,
-                                    'url': driver.call('GET', '/url')})
+                                    'url': driver.call('GET', '/url'),
+                                    'creation_seconds': time.monotonic() - session_started})
             wait_for(lambda: driver.script(
                 "return document.querySelector('#runtime-instance') !== null"),
                 'runtime connection form')
-            wid = wait_for(window, 'visible Mixyard native window')
+            window_trace = []
+            report.setdefault('native_window_searches', []).append({'case': action, 'samples': window_trace})
+            wid = wait_for(lambda: window(window_trace), 'visible Mixyard native window')
             driver.window_id = wid
             pid = int(xdotool('getwindowpid', wid))
             xdotool('windowactivate', '--sync', wid)
@@ -611,11 +625,17 @@ def main(binary, runtime, cli, web, output):
         report['failure'] = repr(error)
         report['failure_traceback'] = traceback.format_exc()
         diagnostics = {'native_window': driver.window_id, 'ui_pid': pid}
+        try:
+            diagnostics['native'] = capture_native(output, 'failure', processes)
+        except Exception as diagnostic_error:
+            diagnostics['native_error'] = repr(diagnostic_error)
         report['failure_evidence'] = diagnostics
         for label, capture in [
             ('active_native_window', lambda: xdotool('getactivewindow')),
             ('native_keyboard_focus', lambda: xdotool('getwindowfocus')),
             ('dom', lambda: input_state(driver)),
+            ('webview_window', lambda: driver.script("return {title: document.title, visible: document.visibilityState, focused: document.hasFocus(), screen: {x: screenX, y: screenY, width: outerWidth, height: outerHeight}}")),
+            ('webdriver_handles', lambda: driver.call('GET', '/window/handles')),
             ('shell_status', lambda: shell_status(driver)),
         ]:
             try:
