@@ -90,7 +90,7 @@ void sourceLifecycle() {
 NSMutableDictionary* fixture(const char* path, const m::Capture& capture, w::Precision precision) {
     NSData* data = [NSData dataWithContentsOfFile:[NSString stringWithUTF8String:path]];
     if (!data) throw std::runtime_error("Shared real-host fixture missing");
-    auto* request = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nullptr];
+    NSMutableDictionary* request = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nullptr];
     if (![request isKindOfClass:[NSMutableDictionary class]]) throw std::runtime_error("Invalid shared fixture");
     NSString* uid = [NSString stringWithUTF8String:capture.observedId().c_str()];
     request[@"inventory"][@"platform"] = @"macos";
@@ -129,8 +129,12 @@ void receive(uint64_t ticks, uint64_t first, void* pcm, w::Precision precision, 
     AudioBufferList buffers{1, {{2, static_cast<UInt32>(precision) * 4 - (malformed ? 1u : 0u), pcm}}};
     auto inputTime = time;
     if (expired) inputTime.mHostTime = 1; // Deliberately stale injected capture time.
+    // Capture has no output lanes, but AudioDeviceIOProc still requires owned
+    // nonnull output-list and output-timestamp arguments at this API boundary.
+    AudioBufferList unusedOutput{};
+    auto outputTime = time;
     sdk::callback = true;
-    assert(sdk::capture.proc(103, &time, &buffers, &inputTime, nullptr, nullptr, sdk::capture.context) == noErr);
+    assert(sdk::capture.proc(103, &time, &buffers, &inputTime, &unusedOutput, &outputTime, sdk::capture.context) == noErr);
     sdk::callback = false;
 }
 void render(uint64_t ticks, uint64_t first, const double* expected, w::Precision precision, bool silence = false, UInt32 frames = 2) {
