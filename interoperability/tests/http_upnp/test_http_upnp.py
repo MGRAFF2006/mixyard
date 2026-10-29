@@ -89,6 +89,43 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(HttpReceiver(receive).fetch(Resource(ep, "/pcm", fmt, "l16")),
                              b"\x00\x80\x01\x00")
 
+    def test_generic_l16_media_type_semantics_preserve_exact_admission(self):
+        fmt = spec("raw-s16-le", ("FC",), 48000)
+        accepted = ["audio/l16;rate=48000;channels=1",
+                    "Audio/L16; CHANNELS=1; RATE=48000",
+                    'audio/L16;rate="48000";channels="1"',
+                    "audio/L16;rate=48000", r'audio/L16;rate="\48000"']
+        rejected = ["audio/L16;channels=1", "audio/L16;rate=44100",
+                    "audio/L16;rate=48000;channels=2", "audio/L16;rate=48000;rate=48000",
+                    "audio/L16;rate=48000;CHANNELS=1;channels=1",
+                    "audio/L16;rate=48000;unknown=1", 'audio/L16;rate="48000',
+                    "audio/L16;rate=48000,channels=1", "audio/L16;rate=48000;",
+                    "audio/L16;rate=48000.0", "audio/L16;rate=+48000",
+                    'audio/L16;rate="48000;channels=2"']
+        for mime in accepted + rejected:
+            with self.subTest(content_type=mime):
+                ep = endpoint()
+                send = session("origin", [Grant("media-serve", ep, "sink", fmt)])
+                receive = session("sink", [Grant("media-fetch", ep, "origin", fmt)])
+                def generic_source(*args):
+                    return {"Content-Type": mime}, b"\x80\x00\x00\x01"
+                with Server(send, "media-serve", generic_source, fmt, endpoint=ep):
+                    resource = Resource(ep, "/pcm", fmt, "l16")
+                    if mime in accepted:
+                        self.assertEqual(HttpReceiver(receive).fetch(resource), b"\x00\x80\x01\x00")
+                    else:
+                        with self.assertRaises(ProtocolError):
+                            HttpReceiver(receive).fetch(resource)
+        # An omitted channels parameter must never turn stereo admission into mono.
+        stereo = spec("raw-s16-le", ("FL", "FR"), 48000)
+        ep = endpoint()
+        send = session("origin", [Grant("media-serve", ep, "sink", stereo)])
+        receive = session("sink", [Grant("media-fetch", ep, "origin", stereo)])
+        with Server(send, "media-serve", lambda *a: ({"Content-Type": "audio/L16;rate=48000"}, bytes(4)),
+                    stereo, endpoint=ep):
+            with self.assertRaises(ProtocolError):
+                HttpReceiver(receive).fetch(Resource(ep, "/pcm", stereo, "l16"))
+
     def test_owned_listener_closes_during_partial_request(self):
         fmt, ep = spec(), endpoint()
         actual = session("origin", [Grant("media-serve", ep, "sink", fmt)])

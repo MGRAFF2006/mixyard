@@ -225,6 +225,30 @@ def content_type(spec: Spec, wire: str) -> str:
     raise ProtocolError("unsupported wire profile; conversion must be explicit and destination-local")
 
 
+def _content_type_matches(value: str, spec: Spec, wire: str) -> bool:
+    """Compare the bounded selected MIME profile, never relax the admitted PCM."""
+    expected = content_type(spec, wire).split(";", 1)[0].lower()
+    if not isinstance(value, str) or len(value) > 256:
+        return False
+    parts = value.split(";")
+    if parts[0].strip(" ").lower() != expected or len(parts) > 3:
+        return False
+    if wire == "raw":
+        return len(parts) == 1
+    parameters = {}
+    for part in parts[1:]:
+        match = re.fullmatch(r'([A-Za-z]+)=(?:([0-9]{1,10})|"((?:[0-9]|\\[0-9]){1,10})")', part.strip(" "))
+        if match is None:
+            return False
+        name = match[1].lower()
+        if name not in ("rate", "channels") or name in parameters:
+            return False
+        parameters[name] = int((match[2] or match[3]).replace("\\", ""))
+    # RFC 2586 requires rate and defaults absent channels to mono.
+    return (parameters.get("rate") == spec.sample_rate
+            and parameters.get("channels", 1) == len(spec.channels))
+
+
 def _swap16(data: bytes) -> bytes:
     result = bytearray(data)
     result[0::2], result[1::2] = data[1::2], data[0::2]
@@ -284,7 +308,7 @@ class HttpReceiver:
             raise ProtocolError("unknown receive mode")
         role = "media-fetch" if mode == "media" else "live-receive"
         headers, pcm = request(self.session, role, resource.endpoint, resource.path, spec=resource.spec)
-        if (headers.get("content-type") != content_type(resource.spec, resource.wire)
+        if (not _content_type_matches(headers.get("content-type"), resource.spec, resource.wire)
                 or headers.get("x-mixyard-mode", mode) != mode
                 or headers.get("x-mixyard-spec", _spec_header(resource.spec)) != _spec_header(resource.spec)):
             raise ProtocolError("media identity/format/mode differs from explicit preadmission")
