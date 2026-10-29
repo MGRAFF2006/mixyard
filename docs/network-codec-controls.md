@@ -105,6 +105,12 @@ and conversion. Unsafe numeric counters are rejected rather than rounded;
 full-u64 IDs and the cursor stay strings. A future service must preserve this
 boundary if counters exceed JavaScript's exact safe-integer range.
 
+Original source metadata is distinct from worker admission: a canonical source
+with more than 128 channels remains visible in an unavailable report, with its
+full ordered labels and reason. The reported worker channel limit stays 128;
+this reader does not expand supported processing or silently convert a source.
+A claimed available plan exceeding its own reported channel limit is rejected.
+
 Reports qualify only **local worker construction + exact local audio grant +
 active TLS**. `agreementState` separately reports `local-capability-only`,
 `send-agreement-confirmed`, `send-operation-in-flight`,

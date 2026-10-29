@@ -138,7 +138,9 @@ function readSpec(value: unknown): OriginalSpec {
   if (!['raw-s16-le', 'raw-s24-le', 'raw-s32-le', 'raw-f32-le', 'raw-f64-le'].includes(text(v.codec))) throw Error('Expected the original raw PCM format.')
   integer(v.sample_rate, 1, 0xffffffff); integer(v.frames_per_packet, 1, 65535)
   const channels = stringList(v.channels)
-  if (!channels.length || channels.length > 128 || new Set(channels).size !== channels.length) throw Error('Expected unique ordered source channels.')
+  // This is the admitted original descriptor, not codec-worker admission.
+  // An unsupported worker must still report its exact source and reason.
+  if (!channels.length || new Set(channels).size !== channels.length) throw Error('Expected unique ordered source channels.')
   const p = exact(v.provenance, ['sources', 'visited_peers']), sources = list(p.sources), peers = stringList(p.visited_peers), identities = new Set<string>()
   if (!sources.length || !peers.length || new Set(peers).size !== peers.length) throw Error('Incomplete or repeated source provenance.')
   for (const source of sources) { const s = exact(source, ['peer', 'source', 'groups']); const id = codecSignature([nonempty(s.peer), nonempty(s.source)]); stringList(s.groups); if (identities.has(id)) throw Error('Duplicate source provenance.'); identities.add(id) }
@@ -162,6 +164,7 @@ export function readCodecEvidence(value: unknown, binding: CodecBinding, request
   for (const key of ['zstdVersion', 'maxEnvelopeBytes', 'maxFragmentsPerBlock', 'reservedWindowBytes', 'lookaheadFrames', 'contextBytes', 'networkDelayNanos', 'physicalDelayNanos']) if (c[key] !== null) integer(c[key])
   const constraints = exact(c.constraints, ['maxSourceChannels', 'zstdLevels', 'zstdMaxWindowBytes', 'zstdDictionaries', 'opusRates', 'opusMonoPreservesSourceChannel', 'opusStereoOrderedChannels', 'opusFrameMicros', 'opusMinBitrate', 'opusMaxBitrate', 'opusMaxComplexity', 'opusFloatInput', 'automaticResampling', 'automaticChannelMapping'])
   for (const key of ['maxSourceChannels', 'zstdMaxWindowBytes', 'opusMinBitrate', 'opusMaxBitrate', 'opusMaxComplexity']) integer(constraints[key])
+  if (c.available && spec.channels.length > (constraints.maxSourceChannels as number)) throw Error('Available plan exceeds its reported source-channel limit.')
   for (const key of ['zstdLevels', 'opusRates', 'opusFrameMicros']) list(constraints[key]).forEach(v => integer(v))
   stringList(constraints.opusStereoOrderedChannels); nonempty(constraints.opusFloatInput); bool(constraints.zstdDictionaries); bool(constraints.opusMonoPreservesSourceChannel)
   if (constraints.automaticResampling !== false || constraints.automaticChannelMapping !== false) throw Error('Automatic format conversion is unsupported.')

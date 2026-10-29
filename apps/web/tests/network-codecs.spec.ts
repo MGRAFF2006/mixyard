@@ -88,6 +88,23 @@ test('legitimate send-busy and different-plan reports remain evidence rather tha
   await expect(p.getByRole('button', { name: 'Apply to live stream' })).toBeDisabled()
 })
 
+test('an unsupported wide original source retains its unavailable reason and all ordered channel metadata', async ({ page }) => {
+  await open(page, true); const p = panel(page)
+  await fillIds(page); await p.getByRole('button', { name: 'Bind for capability reads' }).click()
+  await page.evaluate(() => window.codecHarness.mode('wide-source'))
+  await p.getByRole('button', { name: 'Probe exact intent' }).click()
+  await expect(p.getByText('Exact plan unavailable', { exact: true })).toBeVisible()
+  await expect(p.getByText('Fixture codec worker supports at most 128 source channels; this canonical source has 129.', { exact: true })).toBeVisible()
+  await expect(p.getByText('Fixture qualification only.', { exact: false })).toBeVisible()
+  await expect(p.getByRole('alert')).toHaveCount(0)
+  await p.getByText('Expert constraints, budgets and provenance', { exact: true }).click()
+  const source = p.getByText('CH-0, CH-1, CH-2', { exact: false })
+  await expect(source).toContainText('CH-128')
+  await expect(p.getByRole('button', { name: 'Apply to live stream' })).toBeDisabled()
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
+
 test('real workspace retains hidden target drafts and discards stale fixture capability after session revision, switch and revocation', async ({ page }) => {
   await open(page, true); const p = panel(page)
   expect(await page.evaluate(() => window.codecHarness.hasUnsaved())).toBe(false)

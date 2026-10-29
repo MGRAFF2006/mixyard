@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { CodecWorkspace, codecSignature, configFromForm, formFromConfig, parseCodecConfig, parseCodecJson, readCodecConfig, readCodecEvidence } from './network-codecs.ts'
-import { codecBinding, codecFixture, rawIntent } from '../tests/network-codec-fixture.ts'
+import { codecBinding, codecFixture, rawIntent, unavailableWideSource } from '../tests/network-codec-fixture.ts'
 import type { CodecBinding, CodecConfig, CodecEvidence } from './network-codecs.ts'
 const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
 
@@ -63,6 +63,24 @@ test('qualified reports preserve exact provenance, request, cursor, metrics and 
   }
   const edits: ((f: ReturnType<typeof codecFixture>) => void)[] = [f => { f.binding.revision++ }, f => { f.capability.request = { ...rawIntent, generation: '2' } }, f => { f.originalSpec.stream = '2' }, f => { f.capability.measurements!.cpuUnavailableReason = null }, f => { f.capability.maxWorkWallNanos = Number.MAX_SAFE_INTEGER + 1 }, f => { f.timeline!.nextSourceSampleFrame = '01' }, f => { f.timeline!.bitPreserving = false }, f => { f.timeline!.sourceSpec = { ...f.originalSpec, channels: ['FR', 'FL'] } }, f => { f.capability.available = false }, f => { f.direction = 'send' }]
   for (const edit of edits) { const f = copy(codecFixture()); edit(f); assert.throws(() => readCodecEvidence(f, codecBinding, rawIntent)) }
+})
+
+test('unavailable codec reports retain canonical source metadata above the worker channel ceiling', () => {
+  for (const count of [129, 256]) {
+    const fixture = unavailableWideSource(codecBinding, rawIntent, count)
+    const report = readCodecEvidence(JSON.stringify(fixture), codecBinding, rawIntent)
+    assert.deepEqual(report, fixture)
+    assert.equal(report.originalSpec.channels.length, count)
+    assert.equal(report.capability.constraints.maxSourceChannels, 128)
+    assert.equal(report.capability.available, false)
+    assert.equal(report.timeline, null)
+    const contradictory = copy(fixture); contradictory.capability.available = true
+    assert.throws(() => readCodecEvidence(contradictory, codecBinding, rawIntent), /exceeds its reported source-channel limit/)
+    for (const invalid of [[], ['FL', 'FL'], ['FL', '']]) {
+      const malformed = copy(fixture); malformed.originalSpec.channels = invalid
+      assert.throws(() => readCodecEvidence(malformed, codecBinding, rawIntent))
+    }
+  }
 })
 
 function pending() { let resolve!: (value: unknown) => void; const promise = new Promise<unknown>(done => { resolve = done }); return { promise, resolve } }
