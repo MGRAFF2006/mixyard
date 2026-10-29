@@ -1,0 +1,266 @@
+{
+  "config": {
+    "schemaVersion": 2,
+    "revision": 1,
+    "sources": [
+      {
+        "id": "private",
+        "selector": {
+          "kind": "app",
+          "applicationId": "owned-unshared-generator"
+        }
+      },
+      {
+        "id": "return",
+        "selector": {
+          "kind": "call-return",
+          "applicationId": "owned-call-return-generator",
+          "group": "call-return"
+        }
+      },
+      {
+        "id": "shared",
+        "selector": {
+          "kind": "app",
+          "applicationId": "owned-shared-generator"
+        }
+      }
+    ],
+    "mixes": [
+      {
+        "id": "call",
+        "name": "call",
+        "channels": 2,
+        "sampleRateHz": 48000,
+        "excludeGroups": [
+          "call-return"
+        ]
+      },
+      {
+        "id": "record",
+        "name": "record",
+        "channels": 2,
+        "sampleRateHz": 48000,
+        "excludeGroups": []
+      }
+    ],
+    "sends": [
+      {
+        "source": "shared",
+        "mix": "call",
+        "gain": 1.0
+      },
+      {
+        "source": "shared",
+        "mix": "record",
+        "gain": 0.5
+      },
+      {
+        "source": "return",
+        "mix": "record",
+        "gain": 0.25
+      }
+    ],
+    "outputs": [
+      {
+        "id": "call-input",
+        "mix": "call",
+        "target": {
+          "kind": "virtual-input",
+          "endpointId": "owned-call"
+        },
+        "gain": 1.0
+      },
+      {
+        "id": "record-input",
+        "mix": "record",
+        "target": {
+          "kind": "virtual-input",
+          "endpointId": "owned-record"
+        },
+        "gain": 1.0
+      }
+    ]
+  },
+  "inventory": {
+    "schemaVersion": 2,
+    "revision": 1,
+    "platform": "linux",
+    "evidence": "simulated",
+    "sources": [
+      {
+        "observedId": "owned-source-private",
+        "selector": {
+          "kind": "app",
+          "applicationId": "owned-unshared-generator"
+        },
+        "origin": "external",
+        "format": {
+          "channels": 2,
+          "sampleRateHz": 48000
+        }
+      },
+      {
+        "observedId": "owned-source-return",
+        "selector": {
+          "kind": "call-return",
+          "applicationId": "owned-call-return-generator",
+          "group": "call-return"
+        },
+        "origin": "external",
+        "format": {
+          "channels": 2,
+          "sampleRateHz": 48000
+        }
+      },
+      {
+        "observedId": "owned-source-shared",
+        "selector": {
+          "kind": "app",
+          "applicationId": "owned-shared-generator"
+        },
+        "origin": "external",
+        "format": {
+          "channels": 2,
+          "sampleRateHz": 48000
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "observedId": "owned-consumer-call",
+        "target": {
+          "kind": "virtual-input",
+          "endpointId": "owned-call"
+        },
+        "format": {
+          "channels": 2,
+          "sampleRateHz": 48000
+        }
+      },
+      {
+        "observedId": "owned-consumer-record",
+        "target": {
+          "kind": "virtual-input",
+          "endpointId": "owned-record"
+        },
+        "format": {
+          "channels": 2,
+          "sampleRateHz": 48000
+        }
+      }
+    ]
+  },
+  "generation": 7,
+  "clockId": 11,
+  "maxFrames": 64,
+  "limits": {
+    "maxSources": 3,
+    "maxMixes": 2,
+    "maxSends": 3,
+    "maxOutputs": 2,
+    "maxBufferSamples": 4096,
+    "maxTotalBytes": 1048576,
+    "maxDspWorkUnitsPerBlock": 1000000
+  },
+  "sources": [
+    {
+      "observedId": "owned-source-private",
+      "encoding": "f64-le",
+      "sampleRateHz": 48000,
+      "channels": [
+        "FL",
+        "FR"
+      ],
+      "mapping": [
+        "FL",
+        "FR"
+      ]
+    },
+    {
+      "observedId": "owned-source-return",
+      "encoding": "f64-le",
+      "sampleRateHz": 48000,
+      "channels": [
+        "FL",
+        "FR"
+      ],
+      "mapping": [
+        "FL",
+        "FR"
+      ]
+    },
+    {
+      "observedId": "owned-source-shared",
+      "encoding": "f64-le",
+      "sampleRateHz": 48000,
+      "channels": [
+        "FL",
+        "FR"
+      ],
+      "mapping": [
+        "FL",
+        "FR"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "observedId": "owned-consumer-call",
+      "sampleRateHz": 48000,
+      "channels": [
+        "FL",
+        "FR"
+      ],
+      "mapping": [
+        "FL",
+        "FR"
+      ]
+    },
+    {
+      "observedId": "owned-consumer-record",
+      "sampleRateHz": 48000,
+      "channels": [
+        "FL",
+        "FR"
+      ],
+      "mapping": [
+        "FL",
+        "FR"
+      ]
+    }
+  ],
+  "sourceDsp": [
+    null,
+    null,
+    null
+  ],
+  "mixDsp": [
+    null,
+    null
+  ],
+  "outputDsp": [
+    null,
+    {
+      "name": "record-destination-only",
+      "format": {
+        "sampleRateHz": 48000,
+        "channels": [
+          "FL",
+          "FR"
+        ]
+      },
+      "effects": [
+        {
+          "name": "explicit-half-gain",
+          "enabled": true,
+          "effect": {
+            "kind": "gain",
+            "gain": 0.5,
+            "invertPolarity": false
+          }
+        }
+      ]
+    }
+  ]
+}
