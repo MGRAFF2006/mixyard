@@ -8,6 +8,7 @@ PKI/hostname verification and its exact certificate pin implementation.
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 
@@ -25,6 +26,10 @@ def main():
     original = re.findall(r'"([^"]+)"', security("list-keychains", "-d", "user"))
     trusted = []
     created = False
+    child = None
+    def interrupted(_signum, _frame):
+        raise KeyboardInterrupt()
+    signal.signal(signal.SIGTERM, interrupted)
     try:
         security("create-keychain", "-p", "fixture-only", str(keychain)); created = True
         security("unlock-keychain", "-p", "fixture-only", str(keychain))
@@ -33,15 +38,30 @@ def main():
             security("add-trusted-cert", "-r", "trustRoot", "-k", str(keychain), str(certificate))
             trusted.append(certificate)
         executable = Path(__file__).parent / "swift" / ".build" / "native-control-qualification"
-        return subprocess.call([str(executable)])
+        child = subprocess.Popen([str(executable)])
+        return child.wait()
     finally:
         # All material belongs to this hosted fixture. Never remove another
         # certificate or keychain, and restore the original search list.
+        if child is not None and child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill(); child.wait()
+        cleanup_failed = False
         for certificate in trusted:
-            security("remove-trusted-cert", str(certificate))
-        security("list-keychains", "-d", "user", "-s", *original)
-        if created:
-            security("delete-keychain", str(keychain))
+            try:
+                security("remove-trusted-cert", str(certificate))
+            except subprocess.CalledProcessError:
+                cleanup_failed = True
+        try:
+            security("list-keychains", "-d", "user", "-s", *original)
+        finally:
+            if created:
+                security("delete-keychain", str(keychain))
+        if cleanup_failed:
+            raise RuntimeError("Owned fixture trust cleanup failed")
 
 
 if __name__ == "__main__":
