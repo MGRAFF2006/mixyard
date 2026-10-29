@@ -394,3 +394,13 @@ For bounded verification with reusable read-only dependencies, set
 `MIXYARD_WEB_CACHE_DIR` to an owned artifact directory to keep Vite metadata out
 of the dependency cache. The existing Playwright executable override remains
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`.
+
+## Network codec intent
+
+**Network codecs** edits exact per-stream raw, bit-preserving Zstd, or explicitly
+consented Opus intent without an audio connection. Import/export valid v1 config
+or preserve unfinished numeric/text fields with a portable draft backup. Drafts
+remain with their existing management-target workspace and close guard. Optional
+host capability probes are read-only and bound to the exact management session,
+stream and generation; live apply is unavailable. See the
+[codec UI contract and verification](../../docs/network-codec-controls.md).
