@@ -29,6 +29,7 @@ struct Timeline {
     counters: Counters,
     lifecycle: Arc<Lifecycle>,
     playout_claimed: bool,
+    arrival: Option<crate::worker::ArrivalObservation>,
 }
 
 impl Drop for Timeline {
@@ -89,6 +90,7 @@ impl Receiver {
                 counters: Counters::default(),
                 lifecycle: Arc::new(Lifecycle::new()),
                 playout_claimed: false,
+                arrival: None,
             },
         );
         Ok(())
@@ -124,9 +126,52 @@ impl Receiver {
             stream.packets.entry(frame.sequence)
         {
             entry.insert(frame.payload);
+            // Only unique, admitted, strictly advancing source positions are observations.
+            if stream
+                .arrival
+                .as_ref()
+                .is_none_or(|last| frame.sequence > last.sequence)
+            {
+                let count = stream
+                    .arrival
+                    .as_ref()
+                    .map_or(1, |last| last.count.saturating_add(1));
+                stream.arrival = Some(crate::worker::ArrivalObservation {
+                    offer: stream.offer.clone(),
+                    sequence: frame.sequence,
+                    first_frame: frame.sample_timestamp,
+                    arrived_at: std::time::Instant::now(),
+                    count,
+                });
+            }
             stream.counters.accepted += 1;
         } else {
             stream.counters.duplicate += 1;
+        }
+    }
+
+    pub fn arrival_observation(
+        &self,
+        id: u64,
+        generation: u64,
+    ) -> Option<crate::worker::ArrivalObservation> {
+        let stream = self.streams.get(&id)?;
+        if !self.connected || !stream.lifecycle.active() || stream.offer.generation != generation {
+            return None;
+        }
+        stream.arrival.clone()
+    }
+
+    pub(crate) fn cancel_generation(&mut self, offer: &Offer) {
+        if let Some(stream) = self.streams.get_mut(&offer.spec.stream)
+            && crate::worker::same_offer(&stream.offer, offer)
+        {
+            stream.lifecycle.invalidate();
+            for payload in stream.packets.values_mut() {
+                payload.fill(0);
+            }
+            stream.packets.clear();
+            stream.arrival = None;
         }
     }
 
@@ -162,6 +207,24 @@ impl Receiver {
     }
 
     /// Worker-only allocation; one exclusive consumer per stream generation.
+    pub(crate) fn create_playout_for(
+        &mut self,
+        offer: &Offer,
+        config: PlayoutConfig,
+    ) -> Result<Playout> {
+        let stream = self
+            .streams
+            .get(&offer.spec.stream)
+            .ok_or_else(|| anyhow::anyhow!("unadmitted stream"))?;
+        ensure!(
+            crate::worker::same_offer(&stream.offer, offer),
+            "worker descriptor/generation mismatch"
+        );
+        // Validation and claim share this exclusive Receiver borrow. A stale
+        // constructor must never acquire/drop the newer generation's lifecycle.
+        self.create_playout(offer.spec.stream, config)
+    }
+
     pub fn create_playout(&mut self, id: u64, config: PlayoutConfig) -> Result<Playout> {
         let stream = self
             .streams
@@ -214,6 +277,7 @@ impl Receiver {
         if let Some(stream) = self.streams.get_mut(&id) {
             stream.lifecycle.invalidate();
             stream.packets.clear();
+            stream.arrival = None;
             return Ok(stream.lifecycle.receipt());
         }
         ensure!(permitted, "unpermitted stream");
@@ -266,6 +330,7 @@ impl Receiver {
         for stream in self.streams.values_mut() {
             stream.lifecycle.invalidate();
             stream.packets.clear();
+            stream.arrival = None;
         }
     }
 }
@@ -278,6 +343,10 @@ struct Pending {
     congestion_drops: u64,
     send_errors: u64,
     partial: Vec<u8>,
+    last_due: Option<u64>,
+    paced_expired: u64,
+    paced_claimed: bool,
+    cancelled: bool,
 }
 
 impl Pending {
@@ -336,6 +405,10 @@ impl Outbox {
                 congestion_drops: 0,
                 send_errors: 0,
                 partial: Vec::new(),
+                last_due: None,
+                paced_expired: 0,
+                paced_claimed: false,
+                cancelled: false,
             },
         );
     }
@@ -349,6 +422,7 @@ impl Outbox {
             .streams
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("unadmitted sender"))?;
+        ensure!(!stream.cancelled, "sender generation cancelled");
         ensure!(
             stream.partial.is_empty(),
             "pending partial PCM: continue through enqueue_pcm"
@@ -363,6 +437,7 @@ impl Outbox {
             .streams
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("unadmitted sender"))?;
+        ensure!(!stream.cancelled, "sender generation cancelled");
         let packet_bytes = stream.offer.spec.payload_bytes()?;
         ensure!(
             pcm.len()
@@ -392,10 +467,97 @@ impl Outbox {
         Ok(packets)
     }
 
+    pub fn sender_offer(&self, id: u64) -> Option<Offer> {
+        self.streams
+            .get(&id)
+            .filter(|s| !s.cancelled)
+            .map(|s| s.offer.clone())
+    }
+
+    pub(crate) fn claim_pacer(&mut self, offer: &Offer) -> Result<()> {
+        let stream = self
+            .streams
+            .get_mut(&offer.spec.stream)
+            .ok_or_else(|| anyhow::anyhow!("unadmitted sender"))?;
+        ensure!(
+            crate::worker::same_offer(&stream.offer, offer) && !stream.cancelled,
+            "inactive sender descriptor"
+        );
+        ensure!(!stream.paced_claimed, "sender generation already paced");
+        stream.paced_claimed = true;
+        Ok(())
+    }
+
+    pub(crate) fn cancel_sender(&mut self, offer: &Offer) {
+        if let Some(stream) = self.streams.get_mut(&offer.spec.stream)
+            && crate::worker::same_offer(&stream.offer, offer)
+        {
+            stream.cancelled = true;
+            for frame in &mut stream.packets {
+                frame.payload.fill(0);
+            }
+            stream.packets.clear();
+            stream.partial.fill(0);
+            stream.partial.clear();
+        }
+    }
+
+    /// Validate before mutating: one absolute slot per descriptor/generation.
+    pub fn due(&mut self, offer: &Offer, sequence: u64) -> Result<Option<Frame>> {
+        let stream = self
+            .streams
+            .get_mut(&offer.spec.stream)
+            .ok_or_else(|| anyhow::anyhow!("unadmitted paced sender"))?;
+        ensure!(!stream.cancelled, "sender generation cancelled");
+        ensure!(
+            crate::worker::same_offer(&stream.offer, offer),
+            "paced descriptor/generation mismatch"
+        );
+        ensure!(
+            stream.last_due.is_none_or(|last| sequence > last),
+            "duplicate/backward due slot"
+        );
+        let next = sequence
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("paced sequence exhausted"))?;
+        next.checked_mul(u64::from(offer.spec.frames_per_packet))
+            .ok_or_else(|| anyhow::anyhow!("paced sample timeline exhausted"))?;
+        stream.last_due = Some(sequence);
+        stream.paced_claimed = true;
+        while stream
+            .packets
+            .front()
+            .is_some_and(|f| f.sequence < sequence)
+        {
+            stream.packets.pop_front();
+            stream.paced_expired = stream.paced_expired.saturating_add(1);
+        }
+        // A partial packet belongs to the old assignment cursor and cannot survive expiration.
+        if stream.next < next {
+            stream.partial.fill(0);
+            stream.partial.clear();
+            stream.next = next;
+        }
+        if stream
+            .packets
+            .front()
+            .is_some_and(|f| f.sequence == sequence)
+        {
+            Ok(stream.packets.pop_front())
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn paced_expired(&self, id: u64) -> u64 {
+        self.streams.get(&id).map_or(0, |s| s.paced_expired)
+    }
+
     pub fn round(&mut self) -> Vec<Frame> {
         let mut frames: Vec<_> = self
             .streams
             .values_mut()
+            .filter(|s| !s.cancelled && !s.paced_claimed)
             .filter_map(|s| s.packets.pop_front())
             .collect();
         if !frames.is_empty() {

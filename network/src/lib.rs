@@ -17,3 +17,5 @@ pub use playout::{
     Playout, PlayoutConfig, PlayoutCounters, PlayoutError, PlayoutReport, PlayoutSnapshot,
     Revocation, RevocationStatus,
 };
+
+pub mod worker;
