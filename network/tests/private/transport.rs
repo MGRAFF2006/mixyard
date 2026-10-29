@@ -1,6 +1,6 @@
 use super::*;
 #[path = "../support/mod.rs"]
-mod support;
+pub(crate) mod support;
 use support::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

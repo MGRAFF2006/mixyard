@@ -7,9 +7,17 @@ publish = false
 
 # Keep native/GUI/core build graphs independent of this transport experiment.
 [workspace]
+exclude = ["codecs"]
+
+[features]
+default = []
+codecs = ["dep:mixyard-network-codecs"]
+system-zstd = ["codecs", "mixyard-network-codecs/system-zstd"]
+system-opus = ["codecs", "mixyard-network-codecs/system-opus"]
 
 [dependencies]
 anyhow = "1"
+mixyard-network-codecs = { path = "codecs", optional = true }
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1", features = ["derive"] }
@@ -22,3 +30,7 @@ rcgen = "0.14"
 [[example]]
 name = "loopback"
 path = "examples/loopback.rs"
+
+[[test]]
+name = "codec_quic"
+required-features = ["codecs"]
