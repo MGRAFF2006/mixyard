@@ -27,6 +27,9 @@ raw/lossy fallback. Explicit selections are tracked as Cargo filesystem inputs
 are staged in Cargo's private `OUT_DIR` under content/path-specific link names;
 global native search paths cannot substitute the other codec's same-name file.
 The private name is a collision guard, not a cryptographic provenance claim.
+Repeated staging reuses an existing alias only after a bounded-buffer exact byte
+comparison. This supports read-only installed artifacts without changing their
+permissions; an altered alias fails admission instead of being linked.
 Direct `verify.sh` compiles and runs this same std-only build script, parses its
 link directives as data and still requires pkg-config version metadata.
 Use separate private target directories when qualifying different linkage modes.

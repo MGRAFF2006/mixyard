@@ -146,6 +146,40 @@ class LinkSelectionTests(unittest.TestCase):
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertNotEqual(first.stdout, second.stdout)
 
+    def test_read_only_selections_can_be_restaged_without_changing_installed_permissions(self):
+        for kind, names in [("static", ("libzstd.a", "libopus.a")),
+                            ("dylib", ("libzstd.so", "libopus.so"))]:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                a, b, out = (root / name for name in ["a", "b", "out"])
+                for directory in [a, b, out]:
+                    directory.mkdir()
+                sources = [a / names[0], b / names[1]]
+                try:
+                    for path in sources:
+                        path.write_bytes(b"selected readonly artifact")
+                        path.chmod(0o444)
+                    first = self.invoke(out, a, b, kind)
+                    self.assertEqual(first.returncode, 0, first.stderr)
+                    (a / "unrelated-new-file").touch()
+                    second = self.invoke(out, a, b, kind)
+                    self.assertEqual(second.returncode, 0, second.stderr)
+                    self.assertEqual(first.stdout, second.stdout)
+                    self.assertTrue(all(path.stat().st_mode & 0o222 == 0 for path in sources))
+                    # Do not trust an existing alias merely because its name
+                    # matches the selection hash: modified bytes must fail.
+                    alias = next(out.iterdir())
+                    alias.chmod(0o644)
+                    alias.write_bytes(b"modified readonly alias")
+                    alias.chmod(0o444)
+                    modified = self.invoke(out, a, b, kind)
+                    self.assertNotEqual(modified.returncode, 0)
+                    self.assertIn("existing selected library alias differs", modified.stderr)
+                finally:
+                    # Windows cannot remove readonly fixtures during cleanup.
+                    for path in [*sources, *out.iterdir()]:
+                        path.chmod(0o644)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,26 @@ fn library_file(name: &str, os: &str, target_env: &str, kind: &str) -> String {
     }
 }
 
+fn identical(first: &Path, second: &Path) -> std::io::Result<bool> {
+    let mut first = fs::File::open(first)?;
+    let mut second = fs::File::open(second)?;
+    if first.metadata()?.len() != second.metadata()?.len() {
+        return Ok(false);
+    }
+    let mut a = [0; 8192];
+    let mut b = [0; 8192];
+    loop {
+        let length = first.read(&mut a)?;
+        if length == 0 {
+            return Ok(second.read(&mut b[..1])? == 0);
+        }
+        second.read_exact(&mut b[..length])?;
+        if a[..length] != b[..length] {
+            return Ok(false);
+        }
+    }
+}
+
 // Link only explicitly selected features. No probing, package installation or
 // fallback to a different codec/library is performed by the build.
 fn main() {
@@ -111,7 +131,18 @@ fn main() {
                 output.is_absolute() && !output_text.contains(['\r', '\n']),
                 "invalid OUT_DIR"
             );
-            fs::copy(&canonical, output.join(alias)).expect("stage exact selected library");
+            let alias = output.join(alias);
+            if alias.try_exists().expect("inspect selected library alias") {
+                // copy preserves installed permission bits. Reusing verified
+                // identical bytes works even for a readonly previous alias and
+                // never changes installed or staged-library permissions.
+                assert!(
+                    identical(&canonical, &alias).expect("verify selected library alias"),
+                    "existing selected library alias differs from selected bytes"
+                );
+            } else {
+                fs::copy(&canonical, &alias).expect("stage exact selected library");
+            }
             println!("cargo:rustc-link-search=native={output_text}");
         }
         println!("cargo:rustc-link-lib={kind}={linked_name}");
