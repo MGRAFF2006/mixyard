@@ -1,0 +1,123 @@
+name: macOS native termination boundary (no physical UX or audio)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'apps/desktop/src-tauri/**'
+      - 'apps/desktop/src/lifecycle*'
+      - 'apps/web/src/**'
+      - 'apps/web/tests/devices.spec.ts'
+      - 'verification/desktop-macos-termination/**'
+      - '.github/workflows/desktop-macos-termination.yml'
+  pull_request:
+    paths:
+      - 'apps/desktop/src-tauri/**'
+      - 'apps/desktop/src/lifecycle*'
+      - 'apps/web/src/**'
+      - 'apps/web/tests/devices.spec.ts'
+      - 'verification/desktop-macos-termination/**'
+      - '.github/workflows/desktop-macos-termination.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-termination-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  appkit-and-shared-guard:
+    runs-on: macos-14
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_TARGET_DIR: ${{ runner.temp }}/mixyard-termination-target
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+      - uses: pnpm/action-setup@v6
+        with:
+          version: '11.10.0'
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.1'
+      - name: Exact source/SDK and initial reserve guard
+        run: |
+          set -euo pipefail
+          python verification/desktop-native/evidence.py --guard --output evidence/host-before.json
+          xcrun clang --version > evidence/clang-version.txt
+          xcrun --show-sdk-version > evidence/sdk-version.txt
+          python - <<'PYMANIFEST'
+          import hashlib, json
+          from pathlib import Path
+          files = [*Path('verification/desktop-macos-termination').glob('*'),
+                   Path('apps/desktop/src-tauri/src/macos_termination.m'),
+                   Path('apps/desktop/src-tauri/src/macos_termination.rs'),
+                   Path('apps/desktop/src-tauri/src/main.rs'),
+                   Path('apps/desktop/src-tauri/build.rs'),
+                   Path('apps/desktop/src-tauri/Cargo.toml'),
+                   Path('apps/desktop/src-tauri/Cargo.lock'),
+                   Path('.github/workflows/desktop-macos-termination.yml')]
+          Path('evidence/termination-source-hashes.json').write_text(json.dumps({str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files if p.is_file()}, indent=2) + '\n')
+          PYMANIFEST
+      - name: Compile the production delegate seam into an actual AppKit event-loop probe
+        run: |
+          set -euo pipefail
+          xcrun clang -fobjc-arc -Wall -Wextra -Werror \
+            -framework AppKit \
+            apps/desktop/src-tauri/src/macos_termination.m \
+            verification/desktop-macos-termination/appkit.m \
+            -o "$RUNNER_TEMP/mixyard-appkit-termination" 2>&1 | tee evidence/appkit-compile.log
+      - name: Separately build owned headless runtime and CLI
+        run: |
+          set -euo pipefail
+          python verification/desktop-native/evidence.py --guard
+          cargo build --release --locked --jobs 2 --bin mixyard --bin mixyard-runtime 2>&1 | tee evidence/runtime-build.log
+      - name: Actual menu and Dock-equivalent terminate, cancellation and approved UI exit
+        run: |
+          set -euo pipefail
+          python verification/desktop-macos-termination/run.py \
+            "$RUNNER_TEMP/mixyard-appkit-termination" \
+            "$CARGO_TARGET_DIR/release/mixyard-runtime" \
+            "$CARGO_TARGET_DIR/release/mixyard" evidence
+      - name: Shared retained-child guard and portable desktop decision composition
+        run: |
+          set -euo pipefail
+          python verification/desktop-native/evidence.py --guard
+          pnpm --dir apps/web install --frozen-lockfile
+          pnpm --dir apps/web exec playwright install chromium
+          pnpm --dir apps/web exec playwright test devices.spec.ts --grep 'guards close|retain complete drafts' --workers 1 --reporter=line 2>&1 | tee evidence/shared-child-guard.log
+          node --test apps/desktop/src/lifecycle.test.ts 2>&1 | tee evidence/desktop-decision.log
+      - name: Boundary and final reserve evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          python verification/desktop-native/evidence.py --guard --output evidence/host-after.json
+          {
+            echo 'Actual AppKit NSMenu dispatch and terminate: use the production Objective-C delegate seam.'
+            echo 'The no-guard control must terminate before approval; guarded Cancel retains one visible native window, approved explicit UI exit leaves the kernel-identified owned runtime alive.'
+            echo 'Shared retained child-draft aggregation is exercised separately in isolated Chromium; desktop decision composition is tested separately.'
+            echo 'This is separated native/shared evidence, not a complete Tauri WKWebView, physical Dock/Cmd+Q, accessibility, installation or audio UX qualification.'
+            echo 'No accessibility/AppleEvents input injection, TCC suppression, trust changes, signing or audio used.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-macos-termination-${{ github.sha }}
+          path: |
+            evidence/
+            apps/web/test-results/
+          if-no-files-found: error
+          retention-days: 14
