@@ -14,15 +14,16 @@ physical session, selectable virtual microphone or daemon-owned production graph
 | Consented recorder | [#66](https://github.com/MGRAFF2006/mixyard/pull/66) | Actual private files, exact byte encodings, bounded consent/recovery, real child-only EFBIG failures | Off-callback writer; no automatic capture/rearm; power-loss, ENOSPC and non-Linux ACL qualification remain open |
 | Linux sample execution | [#68](https://github.com/MGRAFF2006/mixyard/pull/68) | Authoritative Processor64 into independent queues and real owned null/file consumers, source monotonicity and destination-only encoding | PipeWire SDK/binaries absent; no server/device graph/virtual input/hardware proof |
 | Windows worker | [#71](https://github.com/MGRAFF2006/mixyard/pull/71) | Portable exact-byte SPSC/ingress tests; hosted Windows SDK compile/link and injected operations | Rust engine linkage, engine/device clock mapping, physical WASAPI and selectable driver endpoints remain open |
+| macOS transport | [#73](https://github.com/MGRAFF2006/mixyard/pull/73) | Exact-byte SPSC/renderer/broker predicates and owned synthetic WAV tests; read-only explicit sink binding | Output activation is gated before IOProc creation/start; no native capture or physical audio executed |
 | Portable shared core | [#72](https://github.com/MGRAFF2006/mixyard/pull/72) | Desktop-free canonical policy/audio/PCM/DSP/latency/worker source and dependency graph | Mobile native bridges, apps and physical routes remain separate |
 
-The macOS [worker foundation](https://github.com/MGRAFF2006/mixyard/pull/73)
-retains a separate review gate. Native output activation must stay unavailable
+The macOS native output activation stays unavailable
 until output-only input suppression and start/revoke ownership are proved. An
 initially output-only device and a silenced queue do not prevent unsolicited
 input delivery after topology changes. Owned synthetic transport/WAV tests are
 not native capture evidence. A separate output-only implementation follows this
-safety boundary rather than relaxing it.
+safety boundary rather than relaxing it. `OutputWorker::open` creates no device
+IOProc and `startAt` unconditionally reports unsupported before native activation.
 
 `tests/native_pipeline.rs` exercises actual production components together: a
 synthetic common-clock source passes exact Float64 samples through adaptation,
