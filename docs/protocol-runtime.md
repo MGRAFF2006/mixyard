@@ -94,6 +94,21 @@ not claim per-output source-loss continuation. Destination-only loss disables
 that destination while healthy siblings continue. No missing input is padded
 and labelled captured PCM.
 
+Copied processed blocks retain a local, revocation-only producer receipt.
+`host.revoke()` terminally signals it and every output lease of that bridge
+generation before waiting for native cleanup. `RuntimeLease.validate` checks
+the receipt after external owner callbacks; HTTP rechecks pending records during
+each write and RTP validates at send admission. Explicit destination conversions
+preserve the same receipt, including copies held by a separately authorized
+destination. Unrelated host generations/raw leases remain independent. The
+receipt contains no native pointer/loan, is never sent as wire authority, and
+does not replace owner, provenance, clock, consent or directional grant checks.
+Native processing also retains inherited input stop signals for this generation
+and its DSP history, with a 1024-signal limit that fails closed. Per-output
+contributor metadata and canonical exclusions remain unchanged.
+Previously admitted OS IO cannot be recalled; an incomplete HTTP record is not
+released as a complete PCM block.
+
 A loss notification is not stop completion. `host.quiesce()` waits for the
 exclusive Python worker, invokes C revoke as that sole graph owner, and verifies
 every packet is inactive and zeroed before returning a `StopWitness` tied to

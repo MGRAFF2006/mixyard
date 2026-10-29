@@ -9,13 +9,16 @@ import struct
 import subprocess
 import threading
 import unittest
+from unittest.mock import patch
 
 from mixyard_interop import Endpoint, Grant, Provenance, Session, Source, Spec
 from mixyard_interop.native import HostLoan, NativeHost, NativeRejected, NativeUnavailable, convert_processed
 from mixyard_interop.http_upnp import StreamSource, StreamReceiver
+from mixyard_interop.http_upnp import stream as stream_io
 from mixyard_interop.realtime import RtpProfile, RtpReceiver, RtpSender
 from mixyard_interop.realtime.leased import LeasedRtpReceiver, LeasedRtpSender
-from mixyard_interop.runtime import ClockEvidence, LeaseBinding, LeasedBlock, RuntimeBusy, RuntimeLease
+from mixyard_interop.runtime import (ClockEvidence, LeaseBinding, LeasedBlock, RuntimeBusy,
+                                    RuntimeLease)
 
 ENV = ("MIXYARD_NATIVE_HOST", "MIXYARD_NATIVE_SHA256", "MIXYARD_NATIVE_REVISION", "MIXYARD_NATIVE_TOOLCHAIN")
 HAS_LOAN = all(os.environ.get(key) for key in ENV)
@@ -112,6 +115,27 @@ def agreement(epoch):
 
 
 class DestinationConversionTests(unittest.TestCase):
+    def test_conversion_retains_producer_stop_through_independent_destination_owner_callback(self):
+        from mixyard_interop.runtime import _ProducerReceipt
+        stopped = threading.Event()
+        spec = Spec(1, "processed", "raw-f64-le", 48000, ("FL", "FR"), 2,
+                    Provenance((Source("runtime", "owned"),), ("runtime",)))
+        source = LeasedBlock(spec, struct.pack("<4d", -.5, .25, .125, -.25),
+                             7, 1, "output", 0, 11, _producer=_ProducerReceipt(stopped))
+        target = replace(spec, codec="raw-s24-le")
+        converted = convert_processed(source, target, consent=True, rounding="nearest-ties-even").output
+        destination, state = lease(target, "owned-converted-destination", "output")
+        def stop_during_owner_check():
+            stopped.set()
+            return state[0]
+        destination._owner_check = stop_during_owner_check
+        consumed = []
+        with self.assertRaises(PermissionError):
+            destination.accept(converted, consumed.append)
+        self.assertEqual(consumed, [])
+        with self.assertRaises(PermissionError):
+            convert_processed(source, target, consent=True, rounding="nearest-ties-even")
+
     def test_conversion_is_explicit_local_finite_and_never_raw_identity(self):
         spec = Spec(1, "processed", "raw-f64-le", 48000, ("FL", "FR"), 2,
                     Provenance((Source("runtime", "owned"),), ("runtime",)))
@@ -135,6 +159,131 @@ class ActualNativeHostTests(unittest.TestCase):
         return stack.enter_context(NativeHost(loan(), json.dumps(value, separators=(",", ":")).encode(),
                                    source_leases=sources, output_leases=outputs,
                                    local_peer="runtime", consent=True))
+
+    def test_source_loss_rejects_pending_call_and_record_before_and_during_http_record(self):
+        for index in (0, 1):
+            for partial in (False, True):
+                with self.subTest(output=index, partial=partial), ExitStack() as stack:
+                    value, sources, outputs, _, _ = setup_host()
+                    host = self.host(stack, value, sources, outputs)
+                    pending = host.process(blocks(sources), now_ns=1_000_000, deadline_ns=2_000_000)[index]
+                    endpoint, spec = unused("http"), pending.spec
+                    outgoing = Session("runtime", [Grant("live-send", endpoint, "destination", spec)], consent=True)
+                    incoming = Session("destination", [Grant("live-receive", endpoint, "runtime", spec)], consent=True)
+                    destination, _ = lease(spec, "owned-null-http", f"output-{index}-epoch")
+                    received, seen, lost = [], [], []
+                    sequence = iter((pending, None))
+                    def read_block():
+                        result = next(sequence)
+                        if result is not None:
+                            seen.append(True)
+                            if not partial:
+                                host.source_lost(1)
+                                lost.append(True)
+                        return result
+                    original_write = stream_io._Socket.write
+                    def partial_write(io, data):
+                        # Real socket write of metadata and half the PCM, then
+                        # signal loss before the remainder can complete a record.
+                        if partial and seen and not lost and len(data) > 32 and data[:1] == b"\0":
+                            original_write(io, data[:-16])
+                            host.source_lost(1)
+                            lost.append(True)
+                            return original_write(io, data[-16:])
+                        return original_write(io, data)
+                    stack.enter_context(patch.object(stream_io._Socket, "write", partial_write))
+                    source = stack.enter_context(StreamSource(outgoing, spec, read_block, endpoint=endpoint,
+                                                  check_lease=outputs[index].check,
+                                                  validate_block=outputs[index].validate))
+                    try:
+                        StreamReceiver(incoming).receive(source.resource, received.append,
+                            accept_block=destination.accept, check_lease=destination.check,
+                            block_factory=LeasedBlock)
+                    except (PermissionError, ValueError, ConnectionError, TimeoutError):
+                        pass  # A rejected/incomplete record must never reach the consumer.
+                    self.assertTrue(seen and lost, "loss injection must actually execute")
+                    self.assertEqual(received, [], "whole-generation loss must revoke copied Call AND Record PCM")
+                    self.assertIsNone(host.stop_witness, "notification is not native scrub completion")
+
+    def test_converted_pending_rtp_rejects_after_actual_cpu_quiesce(self):
+        for index in (0, 1):
+            with self.subTest(output=index), ExitStack() as stack:
+                value, sources, outputs, _, _ = setup_host()
+                host = self.host(stack, value, sources, outputs)
+                pending = host.process(blocks(sources), now_ns=1_000_000, deadline_ns=2_000_000)[index]
+                target = replace(pending.spec, codec="raw-s24-le")
+                converted = convert_processed(pending, target, consent=True, rounding="nearest-ties-even").output
+                sender, receiver = udp_pair(stack, target, "runtime", "destination")
+                # Independent destination permission must not remove the copied
+                # PCM's producing-generation restriction during conversion.
+                destination, _ = lease(target, "owned-explicit-s24", f"output-{index}-epoch")
+                transmit = LeasedRtpSender(sender, destination, lambda: converted,
+                                           **agreement(f"output-{index}-epoch"))
+                witness = host.quiesce()
+                self.assertIsNotNone(witness)
+                received = []
+                try:
+                    transmit.send()
+                except PermissionError:
+                    pass
+                else:
+                    received.append(receiver.receive().pcm)
+                self.assertEqual(received, [], "even completed CPU scrub cannot recall an unguarded copy")
+                self.assertEqual(sender.operations, 0, "reject before actual RTP send admission")
+
+    def test_source_loss_does_not_revoke_unrelated_host_or_raw_lease(self):
+        with ExitStack() as stack:
+            value, sources, outputs, _, _ = setup_host()
+            lost = self.host(stack, value, sources, outputs)
+            lost.process(blocks(sources), now_ns=1_000_000, deadline_ns=2_000_000)
+            other_value, other_sources, other_outputs, _, _ = setup_host()
+            other = self.host(stack, other_value, other_sources, other_outputs)
+            pending = other.process(blocks(other_sources), now_ns=1_000_000, deadline_ns=2_000_000)[0]
+            raw, _ = lease(pending.spec, "unrelated-raw-owner", "output-0-epoch")
+            opaque = replace(pending, pcm=struct.pack("<4Q", 0x8000000000000000,
+                             0x7ff8000000001234, 0x7ff0000000000000, 1))
+            lost.source_lost(1)
+            received = []
+            other_outputs[0].accept(pending, received.append)
+            raw.accept(opaque, received.append)
+            self.assertEqual([item.pcm for item in received], [pending.pcm, opaque.pcm])
+            self.assertIsNone(lost.stop_witness)
+
+    def test_native_processing_preserves_inherited_input_stop_restrictions(self):
+        from mixyard_interop.runtime import _ProducerReceipt
+        with ExitStack() as stack:
+            value, sources, outputs, _, _ = setup_host()
+            host = self.host(stack, value, sources, outputs)
+            stopped = threading.Event()
+            incoming = blocks(sources)
+            incoming[1] = replace(incoming[1], _producer=_ProducerReceipt(stopped))
+            pending = host.process(incoming, now_ns=1_000_000, deadline_ns=2_000_000)
+            stopped.set()
+            # This is whole bridge-generation loss, even for Call whose PCM
+            # excludes return. The contributor metadata remains output-specific.
+            for index in (0, 1):
+                with self.subTest(output=index), self.assertRaises(PermissionError):
+                    outputs[index].accept(pending[index], lambda block: self.fail("stopped input escaped processing"))
+
+    def test_inherited_stop_budget_failure_revokes_existing_processed_copies(self):
+        from mixyard_interop.runtime import MAX_PRODUCER_SIGNALS, _ProducerReceipt
+        with ExitStack() as stack:
+            value, sources, outputs, _, _ = setup_host()
+            host = self.host(stack, value, sources, outputs)
+            pending = host.process(blocks(sources), now_ns=1_000_000, deadline_ns=2_000_000)
+            inherited = _ProducerReceipt(threading.Event())
+            inherited._include(_ProducerReceipt(threading.Event()) for _ in range(MAX_PRODUCER_SIGNALS - 1))
+            incoming = blocks(sources, 2)
+            incoming[1] = replace(incoming[1], _producer=inherited)
+            # This host's own independent signal would exceed the bound. Fail
+            # before processing and revoke previous copies, never truncate it.
+            with self.assertRaisesRegex(PermissionError, "stop-dependency budget"):
+                host.process(incoming, now_ns=1_050_000, deadline_ns=2_000_000)
+            for index in (0, 1):
+                with self.assertRaises(PermissionError):
+                    outputs[index].validate(pending[index])
+            self.assertIsNone(host.stop_witness)
+            self.assertEqual(host.quiesce().committed_frames, 2)
 
     def test_actual_plan_contributors_and_float64_dsp_pcm_are_output_specific(self):
         for codec in ("raw-f64-le", "raw-f32-le", "raw-s16-le", "raw-s24-le", "raw-s32-le"):
@@ -197,7 +346,11 @@ class ActualNativeHostTests(unittest.TestCase):
             host.revoke()
             with self.assertRaises(PermissionError):
                 host.process(blocks(sources, 2), now_ns=1_050_000, deadline_ns=2_000_000)
-        # A fresh actual graph has fresh instance/token state and frame origin.
+        # A stopped bridge cannot reuse its terminal output leases. A fresh
+        # explicit owner admission supplies new leases, instance and frame origin.
+        with ExitStack() as stack, self.assertRaises(NativeUnavailable):
+            self.host(stack, value, sources, outputs)
+        value, sources, outputs, _, _ = setup_host()
         with ExitStack() as stack:
             fresh = self.host(stack, value, sources, outputs)
             fresh.process(blocks(sources), now_ns=1_000_000, deadline_ns=2_000_000)

@@ -5,7 +5,7 @@ authorized runtime owner supplies the current binding on every admission.
 No queue, mixer, resampler, or hardware clock is implemented here.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import threading
 import time
@@ -13,6 +13,7 @@ import time
 from .core import Spec, _identifier, _integer
 
 MAX_BLOCK_BYTES = 1024 * 1024
+MAX_PRODUCER_SIGNALS = 1024
 U64 = 2**64 - 1
 
 
@@ -22,6 +23,45 @@ class RuntimeBusy(RuntimeError):
 
 class RuntimeSourceLost(PermissionError):
     """The selected source was lost; a fresh owner epoch/admission is required."""
+
+
+class _ProducerReceipt:
+    """Read-only terminal signal, never owner authority or a native borrow.
+
+    Copies and explicit conversions retain this restriction. It contains no
+    context pointer, library handle, callback or clock/provenance assertion.
+    """
+    __slots__ = ("_signals",)
+
+    def __init__(self, stopped):
+        if type(stopped) is not threading.Event:
+            raise TypeError("producer terminal signal required")
+        self._signals = (stopped,)
+
+    def _include(self, receipts):
+        # The exclusive producer can only add restrictions. Flattening keeps
+        # validation bounded and retains stop dependencies for DSP history.
+        signals = list(self._signals)
+        seen = {id(signal) for signal in signals}
+        for receipt in receipts:
+            if type(receipt) is not _ProducerReceipt:
+                raise TypeError("invalid inherited producer receipt")
+            for signal in receipt._signals:
+                if id(signal) not in seen:
+                    if len(signals) >= MAX_PRODUCER_SIGNALS:
+                        raise RuntimeSourceLost("producer stop-dependency budget exceeded")
+                    signals.append(signal)
+                    seen.add(id(signal))
+        self._signals = tuple(signals)
+        self.check()
+
+    def check(self):
+        for signal in self._signals:
+            if signal.is_set():
+                raise RuntimeSourceLost("processed producer generation stopped")
+        # Recheck this generation after scanning inherited restrictions.
+        if self._signals[0].is_set():
+            raise RuntimeSourceLost("processed producer generation stopped")
 
 
 @dataclass(frozen=True)
@@ -57,6 +97,7 @@ class LeasedBlock:
     source_epoch: str
     base_frame: int
     clock_id: int
+    _producer: _ProducerReceipt | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         if type(self.spec) is not Spec or type(self.pcm) is not bytes:
@@ -69,6 +110,12 @@ class LeasedBlock:
             _integer(getattr(self, name), 1, U64, name)
         _identifier(self.source_epoch)
         _integer(self.base_frame, 0, U64 - self.frames, "block frame")
+        if self._producer is not None and type(self._producer) is not _ProducerReceipt:
+            raise TypeError("invalid processed producer receipt")
+
+    def _check_producer(self):
+        if self._producer is not None:
+            self._producer.check()
 
     @property
     def frames(self):
@@ -206,6 +253,9 @@ class RuntimeLease:
                     or block.base_frame < self.clock.base_frame):
                 raise PermissionError("block differs from exact runtime owner lease")
             self.clock.time_ns(block.base_frame + block.frames, block.spec.sample_rate)
+            # Pure terminal check comes after all external owner observation.
+            # It also survives conversion into a separately authorized lease.
+            block._check_producer()
 
     def read(self, source):
         self.check()
@@ -229,6 +279,7 @@ class RuntimeLease:
             try:
                 result = consumer(block)
                 self._check_locked()
+                block._check_producer()
                 self._next_frame += block.frames
                 return result
             except BaseException:

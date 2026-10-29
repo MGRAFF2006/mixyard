@@ -17,7 +17,7 @@ import stat
 import struct
 import threading
 
-from .runtime import LeasedBlock, RuntimeBusy, RuntimeLease, U64
+from .runtime import LeasedBlock, RuntimeBusy, RuntimeLease, U64, _ProducerReceipt
 from .core import Provenance, Spec, _fields, _identifier, _integer
 
 MAX_METADATA = 1024 * 1024
@@ -63,6 +63,7 @@ def convert_processed(block, target_spec, *, consent=False, rounding):
             or target_spec != replace(block.spec, codec=target_spec.codec)
             or rounding != "nearest-ties-even"):
         raise ValueError("explicit exact destination format and nearest-ties-even conversion required")
+    block._check_producer()
     width = 2 if target_spec.codec == "raw-s16-le" else 3
     scale = 1 << (8 * width - 1)
     packed = bytearray()
@@ -74,6 +75,7 @@ def convert_processed(block, target_spec, *, consent=False, rounding):
             raise ValueError("rounded destination range exceeded; no implicit clipping")
         packed.extend(value.to_bytes(width, "little", signed=True))
     output = replace(block, spec=target_spec, pcm=bytes(packed))
+    output._check_producer()
     return DestinationConversion(output, block.spec, rounding)
 
 
@@ -292,6 +294,7 @@ class NativeHost:
         self._handle = C.c_void_p()
         self._lock = threading.Lock()
         self._revoke_requested = threading.Event()
+        self._producer = _ProducerReceipt(self._revoke_requested)
         self._owner_thread = None
         self._active = False
         self._sequence, self._frame = 0, 0
@@ -457,6 +460,7 @@ class NativeHost:
             stamp = _Stamp(self._request["generation"], self._request["config"]["revision"],
                            self._request["clockId"], self._sequence, self._frame, captured, deadline_ns)
             self._check_leases()
+            self._producer._include(block._producer for block in blocks.values() if block._producer is not None)
             status = self._abi.lib.mx_host_process(self._handle, now_ns, stamp, frames, inputs, len(inputs))
             if status != 0:
                 raise NativeRejected(f"actual host process rejected ({status})")
@@ -480,7 +484,7 @@ class NativeHost:
                 pcm = struct.pack(f"<{len(samples)}d", *samples)
                 b = lease.binding
                 block = LeasedBlock(lease.spec, pcm, b.generation, b.revision, b.source_epoch,
-                                    self._frame, b.clock_id)
+                                    self._frame, b.clock_id, _producer=self._producer)
                 try:
                     lease.validate(block)
                 except Exception as exc:
@@ -490,12 +494,13 @@ class NativeHost:
             # An external revoke is a signal only. This exclusive owner performs
             # C revoke and discards all copied PCM before returning to any sink.
             self._check_leases()
+            self._producer.check()
             result = {i: block for i, block in result.items() if i not in self._destination_failures}
             self._sequence += 1
             self._frame += frames
             return result
         except BaseException:
-            self._revoke_requested.set()
+            self.revoke()
             if self._handle:
                 self._abi.lib.mx_host_revoke(self._handle)
             self._active = False
@@ -510,6 +515,11 @@ class NativeHost:
 
     def revoke(self):
         self._revoke_requested.set()
+        # Stop every derived source lease immediately, even while a worker or
+        # C context still needs quiescence. This does not claim native scrub.
+        for lease in self._outputs:
+            if lease is not None:
+                lease.source_lost()
 
     def source_lost(self, index):
         """Actual owner signal: discard this whole bridge generation at commit."""
