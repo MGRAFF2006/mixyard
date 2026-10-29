@@ -11,6 +11,23 @@
 #include <iostream>
 #include <stdexcept>
 
+#ifdef MIXYARD_ALLOCATION_AUDIT
+namespace {
+bool audit_heap = false;
+size_t heap_operations = 0;
+}
+extern "C" {
+void* __real_malloc(size_t);
+void* __real_calloc(size_t, size_t);
+void* __real_realloc(void*, size_t);
+void __real_free(void*);
+void* __wrap_malloc(size_t count) { if (audit_heap) ++heap_operations; return __real_malloc(count); }
+void* __wrap_calloc(size_t count, size_t width) { if (audit_heap) ++heap_operations; return __real_calloc(count, width); }
+void* __wrap_realloc(void* pointer, size_t count) { if (audit_heap) ++heap_operations; return __real_realloc(pointer, count); }
+void __wrap_free(void* pointer) { if (audit_heap) ++heap_operations; __real_free(pointer); }
+}
+#endif
+
 namespace {
 using namespace mixyard_windows_host;
 void require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -174,6 +191,27 @@ void portable_checks() {
         require(Bridge::create(s.host, s.time, wrong, outputs(), {nullptr, admit}, rejected) == Result::binding, "output recapture excluded");
     }
 }
+void sustained_link_checks() {
+    Session s;
+#ifdef MIXYARD_ALLOCATION_AUDIT
+    heap_operations = 0; audit_heap = true;
+#endif
+    for (uint64_t sequence = 0; sequence < 512; ++sequence) {
+        auto mapped = push(s, sequence, sequence * 2);
+        process(s, sequence, sequence * 2, mapped);
+        oracle(s);
+    }
+    // Revoke/failure paths must also avoid heap operations on the graph owner.
+    s.bridge->cancel();
+    const auto stamp = engine(s.time, 512, 1024);
+    std::array<MappedTime, 2> times{};
+    const auto result = s.bridge->process(stamp.captured_ns, stamp, 2, times.data(), times.size());
+#ifdef MIXYARD_ALLOCATION_AUDIT
+    audit_heap = false;
+    require(!heap_operations, "full native queues/Rust host/render path performed heap operation");
+#endif
+    require(result == Result::cancelled, "sustained path cancellation");
+}
 #ifdef _WIN32
 // These objects implement the real Windows SDK vtables. They never activate a
 // device or call an OS audio API. The production seam sees the same interfaces
@@ -314,10 +352,14 @@ void sdk_checks() {
 int main() {
     try {
         portable_checks();
+        sustained_link_checks();
 #ifdef _WIN32
         sdk_checks();
         std::cout << "PASS SDK-injected capture/render endpoints and production driver Delivery byte oracle; no hardware APIs\n";
 #endif
         std::cout << "PASS production Windows queues -> actual Rust Processor64/planner -> independent native consumers; physical/native availability false\n";
+#ifdef MIXYARD_ALLOCATION_AUDIT
+        std::cout << "PASS 512 linked native blocks plus cancellation; zero malloc/calloc/realloc/free\n";
+#endif
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

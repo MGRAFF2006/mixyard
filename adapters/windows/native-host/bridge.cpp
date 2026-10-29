@@ -89,7 +89,7 @@ Result Bridge::stop(Result result) {
 }
 Result Bridge::create(mx_host* host, Timeline timeline, const std::vector<Endpoint>& sources,
                       const std::vector<Endpoint>& outputs, Authority authority, std::unique_ptr<Bridge>& out) {
-    if (out || !host || !authority.admit) return Result::invalid;
+    if (out || !host || !authority.admit || mx_host_abi_version() != 1) return Result::invalid;
     if (timeline.kind != ClockKind::injected_common_timeline || !timeline.generation ||
         !timeline.revision || !timeline.clock_id || timeline.evidence.empty()) return Result::clock;
     if (mx_host_source_count(host) != sources.size() || mx_host_output_count(host) != outputs.size()) return Result::binding;

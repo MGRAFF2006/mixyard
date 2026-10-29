@@ -95,7 +95,11 @@ ctest --test-dir /path/to/private-build --output-on-failure
 ```
 
 Windows uses the same command with `-A x64`, the Rust MSVC `.lib`, `--config
-Release`, and `ctest -C Release`. The hosted workflow builds against the installed
+Release`, and `ctest -C Release`. Supply `MIXYARD_HOST_NATIVE_LIBRARIES` as a CMake
+semicolon-separated list from the actual toolchain's `cargo rustc --locked
+--manifest-path adapters/engine/Cargo.toml --lib --release -- --print
+native-static-libs` output; the workflow obtains that list rather than guessing
+Windows Rust standard-library dependencies. The hosted workflow builds against the installed
 Windows SDK and executes **only** injected capture/render COM endpoints and
 injected driver operations. It never enumerates/activates audio endpoints.
 
@@ -105,6 +109,8 @@ partial render requests, cancellation, source/output loss, stale generations,
 clock/provenance mismatches and fail-closed bindings. Windows additionally
 checks capture → native SPSC → actual Rust mixer → SDK render byte consumers
 and native queue → real StreamProducer → existing driver Delivery byte oracle.
+The Linux static-linked test also runs 512 complete native-queue/host/render
+blocks plus cancellation with zero malloc/calloc/realloc/free operations.
 CI results apply to the exact revision reported by GitHub; source/syntax checks
 alone do not prove this integration.
 
