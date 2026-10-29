@@ -355,8 +355,11 @@ impl<V: Vault> Paired<V> {
             return Err("Provisioning record exceeds the secure vault record limit; revoke the new controller on the owning service".into());
         }
         self.vault.write(&target.device_id, &encoded).map_err(|e| format!("{e} Pairing was consumed; revoke the new controller on the owning service before retrying."))?;
-        if self.vault.read(&target.device_id)?.as_deref() != Some(encoded.as_str()) {
-            return Err("Secure credential readback failed after pairing; revoke this controller on the owning service".into());
+        if !matches!(self.vault.read(&target.device_id), Ok(Some(value)) if value == encoded) {
+            // The one-use remote grant has already been consumed. A locked or
+            // mismatching readback cannot become an invisible local authority.
+            let cleanup = self.vault.delete(&target.device_id);
+            return Err(format!("Secure credential readback failed. Pairing was consumed; revoke the new controller on the owning service before retrying. Native record cleanup {}.", if cleanup.is_ok() { "completed" } else { "failed; vault repair required" }));
         }
         ids.push(target.device_id.clone());
         if let Err(error) = self.vault.write(

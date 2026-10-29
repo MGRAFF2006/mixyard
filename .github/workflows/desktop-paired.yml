@@ -98,12 +98,12 @@ jobs:
           set -euo pipefail
           mkdir -p apps/web/dist
           python -c "from pathlib import Path; Path('apps/web/dist/index.html').write_text('<!doctype html><title>Owned control API fixture only</title>')"
-          extra=()
-          if [[ '${{ runner.os }}' == 'Linux' ]]; then extra+=(--expect-no-secret-service --ui-script verification/desktop-paired/ui.mjs); fi
+          set --
+          if [[ '${{ runner.os }}' == 'Linux' ]]; then set -- --expect-no-secret-service --ui-script verification/desktop-paired/ui.mjs; fi
           python -B verification/desktop-paired/qualify.py \
             --harness "verification/desktop-paired/target/debug/mixyard-desktop-paired-qualification${{ matrix.suffix }}" \
             --service "qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}" \
-            --assets apps/web/dist --output evidence/native-paired.json "${extra[@]}"
+            --assets apps/web/dist --output evidence/native-paired.json "$@"
       - name: Upload nonsecret results and reviewable lockfiles only
         if: always()
         uses: actions/upload-artifact@v4

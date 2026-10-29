@@ -71,6 +71,10 @@ class Service:
 
     def start(self):
         flags = {}
+        command = [self.binary, '--state', str(self.state), 'serve', '--enable-control',
+                   '--bind', self.ready['address'] if hasattr(self, 'ready') else '127.0.0.1:0',
+                   '--store', str(self.root / 'profiles'), '--assets', str(self.assets),
+                   '--instance', 'paired-qualification']
         if os.name == 'nt':
             assert os.environ.get('GITHUB_ACTIONS') == 'true', 'Windows console signaling is hosted-owned qualification only'
             startup = subprocess.STARTUPINFO()
@@ -78,9 +82,8 @@ class Service:
             startup.wShowWindow = 0
             # A separate console contains only this owned service. Never signal the runner/operator console.
             flags = {'creationflags': subprocess.CREATE_NEW_CONSOLE, 'startupinfo': startup}
-        self.process = subprocess.Popen([self.binary, '--state', str(self.state), 'serve', '--enable-control',
-                                         '--bind', self.ready['address'] if hasattr(self, 'ready') else '127.0.0.1:0', '--store', str(self.root / 'profiles'),
-                                         '--assets', str(self.assets), '--instance', 'paired-qualification'],
+            command = [sys.executable, str(Path(__file__).with_name('windows-console.py')), *command]
+        self.process = subprocess.Popen(command,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **flags)
         try:
             self.ready = receive(self.process.stdout)
@@ -95,12 +98,23 @@ class Service:
             if os.name == 'nt':
                 helper = '''import ctypes, sys
 kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+kernel.OpenProcess.restype = ctypes.c_void_p
+kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+kernel.WaitForSingleObject.restype = ctypes.c_ulong
+kernel.CloseHandle.argtypes = [ctypes.c_void_p]
 kernel.FreeConsole()
 assert kernel.AttachConsole(int(sys.argv[1])), "Cannot attach owned service console"
 assert kernel.SetConsoleCtrlHandler(None, True), "Cannot protect owned signal helper"
-assert kernel.GenerateConsoleCtrlEvent(0, 0), "Cannot signal owned service Ctrl-C"
+process = kernel.OpenProcess(0x00100000, False, int(sys.argv[1]))
+assert process, "Cannot wait for owned console launcher"
+try:
+    assert kernel.GenerateConsoleCtrlEvent(0, 0), "Cannot signal owned service Ctrl-C"
+    assert kernel.WaitForSingleObject(process, 20000) == 0, "Owned Ctrl-C did not complete service drain"
+finally:
+    kernel.CloseHandle(process)
 '''
-                subprocess.run([sys.executable, '-c', helper, str(self.process.pid)], check=True, timeout=5)
+                subprocess.run([sys.executable, '-c', helper, str(self.process.pid)], check=True, timeout=22)
             else:
                 self.process.send_signal(signal.SIGTERM)
             self.process.wait(timeout=20)
@@ -217,6 +231,20 @@ def qualify(args):
             stranded = next(value['credentialId'] for value in state['credentials'].values() if value['name'] == 'failed secure write')
             failure.cli('revoke', '--credential-id', stranded)
             results.append('post-pair secure write failure never claims saved authority; consumed invitation is not replayed; owning fixture revokes stranded controller')
+            readback = Service(args.service, root / 'readback-failure', args.assets); services.append(readback)
+            harness.ok('vault-readback-fail', id=readback.invite['deviceId'])
+            failed = harness.call('pair', endpoint=readback.endpoint, name='failed credential readback', invitation=readback.invite)
+            assert 'error' in failed and 'consumed' in failed['error'].lower() and 'revoke' in failed['error'].lower(), failed
+            assert 'cleanup completed' in failed['error'], failed
+            harness.ok('vault-readback-fail', id=None)
+            assert harness.ok('vault-record-present', id=readback.invite['deviceId'])['present'] is False
+            assert len(harness.ok('list')) == 2
+            assert 'error' in harness.call('pair', endpoint=readback.endpoint, name='no readback invitation replay', invitation=readback.invite)
+            readback.stop()
+            state = json.loads((readback.state / 'state.json').read_text())
+            stranded = next(value['credentialId'] for value in state['credentials'].values() if value['name'] == 'failed credential readback')
+            readback.cli('revoke', '--credential-id', stranded)
+            results.append('post-pair vault readback error removes unindexed local credential and reports consumed invitation plus owner revocation recovery')
             generation, session = opened(harness, target_a)
             config = json.loads((Path(args.assets).parent / 'src' / 'example-config.json').read_text())
             saved = request(harness, target_a, generation, session, '/api/profiles/edit',

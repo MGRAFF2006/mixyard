@@ -15,10 +15,13 @@ struct TestVault {
     fail: Arc<AtomicBool>,
     fail_write_at: Arc<AtomicUsize>,
     writes: Arc<AtomicUsize>,
+    fail_read_key: Arc<Mutex<Option<String>>>,
 }
 impl Vault for TestVault {
     fn read(&self, key: &str) -> Result<Option<String>, String> {
-        if self.fail.load(Ordering::SeqCst) {
+        if self.fail.load(Ordering::SeqCst)
+            || self.fail_read_key.lock().unwrap().as_deref() == Some(key)
+        {
             Err("Injected vault unavailable".into())
         } else {
             Ok(self.values.lock().unwrap().get(key).cloned())
@@ -99,6 +102,13 @@ fn main() {
                         Ordering::SeqCst,
                     );
                     Ok(json!({"injected":true}))
+                }
+                "vault-readback-fail" => {
+                    *vault.fail_read_key.lock().unwrap() = value["id"].as_str().map(str::to_owned);
+                    Ok(json!({"injected":true}))
+                }
+                "vault-record-present" => {
+                    Ok(json!({"present":vault.values.lock().unwrap().contains_key(text("id")?)}))
                 }
                 "platform-vault-roundtrip" => {
                     let directory = std::env::temp_dir()

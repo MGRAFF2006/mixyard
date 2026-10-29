@@ -62,3 +62,23 @@ test('permission denial retains the paired session; revocation requires a fresh 
   await assert.rejects(api.post('/api/profiles/read'), /Denied/)
   assert.equal(api.connected, false)
 })
+
+test('a scoped canonical settings conflict immediately clears shared and native authority without another dispatch', async () => {
+  let nativeConnected = true, requests = 0
+  const invoke: Invoke = async <T>(command: string) => {
+    if (command === 'paired_open') return { generation: 1, status: 200, body: JSON.stringify(identity) } as T
+    if (command === 'paired_disconnect') { nativeConnected = false; return undefined as T }
+    requests++; nativeConnected = false
+    return { status: 409, body: JSON.stringify({ ...identity, status: 409, body: { error: { code: 'store-conflict', message: 'Read fresh settings before retrying' } } }) } as T
+  }
+  const api = pairedApi(invoke, target)
+  await api.connect()
+  const epoch = api.epoch
+  await assert.rejects(api.post('/api/automation/settings/write', { expectedSettingsRevision: 0 }), /Read fresh settings/)
+  assert.equal(nativeConnected, false)
+  assert.equal(api.connected, false)
+  assert.equal(api.identity, null)
+  assert.equal(api.epoch, epoch + 1)
+  await assert.rejects(api.post('/api/automation/settings/read'), /Refresh to reconnect/)
+  assert.equal(requests, 1)
+})
