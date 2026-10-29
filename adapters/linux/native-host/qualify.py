@@ -228,6 +228,9 @@ context.spa-libs = { support.* = support/libspa-support }
 context.modules = [
     { name = libpipewire-module-protocol-native }
     { name = libpipewire-module-client-node }
+    # Register Metadata/3 marshalling for read-only pw-dump observation. Do not
+    # suppress protocol errors or broaden the owned server's module whitelist.
+    { name = libpipewire-module-metadata }
 ]
 ''')
         env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "XDG_RUNTIME_DIR": str(runtime),

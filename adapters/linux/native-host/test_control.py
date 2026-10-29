@@ -56,6 +56,7 @@ class Isolation(unittest.TestCase):
             self.assertEqual(Path(argv[2]), config / env["PIPEWIRE_CONFIG_NAME"])
             self.assertIn("core.daemon = true", (config / "private.conf").read_text())
             self.assertNotIn("core.daemon", (config / "client.conf").read_text())
+            self.assertIn("{ name = libpipewire-module-metadata }", (config / "client.conf").read_text())
             self.assertEqual(env["PIPEWIRE_REMOTE"], "mixyard-private")
             raise BeforeNativeLaunch()
 
