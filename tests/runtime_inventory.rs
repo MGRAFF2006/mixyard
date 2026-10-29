@@ -54,7 +54,11 @@ impl Runtime {
             directory,
             child: None,
         };
-        fs::write(r.directory.join("helper"), b"#!/usr/bin/python3\nimport pathlib,sys,time,subprocess,os\np=pathlib.Path(__file__).parent\nmode=(p/'mode').read_text()\nif mode=='hang':\n (p/'pid').write_text(str(os.getpid()))\n child=subprocess.Popen(['/bin/sleep','30'])\n (p/'descendant').write_text(str(child.pid))\n time.sleep(30)\nif mode=='stderr': sys.stderr.write('private bind failure'); sys.stderr.flush()\nif mode=='fail': sys.exit(1)\nif mode=='oversize': sys.stdout.write('x'*(4*1024*1024+1)); sys.exit(0)\nsys.stdout.write((p/'graph').read_text())\n").unwrap();
+        fs::write(
+            r.directory.join("helper"),
+            include_bytes!("runtime_support/linux_inventory_helper.py"),
+        )
+        .unwrap();
         fs::set_permissions(
             r.directory.join("helper"),
             fs::Permissions::from_mode(0o700),
