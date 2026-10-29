@@ -4,6 +4,8 @@ mod api;
 mod assets;
 mod automation;
 mod processing;
+#[allow(dead_code)] // Also compiled by the independent authenticated control workspace.
+pub mod remote;
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{

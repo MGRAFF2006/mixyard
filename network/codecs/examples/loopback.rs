@@ -4,6 +4,10 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
+#[cfg(any(feature = "system-zstd", feature = "system-opus"))]
+#[path = "../ci/runtime_probe.rs"]
+mod runtime_probe;
+
 #[cfg(target_os = "linux")]
 fn process_cpu_seconds() -> Option<f64> {
     use std::ffi::c_long;
@@ -34,6 +38,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         zstd_version(),
         opus_version()
     );
+    #[cfg(any(feature = "system-zstd", feature = "system-opus"))]
+    runtime_probe::report()?;
     let raw = Format {
         rate: 44117,
         sample: Sample::F64Le,

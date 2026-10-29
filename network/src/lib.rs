@@ -19,3 +19,6 @@ pub use playout::{
 };
 
 pub mod worker;
+
+#[cfg(feature = "codecs")]
+pub use fragment_transport::codecs as codec_transport;
