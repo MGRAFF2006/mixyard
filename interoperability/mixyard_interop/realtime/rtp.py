@@ -1,9 +1,10 @@
-"""Bounded RTP v2 L16/L24 datagrams; no device, discovery, RTCP or SRTP IO."""
+"""Bounded RTP v2 L16/L24 datagrams; no device, discovery or SRTP IO."""
 
 from dataclasses import dataclass
 import secrets
 import socket
 import struct
+import time
 
 from ..core import Endpoint, Session, Spec
 
@@ -94,6 +95,9 @@ class ReceivedPacket:
     timestamp: int
     ssrc: int
     missing_before: int
+    extended_sequence: int
+    extended_timestamp: int
+    arrival_monotonic_ns: int
 
 
 class _UdpRole:
@@ -153,6 +157,7 @@ class RtpSender(_UdpRole):
         _integer(self.ssrc, 0, 0xFFFFFFFF, "ssrc")
         _integer(self.sequence, 0, 0xFFFF, "sequence")
         _integer(self.timestamp, 0, 0xFFFFFFFF, "timestamp")
+        self.sent_packets = self.sent_octets = 0
         self._open(session, destination, profile, local, timeout, max_packets)
 
     def send(self, pcm: bytes) -> int:
@@ -163,6 +168,8 @@ class RtpSender(_UdpRole):
         if self._socket.sendto(packet, (self.peer.host, self.peer.port)) != len(packet):
             raise OSError("partial UDP packet")
         sent_sequence = self.sequence
+        self.sent_packets += 1
+        self.sent_octets += len(payload)
         self.sequence = (self.sequence + 1) & 0xFFFF
         self.timestamp = (self.timestamp + self.profile.spec.frames_per_packet) & 0xFFFFFFFF
         return sent_sequence
@@ -181,11 +188,15 @@ class RtpReceiver(_UdpRole):
         self.ssrc = ssrc
         self._last: tuple[int, int] | None = None
         self.received = self.missing = self.rejected = 0
+        self.extended_sequence = self.extended_timestamp = None
+        self.jitter_frames = 0.0
+        self._arrival_ns = None
         self._open(session, peer, profile, local, timeout, max_packets)
 
     def receive(self) -> ReceivedPacket:
         self._admit()
         packet, address = self._socket.recvfrom(MAX_DATAGRAM + 1)
+        arrival_ns = time.monotonic_ns()
         # Revocation while blocked must also prevent returning already queued PCM.
         self.session.require(self.role, self.peer, self.profile.spec)
         try:
@@ -197,6 +208,7 @@ class RtpReceiver(_UdpRole):
             if flags != 0x80 or pt != self.profile.payload_type or ssrc != self.ssrc:
                 raise PacketRejected("unsupported RTP header, payload type or SSRC")
             missing = 0
+            extended_sequence, extended_timestamp = seq, timestamp
             if self._last is not None:
                 last_seq, last_timestamp = self._last
                 delta = (seq - last_seq) & 0xFFFF
@@ -206,12 +218,21 @@ class RtpReceiver(_UdpRole):
                 if timestamp != expected:
                     raise PacketRejected("timestamp does not match exact frame count")
                 missing = delta - 1
+                extended_sequence = self.extended_sequence + delta
+                extended_timestamp = self.extended_timestamp + delta * self.profile.spec.frames_per_packet
             pcm = self.profile.convert_endian(packet[12:])
             self.session.require(self.role, self.peer, self.profile.spec)
+            if self._arrival_ns is not None:
+                arrival_frames = (arrival_ns - self._arrival_ns) * self.profile.spec.sample_rate / 1_000_000_000
+                variation = abs(arrival_frames - (extended_timestamp - self.extended_timestamp))
+                self.jitter_frames += (variation - self.jitter_frames) / 16
+            self._arrival_ns = arrival_ns
+            self.extended_sequence, self.extended_timestamp = extended_sequence, extended_timestamp
             self._last = (seq, timestamp)
             self.received += 1
             self.missing += missing
-            return ReceivedPacket(self.profile.spec, pcm, seq, timestamp, ssrc, missing)
+            return ReceivedPacket(self.profile.spec, pcm, seq, timestamp, ssrc, missing,
+                                  extended_sequence, extended_timestamp, arrival_ns)
         except PacketRejected:
             self.rejected += 1
             raise
