@@ -28,6 +28,7 @@ public struct HostStamp {
 public final class NativeHostWorker {
     private var host: OpaquePointer?
     private let owner = Thread.current
+    private var borrowed = false
     public let frames: Int
     public let sources: [HostPort], outputs: [HostPort]
     private var inputStorage: [UnsafeMutableRawBufferPointer] = []
@@ -88,16 +89,18 @@ public final class NativeHostWorker {
         }
     }
     private func owned() throws {
-        guard Thread.current === owner, host != nil else { throw MobileError.invalid("exclusive-worker-required") }
+        guard Thread.current === owner, host != nil, !borrowed else { throw MobileError.invalid("exclusive-worker-required") }
     }
     /// Borrow only within the exclusive owner's operation; never retain after close.
     public func withInput<T>(_ index: Int, _ body: (UnsafeMutableRawBufferPointer) throws -> T) throws -> T {
         try owned(); guard inputStorage.indices.contains(index) else { throw MobileError.invalid("host-port-index") }
+        borrowed = true; defer { borrowed = false }
         return try body(inputStorage[index])
     }
     /// The output copy has exact admitted Float64 little-endian format. No PCM JSON.
     public func withOutput<T>(_ index: Int, _ body: (UnsafeRawBufferPointer) throws -> T) throws -> T {
         try owned(); guard outputStorage.indices.contains(index) else { throw MobileError.invalid("host-port-index") }
+        borrowed = true; defer { borrowed = false }
         return try body(UnsafeRawBufferPointer(outputStorage[index]))
     }
     public func process(nowNs: UInt64, engine: HostStamp, sourceStamps: [HostStamp]) throws {
