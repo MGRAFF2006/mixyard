@@ -3,6 +3,7 @@ pub mod client;
 #[cfg(target_os = "linux")]
 pub mod discovery;
 pub mod inventory;
+pub mod worker;
 mod inventory_json;
 #[cfg(unix)]
 #[path = "inventory_unix.rs"]
