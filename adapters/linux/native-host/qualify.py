@@ -185,12 +185,15 @@ context.modules = [
                "PIPEWIRE_CONFIG_DIR": str(config), "PIPEWIRE_CONFIG_NAME": "client.conf",
                "XDG_CONFIG_HOME": str(config), "XDG_STATE_HOME": str(home),
                "MIXYARD_PRIVATE_GRAPH": "hosted-owned-only"}
+        # PipeWire's environment selector takes precedence over -c. Clients
+        # retain client.conf; only this owned daemon selects the server config.
+        server_env = dict(env, PIPEWIRE_CONFIG_NAME="private.conf")
         report = {"serverEpochs": [],
                   "claims": {"physicalDevices": False, "nativeApps": False,
                              "physicalClocks": False, "backendAvailable": False}}
         for epoch in range(2):
             with (root / f"server-{epoch}.log").open("xb") as log:
-                server = subprocess.Popen(["pipewire", "-c", str(config / "private.conf")], env=env, stdout=log, stderr=log)
+                server = subprocess.Popen(["pipewire", "-c", str(config / "private.conf")], env=server_env, stdout=log, stderr=log)
                 try:
                     deadline = time.monotonic() + 5
                     while not (runtime / "mixyard-private").exists():

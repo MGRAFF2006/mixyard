@@ -1,6 +1,11 @@
 """Control-plane tests; these never import a native library or start PipeWire."""
 import copy
+import os
+from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
+import qualify
 from qualify import isolation
 
 
@@ -18,6 +23,35 @@ def private_snapshot():
 
 
 class Isolation(unittest.TestCase):
+    def test_daemon_launcher_selects_server_config_without_starting_native_code(self):
+        class BeforeNativeLaunch(Exception):
+            pass
+
+        def inspect_launch(argv, *, env, **_):
+            self.assertEqual(argv[0], "pipewire")
+            self.assertEqual(argv[1], "-c")
+            self.assertEqual(Path(argv[2]).name, "private.conf")
+            # PipeWire gives this environment key precedence over -c. Check the
+            # actual production launch boundary, not a parallel test launcher.
+            self.assertEqual(env["PIPEWIRE_CONFIG_NAME"], "private.conf")
+            config = Path(env["PIPEWIRE_CONFIG_DIR"])
+            self.assertEqual(Path(argv[2]), config / env["PIPEWIRE_CONFIG_NAME"])
+            self.assertIn("core.daemon = true", (config / "private.conf").read_text())
+            self.assertNotIn("core.daemon", (config / "client.conf").read_text())
+            self.assertEqual(env["PIPEWIRE_REMOTE"], "mixyard-private")
+            raise BeforeNativeLaunch()
+
+        with tempfile.TemporaryDirectory(prefix="mixyard-launch-check-", dir="/dev/shm") as root:
+            environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
+                           "RUNNER_TEMP": root, "PIPEWIRE_CONFIG_NAME": "client.conf"}
+            argv = [qualify.__file__, __file__, str(Path(root) / "evidence.json")]
+            with mock.patch.dict(os.environ, environment), mock.patch("sys.argv", argv), \
+                    mock.patch.object(qualify.subprocess, "Popen", side_effect=inspect_launch) as launch:
+                with self.assertRaises(BeforeNativeLaunch):
+                    qualify.main()
+                launch.assert_called_once()
+                self.assertEqual(os.environ["PIPEWIRE_CONFIG_NAME"], "client.conf")
+
     def test_pre_audio_gate_rejects_physical_nodes_extra_modules_and_links(self):
         accepted = private_snapshot()
         isolation(accepted)
