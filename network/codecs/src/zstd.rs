@@ -4,7 +4,6 @@ use std::ptr::NonNull;
 
 // Stable libzstd >= 1.4 APIs. Single-pass decode uses caller-sized output and
 // no internal window buffer; we additionally reject oversized frame windows.
-#[link(name = "zstd")]
 unsafe extern "C" {
     fn ZSTD_versionNumber() -> c_uint;
     fn ZSTD_createCCtx() -> *mut c_void;

@@ -2,6 +2,8 @@
 
 mod connection;
 mod control_http;
+#[cfg(target_os = "macos")]
+mod macos_termination;
 mod paired;
 
 use connection::{Connection, ConnectionStatus};
@@ -200,6 +202,16 @@ fn open_mixer(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+fn request_ui_quit(app: &tauri::AppHandle) {
+    *app.state::<ShellState>()
+        .ui_action
+        .lock()
+        .expect("shell state lock") = Some("quit");
+    if let Err(error) = open_mixer(app) {
+        eprintln!("Mixyard could not show its close guard: {error}");
+    }
+}
+
 fn close_mixer(app: &tauri::AppHandle) -> tauri::Result<()> {
     app.state::<Connection>().disconnect();
     // Construction does not prove the host displays the tray. Only macOS has
@@ -362,6 +374,12 @@ fn main() {
                 ui_action: Mutex::new(None),
                 compact: AtomicBool::new(false),
             });
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                macos_termination::install(move || request_ui_quit(&handle))
+                    .map_err(std::io::Error::other)?;
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -398,19 +416,13 @@ fn main() {
         .expect("failed to initialize Mixyard desktop UI");
 
     app.run(|app, event| match event {
-        // Dock/application-menu Quit follows the same draft guard. Only an
-        // explicit, approved quit_ui command requests programmatic exit(0).
+        // User-requested Tauri exits use this guard. macOS AppKit terminate:
+        // uses the native delegate seam installed above (not ExitRequested).
         tauri::RunEvent::ExitRequested {
             code: None, api, ..
         } => {
             api.prevent_exit();
-            *app.state::<ShellState>()
-                .ui_action
-                .lock()
-                .expect("shell state lock") = Some("quit");
-            if let Err(error) = open_mixer(app) {
-                eprintln!("Mixyard could not show its close guard: {error}");
-            }
+            request_ui_quit(app);
         }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {

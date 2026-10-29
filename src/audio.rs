@@ -1,6 +1,7 @@
 //! Bounded synchronous Float32/Float64 PCM processing, compiled from the policy planner.
 //!
-//! No device transport, clock adaptation, resampling, limiter or normalization.
+//! The processor performs no device transport, clock adaptation, resampling,
+//! limiter or normalization. Explicit destination adaptation lives in `clock`.
 //! See `docs/audio-core.md` for the adapter contract and qualification boundary.
 
 use crate::{plan, AudioFormat, Config, Inventory, Plan, ResolutionStatus};
@@ -90,6 +91,18 @@ pub enum RenderError {
     },
     /// Finite input overflowed processing or the selected output precision.
     NonFiniteResult,
+    MixStageClosed,
+    MixCount,
+    MixFormat {
+        mix: usize,
+    },
+    MixSampleCount {
+        mix: usize,
+    },
+    MixNonFinite {
+        mix: usize,
+        sample: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -154,6 +167,100 @@ struct Buffer<S> {
     samples: Vec<S>,
 }
 
+/// Caller-budgeted source storage for a native host. Slot identities follow the
+/// processor's immutable plan; the host still owns endpoint/authority binding.
+pub struct InputBank<S: Sample> {
+    slots: Vec<Option<Buffer<S>>>,
+    present: Vec<bool>,
+    frames: Vec<usize>,
+    max_frames: usize,
+}
+impl<S: Sample> InputBank<S> {
+    pub fn clear(&mut self) {
+        self.present.fill(false);
+        self.frames.fill(0);
+        for slot in self.slots.iter_mut().flatten() {
+            slot.samples.fill(S::from_f64(0.0));
+        }
+    }
+    pub fn set(
+        &mut self,
+        source: usize,
+        frames: usize,
+        samples: Option<&[S]>,
+    ) -> Result<(), RenderError> {
+        let result = self.set_inner(source, frames, samples);
+        if result.is_err() {
+            self.clear();
+        }
+        result
+    }
+    fn set_inner(
+        &mut self,
+        source: usize,
+        frames: usize,
+        samples: Option<&[S]>,
+    ) -> Result<(), RenderError> {
+        if source >= self.slots.len() {
+            return Err(RenderError::SourceCount);
+        }
+        self.present[source] = false;
+        self.frames[source] = 0;
+        if frames == 0 || frames > self.max_frames {
+            return Err(RenderError::FrameCount);
+        }
+        let Some(samples) = samples else {
+            if let Some(slot) = &mut self.slots[source] {
+                slot.samples.fill(S::from_f64(0.0));
+            }
+            return Ok(());
+        };
+        let slot = self.slots[source]
+            .as_mut()
+            .ok_or(RenderError::DisconnectedSource { source })?;
+        let count = frames * slot.format.channels as usize;
+        if samples.len() != count {
+            return Err(RenderError::SampleCount { source });
+        }
+        if let Some(sample) = samples.iter().position(|v| !v.widen().is_finite()) {
+            return Err(RenderError::NonFinite { source, sample });
+        }
+        slot.samples[..count].copy_from_slice(samples);
+        slot.samples[count..].fill(S::from_f64(0.0));
+        self.frames[source] = frames;
+        self.present[source] = true;
+        Ok(())
+    }
+}
+enum Inputs<'a, 'samples, S: Sample> {
+    Borrowed(&'a [Option<Pcm<'samples, S>>]),
+    Bank(&'a InputBank<S>),
+}
+impl<S: Sample> Inputs<'_, '_, S> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Borrowed(v) => v.len(),
+            Self::Bank(v) => v.slots.len(),
+        }
+    }
+    fn get(&self, index: usize) -> Option<Pcm<'_, S>> {
+        match self {
+            Self::Borrowed(v) => v[index],
+            Self::Bank(v) => {
+                if v.present[index] {
+                    let slot = v.slots[index].as_ref()?;
+                    Some(Pcm {
+                        format: slot.format,
+                        samples: &slot.samples[..v.frames[index] * slot.format.channels as usize],
+                    })
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
 /// An immutable policy snapshot plus exclusively owned, preallocated buffers.
 /// Compile and replace away from the audio callback. Render uses no I/O, locks,
 /// heap allocation or deallocation. All slices use the order of `plan()`.
@@ -169,6 +276,7 @@ pub struct TypedProcessor<S: Sample> {
     output_buffers: Vec<Buffer<S>>,
     accumulators: Vec<Vec<f64>>,
     initialized: Vec<bool>,
+    mix_stage_open: bool,
 }
 
 /// Backwards-compatible Float32 input, mix and output storage.
@@ -340,6 +448,7 @@ impl<S: Sample> TypedProcessor<S> {
             output_buffers: output_formats.into_iter().map(buffer).collect(),
             accumulators,
             initialized,
+            mix_stage_open: false,
         })
     }
 
@@ -351,6 +460,106 @@ impl<S: Sample> TypedProcessor<S> {
     }
     pub fn frames(&self) -> usize {
         self.frames
+    }
+
+    pub fn input_bank(&self, max_samples: usize) -> Result<InputBank<S>, String> {
+        self.make_bank(&self.sources, max_samples)
+    }
+    pub fn mix_bank(&self, max_samples: usize) -> Result<InputBank<S>, String> {
+        let formats: Vec<_> = self.mixes.iter().map(|b| Some(b.format)).collect();
+        self.make_bank(&formats, max_samples)
+    }
+    fn make_bank(
+        &self,
+        formats: &[Option<AudioFormat>],
+        max_samples: usize,
+    ) -> Result<InputBank<S>, String> {
+        let count = formats
+            .iter()
+            .flatten()
+            .try_fold(0usize, |sum, f| {
+                self.max_frames
+                    .checked_mul(f.channels as usize)
+                    .and_then(|n| sum.checked_add(n))
+            })
+            .ok_or("audio-core: source bank size overflow")?;
+        if count > max_samples || count > isize::MAX as usize / std::mem::size_of::<S>() {
+            return Err("audio-core: source bank budget exceeded".into());
+        }
+        Ok(InputBank {
+            slots: formats
+                .iter()
+                .map(|format| {
+                    format.map(|format| Buffer {
+                        format,
+                        samples: vec![S::from_f64(0.0); self.max_frames * format.channels as usize],
+                    })
+                })
+                .collect(),
+            present: vec![false; formats.len()],
+            frames: vec![0; formats.len()],
+            max_frames: self.max_frames,
+        })
+    }
+    pub fn render_bank(&mut self, frames: usize, inputs: &InputBank<S>) -> Result<(), RenderError> {
+        self.render_inputs(frames, Inputs::Bank(inputs))
+    }
+
+    /// One optional post-mix processing stage per successful render. Rebuilds
+    /// output mapping/gain using the same compiled policy, never a second graph.
+    /// Validate all replacements before publishing any; failure clears all PCM.
+    pub fn apply_mix_results(
+        &mut self,
+        replacements: &[Option<Pcm<'_, S>>],
+    ) -> Result<(), RenderError> {
+        self.apply_mix_inputs(Inputs::Borrowed(replacements))
+    }
+    pub fn apply_mix_bank(&mut self, replacements: &InputBank<S>) -> Result<(), RenderError> {
+        self.apply_mix_inputs(Inputs::Bank(replacements))
+    }
+    fn apply_mix_inputs(&mut self, replacements: Inputs<'_, '_, S>) -> Result<(), RenderError> {
+        let result = self.apply_mix_results_inner(&replacements);
+        self.mix_stage_open = false;
+        if result.is_err() {
+            self.clear_storage();
+        }
+        result
+    }
+    fn apply_mix_results_inner(
+        &mut self,
+        replacements: &Inputs<'_, '_, S>,
+    ) -> Result<(), RenderError> {
+        if !self.mix_stage_open {
+            return Err(RenderError::MixStageClosed);
+        }
+        if replacements.len() != self.mixes.len() {
+            return Err(RenderError::MixCount);
+        }
+        for index in 0..replacements.len() {
+            let replacement = replacements.get(index);
+            if let Some(pcm) = replacement {
+                let format = self.mixes[index].format;
+                if pcm.format != format {
+                    return Err(RenderError::MixFormat { mix: index });
+                }
+                if pcm.samples.len() != self.frames * format.channels as usize {
+                    return Err(RenderError::MixSampleCount { mix: index });
+                }
+                if let Some(sample) = pcm.samples.iter().position(|v| !v.widen().is_finite()) {
+                    return Err(RenderError::MixNonFinite { mix: index, sample });
+                }
+            }
+        }
+        for (index, mix) in self.mixes.iter_mut().enumerate() {
+            let replacement = replacements.get(index);
+            if let Some(pcm) = replacement {
+                mix.samples[..pcm.samples.len()].copy_from_slice(pcm.samples);
+            }
+        }
+        for buffer in &mut self.output_buffers {
+            buffer.samples.fill(S::from_f64(0.0));
+        }
+        self.render_outputs()
     }
 
     /// Selected output buffer layout. Missing/ambiguous ports return None;
@@ -387,12 +596,21 @@ impl<S: Sample> TypedProcessor<S> {
         frames: usize,
         inputs: &[Option<Pcm<'_, S>>],
     ) -> Result<(), RenderError> {
+        self.render_inputs(frames, Inputs::Borrowed(inputs))
+    }
+    fn render_inputs(
+        &mut self,
+        frames: usize,
+        inputs: Inputs<'_, '_, S>,
+    ) -> Result<(), RenderError> {
+        self.mix_stage_open = false;
         self.frames = frames.min(self.max_frames);
         self.clear_storage();
-        let result = self.render_block(frames, inputs);
+        let result = self.render_block(frames, &inputs);
         if result.is_err() {
             self.clear_storage();
         }
+        self.mix_stage_open = result.is_ok();
         result
     }
 
@@ -412,7 +630,7 @@ impl<S: Sample> TypedProcessor<S> {
     fn render_block(
         &mut self,
         frames: usize,
-        inputs: &[Option<Pcm<'_, S>>],
+        inputs: &Inputs<'_, '_, S>,
     ) -> Result<(), RenderError> {
         if frames == 0 || frames > self.max_frames {
             return Err(RenderError::FrameCount);
@@ -420,7 +638,8 @@ impl<S: Sample> TypedProcessor<S> {
         if inputs.len() != self.sources.len() {
             return Err(RenderError::SourceCount);
         }
-        for (source, input) in inputs.iter().enumerate() {
+        for source in 0..inputs.len() {
+            let input = inputs.get(source);
             let Some(input) = input else {
                 continue;
             };
@@ -439,7 +658,7 @@ impl<S: Sample> TypedProcessor<S> {
             if send.gain == 0.0 {
                 continue;
             }
-            let Some(input) = inputs[send.source] else {
+            let Some(input) = inputs.get(send.source) else {
                 continue;
             };
             let channels = self.mixes[send.mix].format.channels as usize;
@@ -469,6 +688,10 @@ impl<S: Sample> TypedProcessor<S> {
                 }
             }
         }
+        self.render_outputs()
+    }
+    fn render_outputs(&mut self) -> Result<(), RenderError> {
+        let frames = self.frames;
         for (output, buffer) in self.outputs.iter().zip(&mut self.output_buffers) {
             if output.gain == 0.0 {
                 continue;

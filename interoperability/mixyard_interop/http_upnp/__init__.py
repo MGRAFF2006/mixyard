@@ -2,6 +2,8 @@
 from .http import HttpReceiver, MediaSource, ProtocolError, Resource
 from .ssdp import Advertiser, Discovery, NoticeReceiver, discover
 from .upnp import Controller, Renderer
+from .stream import StreamReceiver, StreamResult, StreamSource
 
 __all__ = ["HttpReceiver", "MediaSource", "ProtocolError", "Resource", "Advertiser",
-           "Discovery", "NoticeReceiver", "discover", "Controller", "Renderer"]
+           "Discovery", "NoticeReceiver", "discover", "Controller", "Renderer",
+           "StreamSource", "StreamReceiver", "StreamResult"]

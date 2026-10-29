@@ -2159,6 +2159,7 @@ dependencies = [
 name = "mixyard-desktop"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "mixyard",
  "mixyard-desktop-control",
  "serde",

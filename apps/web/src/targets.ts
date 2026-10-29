@@ -1,5 +1,6 @@
 import type { Api } from './api.ts'
-export type DeviceTarget = { id: string; displayName: string; api: Api; retired?: boolean }
+import type { CodecProbe } from './network-codecs.ts'
+export type DeviceTarget = { id: string; displayName: string; api: Api; codecHost?: CodecProbe; retired?: boolean }
 
 /** A target ID owns one transport and cached workspace for this window's lifetime. */
 export class DeviceTargets {

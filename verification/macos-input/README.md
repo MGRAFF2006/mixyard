@@ -81,6 +81,81 @@ All control, allocation, property access and notifications happen outside
 lock-free atomics, host time and copies. No hardware-clock drift/adaptation proof
 is provided. In-process data tests use one synthetic clock domain.
 
+## CI provenance
+
+`evidence.py` writes `provenance.json` before native work and again for partial
+artifacts on every outcome. It requires complete Git history and unambiguous,
+resolvable commits. Every Git subprocess disables replacement objects, legacy
+grafts and commit-graph traversal through process-local options. Parent order
+and complete-history checks therefore read actual commit objects; missing or
+corrupt ancestors fail even when a pre-existing commit graph caches them. No
+Git configuration is changed. The workflow fetches the PR's target branch independently
+into `refs/remotes/origin/<base.ref>` (`main` outside PR events); it never derives
+target approval from the PR head or the executed merge's first parent.
+
+A queued GitHub test merge can use a newer approved base than the event declared.
+Schema version 3 accepts it only when the executed commit has exactly two parents
+in order: `[actual_executed_base, source_head]`. The actual base must descend from
+the declared base and be an ancestor of the independently fetched target tip.
+An unrelated, divergent, unapproved, reordered or extra parent fails provenance.
+This permits accepted base changes in the tested tree without rewriting an
+otherwise unchanged PR source. It does not require that newer base to be in the
+source tree. A direct source checkout instead requires the declared base to be
+an ancestor of both the source and fetched target; it qualifies only that source
+tree, without claiming coverage of later target changes.
+
+Native artifact qualification is scheduled for actual PR events and main pushes.
+Feature pushes do not schedule a redundant direct-source artifact job; they
+qualify only through their PR's executed merge and independently fetched target.
+A main push binds its exact event `before` SHA as the declared integrated baseline,
+not the main tip freshly fetched later by a queued job. The source must contain
+that real previous-main baseline, which must also be approved by the fresh target.
+The artifact and hashes cover the pushed source only; later main commits are not
+claimed tested. Manual artifact qualification is limited to main and uses that
+event's exact main SHA as its declared baseline. Feature-branch manual runs may
+exercise Git fixtures but skip native qualification; a skipped job is not proof.
+Zero/missing/invalid baseline objects still fail closed; no arbitrary ancestor is
+selected to make a source qualify. PR declarations remain the event's base SHA,
+with exact actual executed merge parents and independently fetched target checks.
+
+The environment inputs are `MIXYARD_SOURCE_HEAD` (default `HEAD`),
+`MIXYARD_CURRENT_BASE` (the event's declared base SHA, default
+`refs/remotes/origin/main`), and `MIXYARD_TARGET_BASE_REF` (default
+`refs/remotes/origin/main`). The last must name an explicit remote-tracking ref
+configured from the trusted target branch and freshly fetched by the caller.
+Local Git verification establishes ancestry relative to that ref; it cannot
+authenticate an arbitrarily supplied local ref as GitHub's approved target.
+
+The manifest preserves the exact source/executed commits, ordered parents and
+tree IDs, records `declared_base`, `actual_executed_base`, `target_base_ref` and
+resolved `target_base`, and reports the checked ancestry relations. Compatibility
+fields `current_base` and `merge_base` still mean the declared base and its merge
+base with the source, respectively. They do not imply that source contains the
+latest target, or that the declared base equals the executed first parent.
+
+`source_sha256` now hashes the actual source commit's Git blobs, correcting
+version 2's use of executed working files under that name. `executed_sha256`
+separately hashes the executed commit's blobs; `working_tree_sha256` records the
+working bytes. Their path sets can differ from the source when base changes add
+or delete inputs. Hash scope is the two macOS input adapter directories, this
+verification directory and its workflow. Dirty, missing or untracked scoped
+working inputs fail the check. `artifact_sha256` records available files under
+`verification/macos-input/build/`, excluding all `provenance.json` snapshots to
+avoid circular hashes. The supplied `status` is retained verbatim, independently
+of `provenance_valid`; ancestry/hash failures still write a diagnostic manifest
+and exit nonzero, including when only partial artifacts exist.
+
+Run the serial standard-library Git fixture suite from the repository root:
+
+```sh
+python3 -B verification/macos-input/test_evidence.py -v
+```
+
+It uses disposable synthetic repositories, per-command Git identity and no
+network or SDK. CI runs it on Linux before the Apple artifact job. These checks
+establish **CI artifact provenance only**, never native authority, backend
+qualification, HAL execution or production apply.
+
 ## Blocked native recipe (requires separate authorization)
 
 `BLOCKED.json` records concrete unmet gates. The present overnight authorization

@@ -6,7 +6,7 @@ import ConsoleWorkspace from './ConsoleWorkspace.vue'
 import { DeviceTargets } from './targets.ts'
 import type { DeviceTarget } from './targets.ts'
 export type { DeviceTarget } from './targets.ts'
-type Page = 'Routing' | 'Profiles' | 'Inspect' | 'Processing' | 'Situations'
+type Page = 'Routing' | 'Profiles' | 'Inspect' | 'Processing' | 'Situations' | 'Network codecs'
 const props = defineProps<{ api?: Api; targets?: readonly DeviceTarget[] }>()
 const emit = defineEmits<{ 'session-state': [state: SessionState] }>()
 // The host supplies already trusted transports. No endpoint or bearer is restored
@@ -55,5 +55,5 @@ defineExpose({ navigate: (page: Page) => workspace.value?.navigate(page), hasUns
     <p v-if="current.api.mode === 'control'">Trusted control transport supplied by the host. Remote live decisions, review and arm are unsupported; use the owning local service.</p>
     <p v-else>Remote pairing and certificate trust require a supported trusted transport. This local connection cannot authenticate another device.</p>
   </section>
-  <KeepAlive><ConsoleWorkspace :key="current.id" :ref="remember" :api="current.api" /></KeepAlive>
+  <KeepAlive><ConsoleWorkspace :key="current.id" :ref="remember" :api="current.api" :target-id="current.id" :codec-host="current.codecHost" /></KeepAlive>
 </template>

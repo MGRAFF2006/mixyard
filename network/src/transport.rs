@@ -772,4 +772,4 @@ pub async fn write_control<T: Serialize>(send: &mut SendStream, value: &T) -> Re
 
 #[cfg(test)]
 #[path = "../tests/private/transport.rs"]
-mod tests;
+pub(crate) mod tests;

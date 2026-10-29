@@ -2,9 +2,9 @@ name: Bounded native PCM handoff
 on:
   workflow_dispatch:
   push:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/audio.rs', 'src/runtime/**', 'tests/runtime_worker.rs', '.github/workflows/native-worker.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/audio.rs', 'src/audio/**', 'src/dsp/**', 'src/runtime/**', 'tests/runtime_worker.rs', 'tests/native_pipeline.rs', 'tests/native_linux_pcm.rs', '.github/workflows/native-worker.yml']
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/audio.rs', 'src/runtime/**', 'tests/runtime_worker.rs', '.github/workflows/native-worker.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/audio.rs', 'src/audio/**', 'src/dsp/**', 'src/runtime/**', 'tests/runtime_worker.rs', 'tests/native_pipeline.rs', 'tests/native_linux_pcm.rs', '.github/workflows/native-worker.yml']
 permissions:
   contents: read
 jobs:
@@ -21,4 +21,6 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
-      - run: cargo test --locked --test runtime_worker
+      - run: cargo test --locked --test runtime_worker --test native_pipeline
+      - if: runner.os == 'Linux'
+        run: cargo test --locked --test native_linux_pcm

@@ -15,11 +15,18 @@ def publish(name, pid):
 
 
 mode = (root / "mode").read_text()
-if mode == "hang":
-    child = subprocess.Popen(["/bin/sleep", "30"])
+if mode in ("hang", "orphan"):
+    program = pathlib.Path("/bin/sleep")
+    if mode == "orphan":
+        # Exercise /proc comm parsing as well as an already-exited group leader.
+        program = root / "owned (child)"
+        program.symlink_to("/bin/sleep")
+    child = subprocess.Popen([str(program), "30"])
     publish("descendant", child.pid)
     # wait_pid() may cancel immediately after observing this final ready marker.
     publish("pid", os.getpid())
+    if mode == "orphan":
+        sys.exit(0)
     child.wait()
 if mode == "stderr":
     sys.stderr.write("private bind failure")
