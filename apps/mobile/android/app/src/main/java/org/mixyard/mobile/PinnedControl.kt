@@ -2,21 +2,16 @@ package org.mixyard.mobile
 
 import org.json.JSONObject
 import java.net.URI
-import java.security.MessageDigest
-import java.security.cert.X509Certificate
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManagerFactory
-import javax.net.ssl.X509TrustManager
+import org.mixyard.mobile.http.PinnedHttpExchange
 
 /** No redirects, proxy login, cookie jar, local CSRF service, permissive trust or token in URLs. */
 class PinnedControl(private val store: CredentialStore) {
     private val fence = SessionFence()
     private var configuration: JSONObject? = store.load()
     private var session: JSONObject? = null
-    private var active: HttpsURLConnection? = null
+    private var active: PinnedHttpExchange? = null
     private val allowed = setOf("/control/pair", "/control/session", "/control/request", "/control/credentials", "/control/rotate", "/control/revoke")
-    @Synchronized fun invalidate() { fence.invalidate(); session = null; active?.disconnect(); active = null }
+    @Synchronized fun invalidate() { fence.invalidate(); session = null; active?.cancel(); active = null }
     @Synchronized fun forget() { invalidate(); store.forget(); configuration = null }
     @Synchronized fun ticket(): Ticket = fence.ticket()
     private fun permissions(value: JSONObject) {
@@ -37,51 +32,14 @@ class PinnedControl(private val store: CredentialStore) {
     }
     private fun request(config: JSONObject, path: String, body: String, ticket: Ticket, credential: Boolean): Pair<Int, String> {
         require(path in allowed)
-        val origin = endpoint(config)
-        val expectedPin = config.getString("pin").lowercase()
-        val system = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(null as java.security.KeyStore?) }.trustManagers.filterIsInstance<X509TrustManager>().single()
-        val trust = object : X509TrustManager {
-            override fun getAcceptedIssuers(): Array<X509Certificate> = system.acceptedIssuers
-            override fun checkClientTrusted(chain: Array<X509Certificate>, type: String) = system.checkClientTrusted(chain, type)
-            override fun checkServerTrusted(chain: Array<X509Certificate>, type: String) {
-                system.checkServerTrusted(chain, type)
-                val actual = MessageDigest.getInstance("SHA-256").digest(chain.first().encoded).joinToString("") { "%02x".format(it) }
-                if (actual != expectedPin) throw java.security.cert.CertificateException("certificate-pin-mismatch")
-            }
-        }
-        val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
-        val connection = origin.resolve(path).toURL().openConnection() as HttpsURLConnection
-        synchronized(this) { fence.check(ticket); active = connection }
+        val exchange = PinnedHttpExchange(endpoint(config), config.getString("pin"), path, body,
+            if (credential) config.getString("credential") else null)
         try {
-            connection.sslSocketFactory = ssl.socketFactory // Default hostname verifier remains enabled.
-            connection.instanceFollowRedirects = false; connection.useCaches = false
-            connection.connectTimeout = 5000; connection.readTimeout = 8000
-            connection.requestMethod = "POST"; connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json")
-            if (credential) connection.setRequestProperty("Authorization", "Bearer " + config.getString("credential"))
-            val encoded = body.toByteArray(Charsets.UTF_8)
-            require(encoded.size <= 2_097_152) { "request-too-large" }
-            connection.setFixedLengthStreamingMode(encoded.size)
+            synchronized(this) { fence.check(ticket); active = exchange }
+            val result = exchange.execute()
             synchronized(this) { fence.check(ticket) }
-            connection.outputStream.use { it.write(encoded) }
-            val status = connection.responseCode
-            require(status !in 300..399) { "redirect-denied" }
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream ?: error("empty-control-error")
-            val bytes = stream.use {
-                val result = java.io.ByteArrayOutputStream()
-                val chunk = ByteArray(8192)
-                while (true) {
-                    val size = it.read(chunk)
-                    if (size < 0) break
-                    require(size <= 2_097_152 - result.size()) { "response-too-large" }
-                    result.write(chunk, 0, size)
-                }
-                result.toByteArray()
-            }
-            require(bytes.size <= 2_097_152) { "response-too-large" }
-            synchronized(this) { fence.check(ticket) }
-            return status to Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString()
-        } finally { connection.disconnect(); synchronized(this) { if (active === connection) active = null } }
+            return result
+        } finally { exchange.close(); synchronized(this) { if (active === exchange) active = null } }
     }
     fun pair(endpoint: String, pin: String, device: String, invitation: String, name: String, expected: Ticket) {
         val ticket: Ticket

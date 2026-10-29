@@ -9,7 +9,15 @@ authority logic. JSONL is test-driver control only; PCM never enters it.
 The test vaults replace only the Android Keystore/iOS Keychain platform boundary.
 They retain provisioned data across client reconstruction and can fail writes.
 They do not prove encrypted persistence, device lock behavior or secure hardware.
-JVM uses real JSSE PKI plus the production pin/hostname checks; hosted Swift uses
+Android and JVM use the identical shipping `android/http` Gradle module, pinned
+OkHttp 4.12.0, TLS 1.3, real JSSE PKI and production pin/hostname checks. Calls have
+one-shot bodies, disabled connectivity retry/redirect/authentication follow-up,
+no proxy/cookie/cache, explicit total/connect/read/write bounds and bounded raw
+UTF-8 request/reply bodies. The strict revoked-401 regression previously failed
+because JDK HttpURLConnection discards its error stream in fixed-length streaming
+mode. Buffered POST fallback would permit hidden retry; the shipping engine keeps
+the real 401 body and rejects replay. Separate negative fixtures count uncertain
+POSTs and 503 Retry-After:0 POSTs. Hosted Swift uses
 real URLSession/Security with temporary fixture trust in a disposable CI keychain.
 `org.json` on JVM is the upstream JVM implementation, not Android's platform JSON
 runtime. The native raw-string canonical payload path must not depend on either

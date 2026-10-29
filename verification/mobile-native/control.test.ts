@@ -40,7 +40,7 @@ class Device {
     mkdirSync(join(directory, 'assets'))
     writeFileSync(join(directory, 'assets/index.html'), '<!doctype html><title>Owned native qualification</title>')
     this.trust = this.cli('init', '--ip', '127.0.0.1')
-    for (let i = 0; i < 8; i++) this.invitations.push(this.cli('invite', '--permissions', permissions, '--ttl-seconds', '300').invitation)
+    for (let i = 0; i < 16; i++) this.invitations.push(this.cli('invite', '--permissions', permissions, '--ttl-seconds', '300').invitation)
     writeFileSync(join(directory, 'certificate.pem'), this.trust.certificatePem)
   }
   cli(...args: string[]) {
@@ -226,7 +226,7 @@ test('shipping native pinned control client against owned production TLS service
       viewer.cli('revoke', '--credential-id', id)
       await viewer.start(new URL(invite.endpoint).port)
       const rejected = await client.request(viewScope, '/api/profiles/read', {})
-      assert.equal(rejected.ok, true); assert.equal(rejected.status, 401)
+      assert.equal(rejected.ok, true, `Native revoked reply must retain HTTP JSON (${rejected.failure ?? 'unknown'})`); assert.equal(rejected.status, 401)
       assert.equal(rejected.hasAuthority, false)
       const revoked = await client.call({ op: 'invoke', method: 'session', payload: '{}' })
       assert.equal(revoked.ok, false); assert.equal(revoked.hasAuthority, false)
@@ -276,6 +276,25 @@ test('shipping native pinned control client against owned production TLS service
       assert.equal(forgotten.ok, false); assert.equal(forgotten.hasAuthority, false)
       await client.ok({ op: 'storageFail', enabled: false }); await client.ok({ op: 'forget' })
       assert.equal((await client.call({ op: 'invoke', method: 'session', payload: '{}' })).ok, false)
+    })
+    await t.test('uncertain POST and Retry-After response never replay', async () => {
+      const state = JSON.parse(readFileSync(join(a.directory, 'identity/state.json'), 'utf8'))
+      for (const mode of ['drop-response', 'retry-after-zero']) {
+        let requests = 0
+        const sink = createServer({ cert: a.trust.certificatePem, key: createPrivateKey({ key: Buffer.from(state.privateKeyPkcs8), type: 'pkcs8', format: 'der' }).export({ type: 'pkcs8', format: 'pem' }) }, (req, res) => {
+          requests++; req.resume()
+          req.on('end', () => {
+            if (mode === 'drop-response') req.socket.destroy()
+            else { res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '0' }); res.end('{"error":{"code":"owned-unavailable","message":"Owned negative replay fixture"}}') }
+          })
+        })
+        try {
+          sink.listen(0, '127.0.0.1'); await once(sink, 'listening')
+          const endpoint = `https://127.0.0.1:${(sink.address() as any).port}`
+          assert.equal((await client.call({ ...a.provisioning(), endpoint })).ok, false)
+          assert.equal(requests, 1, `Native POST replayed after ${mode}`)
+        } finally { await new Promise<void>(resolveClose => sink.close(() => resolveClose())) }
+      }
     })
   } finally {
     await native?.close()

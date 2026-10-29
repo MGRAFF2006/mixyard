@@ -59,6 +59,18 @@ only the native pinned client can contact the host. The platform bridges follow
 [Android's origin-limited messaging](https://developer.android.com/develop/ui/views/layout/webapps/native-api-access-jsbridge)
 and [Apple's request/reply handler](https://developer.apple.com/documentation/webkit/wkscriptmessagehandlerwithreply).
 
+Android's production `android/http` Gradle module is also linked unchanged by the
+JVM qualifier. Pinned OkHttp 4.12.0 uses a one-shot body and explicitly disables
+connectivity retry, redirects, protocol redirects, origin/proxy authentication
+follow-ups, proxies, cookies and cache. TLS is restricted to 1.3 with platform PKI,
+the exact leaf pin and default hostname validation. Total/connect/read/write
+timeouts are 12/5/8/8 seconds; request and response bodies are bounded at 2 MiB.
+HTTP status and the original valid UTF-8 JSON body return together, including 401.
+The JDK HttpURLConnection streaming path discarded 401 response bodies; buffering
+POSTs instead would allow hidden retry. The strict production-service regression
+therefore qualifies this actual replacement engine rather than fabricating an
+error body. Platforms without TLS 1.3 fail closed.
+
 ## Session and lifecycle safety
 
 Every native bridge message captures the native epoch **before** it enters the

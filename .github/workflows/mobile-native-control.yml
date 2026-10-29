@@ -45,7 +45,13 @@ jobs:
           cp apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt verification/mobile-native/kotlin/build/production/
           cp apps/mobile/android/core/src/main/kotlin/org/mixyard/mobile/Endpoint.kt verification/mobile-native/kotlin/build/production/
           sha256sum apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt verification/mobile-native/kotlin/build/production/PinnedControl.kt
-          gradle --no-daemon -p verification/mobile-native/kotlin installDist
+          gradle --no-daemon -p verification/mobile-native/kotlin installDist --write-locks
+      - uses: actions/upload-artifact@v6
+        with:
+          name: mobile-native-http-dependency-locks
+          path: |
+            verification/mobile-native/kotlin/gradle.lockfile
+            apps/mobile/android/http/gradle.lockfile
       - name: Build pinned production control service
         run: cargo build --locked --manifest-path .qualification-control/control/Cargo.toml --bin mixyard-control --jobs 2
       - name: Actual Kotlin JSSE and shipping pin/dispatch/serializer against actual TLS services
@@ -81,3 +87,22 @@ jobs:
         run: node --test verification/mobile-native/control.test.ts
       - if: always()
         run: echo 'Production Swift client + real URLSession/Security PKI/pin/HTTP in owned hosted keychain trust. Vault platform double, not iPhone Keychain/device-lock or physical qualification. PCM/audio roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
+  android-shipping-http-sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile actual Android application with identical shipping HTTP module
+        working-directory: apps/mobile/android
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/android-shipping-http-gradle
+        run: gradle --no-daemon :app:assembleDebug :app:lintDebug --write-locks
+      - if: always()
+        run: echo 'Actual Android SDK application compilation/lint with the same shipping HTTP engine. No Android runtime/emulator/physical secure-storage execution is claimed.' >> "$GITHUB_STEP_SUMMARY"
