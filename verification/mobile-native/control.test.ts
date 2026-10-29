@@ -28,11 +28,14 @@ function deadline<T>(promise: Promise<T>, label: string, ms = 20_000): Promise<T
 }
 type Trust = { deviceId: string; certificatePem: string; certificateSha256: string }
 class Device {
+  readonly directory: string
+  readonly permissions: string
   trust: Trust
   invitations: string[] = []
   process: ChildProcess | null = null
   endpoint = ''
-  constructor(readonly directory: string, readonly permissions: string) {
+  constructor(directory: string, permissions: string) {
+    this.directory = directory; this.permissions = permissions
     mkdirSync(directory)
     mkdirSync(join(directory, 'assets'))
     writeFileSync(join(directory, 'assets/index.html'), '<!doctype html><title>Owned native qualification</title>')
@@ -85,6 +88,7 @@ class Device {
 type NativeReply = { ok: boolean; raw?: string; status?: number; hasAuthority: boolean; failure?: string }
 class Native {
   child: ChildProcess
+  private terminal = false
   private pending: { resolve: (reply: NativeReply) => void; reject: (error: Error) => void } | null = null
   constructor(directory: string) {
     this.child = spawn(command[0], command.slice(1), { env: { ...process.env, MIXYARD_NATIVE_FIXTURE: directory }, stdio: ['pipe', 'pipe', 'pipe'] })
@@ -94,14 +98,17 @@ class Native {
       if (!pending) return
       try { pending.resolve(JSON.parse(line)) } catch { pending.reject(new Error('Native driver returned invalid JSONL')) }
     })
-    this.child.on('error', () => { this.pending?.reject(new Error('Native executable unavailable')); this.pending = null })
-    this.child.on('exit', () => { this.pending?.reject(new Error('Native driver exited')); this.pending = null; lines.close() })
+    this.child.on('error', () => { this.terminal = true; this.pending?.reject(new Error('Native executable unavailable')); this.pending = null })
+    this.child.on('exit', () => { this.terminal = true; this.pending?.reject(new Error('Native driver exited')); this.pending = null; lines.close() })
   }
   async call(body: unknown): Promise<NativeReply> {
+    if (this.terminal) throw new Error('Native driver is unavailable')
     assert.equal(this.pending, null, 'test driver submits one exchange at a time')
     const reply = new Promise<NativeReply>((resolve, reject) => { this.pending = { resolve, reject } })
     this.child.stdin!.write(dspJson(body) + '\n')
-    return deadline(reply, 'native client')
+    return deadline(reply, 'native client').catch(error => {
+      this.terminal = true; this.pending = null; this.child.kill('SIGTERM'); throw error
+    })
   }
   async ok(body: unknown): Promise<NativeReply> {
     const reply = await this.call(body)
@@ -230,7 +237,7 @@ test('shipping native pinned control client against owned production TLS service
       // loopback with that same trusted cert to make the hostname actually wrong.
       const state = JSON.parse(readFileSync(join(a.directory, 'identity/state.json'), 'utf8'))
       let connections = 0; let requests = 0
-      const mismatch = createServer({ cert: a.trust.certificatePem, key: createPrivateKey({ key: Buffer.from(state.privateKeyPkcs8), type: 'pkcs8', format: 'der' }) }, (_req, res) => { requests++; res.writeHead(500); res.end() })
+      const mismatch = createServer({ cert: a.trust.certificatePem, key: createPrivateKey({ key: Buffer.from(state.privateKeyPkcs8), type: 'pkcs8', format: 'der' }).export({ type: 'pkcs8', format: 'pem' }) }, (_req, res) => { requests++; res.writeHead(500); res.end() })
       mismatch.on('connection', () => { connections++ })
       try {
         mismatch.listen(0, '::1'); await once(mismatch, 'listening')
@@ -245,7 +252,7 @@ test('shipping native pinned control client against owned production TLS service
       const state = JSON.parse(readFileSync(join(a.directory, 'identity/state.json'), 'utf8'))
       let destinationRequests = 0
       let redirectRequests = 0
-      redirect = createServer({ cert: a.trust.certificatePem, key: createPrivateKey({ key: Buffer.from(state.privateKeyPkcs8), type: 'pkcs8', format: 'der' }) }, (req, res) => {
+      redirect = createServer({ cert: a.trust.certificatePem, key: createPrivateKey({ key: Buffer.from(state.privateKeyPkcs8), type: 'pkcs8', format: 'der' }).export({ type: 'pkcs8', format: 'pem' }) }, (req, res) => {
         if (req.url === '/sink') { destinationRequests++; res.writeHead(500); res.end(); return }
         redirectRequests++
         res.writeHead(307, { Location: `https://127.0.0.1:${(redirect!.address() as any).port}/sink` }); res.end()
