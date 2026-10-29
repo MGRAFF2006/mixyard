@@ -2,9 +2,9 @@ name: Authenticated device control integration
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['control/**', 'src/**', 'apps/web/src/**', 'Cargo.toml', 'Cargo.lock', 'verification/device-control/**', '.github/workflows/device-control-integration.yml']
+    paths: ['control/**', 'src/**', 'apps/web/src/**', 'apps/web/package.json', 'apps/web/pnpm-lock.yaml', 'Cargo.toml', 'Cargo.lock', 'verification/device-control/**', '.github/workflows/device-control-integration.yml']
   push:
-    paths: ['control/**', 'src/**', 'apps/web/src/**', 'Cargo.toml', 'Cargo.lock', 'verification/device-control/**', '.github/workflows/device-control-integration.yml']
+    paths: ['control/**', 'src/**', 'apps/web/src/**', 'apps/web/package.json', 'apps/web/pnpm-lock.yaml', 'Cargo.toml', 'Cargo.lock', 'verification/device-control/**', '.github/workflows/device-control-integration.yml']
 permissions:
   contents: read
 jobs:
@@ -60,6 +60,8 @@ jobs:
             apiSha256: hash('apps/web/src/api.ts'),
             transportHelperSha256: hash('verification/device-control/pinned-fetch.ts'),
             transportRegressionSha256: hash('verification/device-control/transport.test.ts'),
+            browserClientSha256: hash('verification/device-control/browser-client.ts'),
+            browserHarnessSha256: hash('verification/device-control/browser.ts'),
             serviceHarnessSha256: hash('verification/device-control/service.test.ts'),
             controlLockSha256: hash('control/Cargo.lock'),
             executableSha256: hash(process.env.MIXYARD_CONTROL_BINARY),

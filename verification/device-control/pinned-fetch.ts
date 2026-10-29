@@ -48,7 +48,15 @@ export function pinnedFetch(endpoint: string, certificate: string): typeof fetch
         catch (error) { networkFailure(error) }
       })
     })
-    const abort = () => pending.destroy(init.signal?.reason instanceof Error ? init.signal.reason : new Error('Control request aborted.'))
+    const abort = () => {
+      const reason = init.signal?.reason ?? new DOMException('Aborted', 'AbortError')
+      // A queued Agent request may not emit error/close until its predecessor
+      // finishes. Cancellation settles independently of that socket admission.
+      clearTimeout(deadline)
+      init.signal?.removeEventListener('abort', abort)
+      pending.destroy(reason instanceof Error ? reason : new Error('Control request aborted.'))
+      reject(reason)
+    }
     const deadline = setTimeout(() => pending.destroy(new Error('Control request total deadline exceeded.')), 12_000)
     init.signal?.addEventListener('abort', abort, { once: true })
     pending.on('timeout', () => pending.destroy(new Error('Control request timed out.')))

@@ -9,7 +9,7 @@ import { pinnedFetch } from './pinned-fetch.ts'
 
 type Target = { id: string; displayName: string; deviceId: string; credential: string; url: string; certificate: string }
 
-export async function verifyBrowser(root: string, directory: string, targets: Target[], revokeFirst: () => Promise<void>, readDraft: (id: string) => Promise<unknown>) {
+export async function verifyBrowser(root: string, directory: string, targets: Target[], revokeFirst: () => Promise<void>, readDraft: (id: string) => Promise<unknown>, stopFirst: () => Promise<void>, restartFirst: () => Promise<void>) {
   const require = createRequire(join(root, 'apps/web/package.json'))
   const { build } = await import(pathToFileURL(require.resolve('vite')).href)
   const { default: vue } = await import(pathToFileURL(require.resolve('@vitejs/plugin-vue')).href)
@@ -40,16 +40,30 @@ export async function verifyBrowser(root: string, directory: string, targets: Ta
       const transport = transports.get(id)
       assert.ok(transport, 'browser cannot invent a management endpoint')
       assert.ok(['/control/session', '/control/request'].includes(path))
-      assert.equal(init.headers.authorization, `Bearer ${transport.target.credential}`, 'credentials must stay with their target')
-      const response = await transport.fetch(path, { method: 'POST', headers: init.headers, body: init.body })
+      assert.ok(init.headers.authorization === `Bearer ${transport.target.credential}`, 'credentials must stay with their target')
+      let response: Response
+      try { response = await transport.fetch(path, { method: 'POST', headers: init.headers, body: init.body }) }
+      catch (error) {
+        if (error instanceof TypeError) return { kind: 'network-error' }
+        throw error
+      }
       const text = await response.text()
       if (holdNextWrite && id === targets[0]!.id && path === '/control/request' && JSON.parse(init.body).path === '/api/profiles/edit') {
         holdNextWrite = false; reached.resolve(); await release.promise
       }
-      return { status: response.status, text }
+      return { kind: 'response', status: response.status, text }
     })
     await page.addInitScript((values: Target[]) => { window.mixyardControlTargets = values }, targets.map(({ id, displayName, deviceId, credential }) => ({ id, displayName, deviceId, credential })))
     await page.goto(`http://127.0.0.1:${address.port}/verification/device-control/browser.html`)
+    const wrongCredential = 'owned-wrong-bearer-sentinel'
+    const mismatchDiagnostic = await page.evaluate(async ({ id, wrong }: { id: string; wrong: string }) => {
+      try {
+        await window.mixyardControlRequest(id, '/control/session', { headers: { authorization: `Bearer ${wrong}` }, body: '{}' })
+        return ''
+      } catch (error) { return String(error) }
+    }, { id: targets[0]!.id, wrong: wrongCredential })
+    assert.ok(mismatchDiagnostic.includes('credentials must stay with their target'), 'binding must reject a mismatched bearer')
+    assert.ok(!mismatchDiagnostic.includes(wrongCredential) && targets.every(target => !mismatchDiagnostic.includes(target.credential)), 'binding diagnostics must not contain either bearer')
     const selector = page.getByLabel('Manage device', { exact: true })
     const gain = page.getByRole('slider', { name: 'mic to Call gain', exact: true })
     const save = page.getByRole('button', { name: 'Save draft', exact: true })
@@ -80,6 +94,17 @@ export async function verifyBrowser(root: string, directory: string, targets: Ta
     await selector.selectOption(targets[0]!.id)
     await expect(gain).toHaveValue('0.37')
     await gain.fill('0.41')
+    // This failure crosses the real Playwright binding, not the Node-only Api
+    // path: errors must regain the browser realm's fetch semantics.
+    await stopFirst()
+    await page.getByRole('button', { name: 'Validate config', exact: true }).click()
+    await expect(page.getByRole('alert')).toContainText(/offline or timed out/i)
+    await expect(save).toBeDisabled()
+    await expect(gain).toHaveValue('0.41')
+    await restartFirst()
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    await expect(save).toBeEnabled()
+    await expect(gain).toHaveValue('0.41')
     await revokeFirst()
     await page.getByRole('button', { name: 'Refresh', exact: true }).click()
     await expect(page.getByRole('alert')).toContainText(/unauthorized|credential/i)

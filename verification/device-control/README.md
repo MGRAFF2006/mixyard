@@ -29,6 +29,11 @@ connection pool, and that TLS 1.2 cannot silently qualify. Each binding owns its
 pin-policy agent, permits one HTTP exchange at a time, and disables TLS session
 caching; it never borrows another policy's socket or retries a request. Transport errors
 use fetch-style TypeError invalidation; structured HTTP errors retain their status.
+The rendered binding returns only an explicit network-failure tag and constructs
+TypeError in the browser realm, rather than relying on serialized Error prototypes.
+Queued cancellation settles without waiting for another request's response.
+Credential isolation and rotation assertions use boolean diagnostics so failed
+assertions do not print either bearer.
 The checks cover certificate mismatch, one-use pairing, missing authorization,
 view versus stored-control rights, a singleton Settings grant completing the
 actual settings editor's read/save flow without View, A/B store isolation, concurrent stale writes,
@@ -52,7 +57,9 @@ The browser path mounts the complete production App/Api. A test-only injected
 binding pins each exact owned TLS endpoint and keeps A/B requests separate; it
 does not replace service operations with predetermined responses. It exercises
 host-local drafts, B-only persistence, switching while a real A save response is
-held, revoked-session recovery, and the 390 px layout. This binding is not the
+held, an actual service stop followed by Validate disabling writes while retaining
+the local draft, explicit refresh after restarting the same endpoint, revoked-session
+recovery, secret-free credential-mismatch diagnostics, and the 390 px layout. This binding is not the
 production Tauri/Kotlin/Swift bridge and does not qualify its native certificate
 or credential storage. The ordinary Vue browser suite separately checks the
 complete editor and close/unload guards.

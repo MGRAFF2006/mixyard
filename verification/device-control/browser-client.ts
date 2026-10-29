@@ -6,7 +6,7 @@ import '../../apps/web/src/style.css'
 declare global {
   interface Window {
     mixyardControlTargets: { id: string; displayName: string; deviceId: string; credential: string }[]
-    mixyardControlRequest(id: string, path: string, init: { headers: Record<string, string>; body: string }): Promise<{ status: number; text: string }>
+    mixyardControlRequest(id: string, path: string, init: { headers: Record<string, string>; body: string }): Promise<{ kind: 'response'; status: number; text: string } | { kind: 'network-error' }>
   }
 }
 
@@ -19,6 +19,9 @@ const targets = window.mixyardControlTargets.map(target => ({
     if (init.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const reply = await window.mixyardControlRequest(target.id, input, { headers: Object.fromEntries(new Headers(init.headers)), body: init.body })
     if (init.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    // Playwright reconstructs thrown errors in another realm. Carry a bounded
+    // result instead and create the fetch failure where Api performs instanceof.
+    if (reply.kind === 'network-error') throw new TypeError('Control transport failed.')
     return new Response(reply.text, { status: reply.status, headers: { 'Content-Type': 'application/json' } })
   }, { deviceId: target.deviceId, credential: target.credential }),
 }))

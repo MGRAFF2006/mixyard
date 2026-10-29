@@ -106,7 +106,7 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
     const unauthorized = await a.post('/control/session', {})
     assert.equal(unauthorized.status, 401, 'TLS without application authorization cannot administer a device')
     const privateError = await unauthorized.text()
-    for (const secret of [ownerA.credential, ownerB.credential, viewer.credential, a.invitations.view, a.directory]) {
+    for (const secret of [ownerA.credential, ownerB.credential, viewer.credential, a.invitations.view!, a.directory]) {
       assert.ok(!privateError.includes(secret), 'unauthorized errors must not expose credentials, invitations or private store paths')
     }
     await assert.rejects(pinnedFetch(a.url, b.trust.certificatePem)('/control/session', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } }), 'another device certificate must fail trust validation')
@@ -226,7 +226,7 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
     assert.equal(rotation.status, 200)
     const rotated = (await rotation.json()).body
     assert.equal(typeof rotated.credential, 'string')
-    assert.notEqual(rotated.credential, ownerA.credential)
+    assert.ok(rotated.credential !== ownerA.credential, 'rotation must replace the bearer')
     assert.equal((await a.post('/control/session', {}, ownerA.credential)).status, 401, 'rotation invalidates the old bearer')
     const rotatedApi = a.api(rotated.credential)
     await rotatedApi.connect()
@@ -268,6 +268,11 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
         const api = id === 'a' ? c.api(ownerC.credential) : d.api(ownerD.credential)
         await api.connect()
         return (await api.post('/api/profiles/read') as { draft: unknown }).draft
+      }, () => c.stop(), async () => {
+        // Restart the same immutable owned endpoint; no silent retargeting.
+        const endpoint = c.url
+        await c.start(new URL(endpoint).port)
+        assert.equal(c.url, endpoint)
       })
     }
   } finally {

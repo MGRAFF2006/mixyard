@@ -4,14 +4,15 @@ import { once } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:https'
 import type { Server } from 'node:https'
-import type { Socket } from 'node:net'
+import type { Duplex } from 'node:stream'
+import type { ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { pinnedFetch } from './pinned-fetch.ts'
 
 test('pinned binding checks leaf identity and TLS version before sending HTTP, with fetch-style failures', async () => {
   const directory = mkdtempSync('/dev/shm/mixyard-control-pin-')
-  const servers: Server[] = [], sockets = new Set<Socket>()
+  const servers: Server[] = [], sockets = new Set<Duplex>()
   const file = (name: string) => join(directory, name)
   const openssl = (...args: string[]) => execFileSync('openssl', args, { stdio: ['ignore', 'ignore', 'pipe'] })
   try {
@@ -22,9 +23,9 @@ test('pinned binding checks leaf identity and TLS version before sending HTTP, w
     writeFileSync(file('other.ext'), 'subjectAltName=IP:127.0.0.1\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n')
     openssl('x509', '-req', '-in', file('other.csr'), '-CA', file('identity.pem'), '-CAkey', file('identity.key'), '-set_serial', '2', '-days', '1', '-extfile', file('other.ext'), '-out', file('other.pem'))
     const certificate = readFileSync(file('identity.pem'), 'utf8')
-    async function listen(cert: string, key: string, version: 'TLSv1.3' | 'TLSv1.2') {
+    async function listen(cert: string, key: string, version: 'TLSv1.3' | 'TLSv1.2', handler?: (reply: ServerResponse) => void) {
       let received = 0
-      const server = createServer({ cert: readFileSync(file(cert)), key: readFileSync(file(key)), minVersion: version, maxVersion: version }, (_request, response) => { received++; response.end('{}') })
+      const server = createServer({ cert: readFileSync(file(cert)), key: readFileSync(file(key)), minVersion: version, maxVersion: version }, (_request, response) => { received++; if (handler) handler(response); else response.end('{}') })
       servers.push(server)
       server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)) })
       const listening = once(server, 'listening'); server.listen(0, '127.0.0.1'); await listening
@@ -49,6 +50,32 @@ test('pinned binding checks leaf identity and TLS version before sending HTTP, w
     assert.equal(await ordinaryTrust(olderTls.url, 'TLSv1.2'), 200)
     await assert.rejects(pinnedFetch(olderTls.url, certificate)('/control/session', init), TypeError)
     assert.equal(olderTls.count(), 1, 'TLS version refusal happens before HTTP')
+    const entered = Promise.withResolvers<void>()
+    let heldResponse: ServerResponse | undefined
+    const blocked = await listen('identity.pem', 'identity.key', 'TLSv1.3', response => {
+      heldResponse = response; entered.resolve()
+    })
+    const fetcher = pinnedFetch(blocked.url, certificate)
+    const first = fetcher('/control/session', init)
+    await entered.promise
+    const cancel = new AbortController()
+    const queued = fetcher('/control/session', { ...init, signal: cancel.signal })
+    const rejected = assert.rejects(queued, (error: unknown) => error instanceof Error && error.name === 'AbortError')
+    cancel.abort()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        rejected,
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Queued abort waited for the preceding HTTP response.')), 250) }),
+      ])
+      assert.equal(blocked.count(), 1, 'cancelled queued requests send no HTTP')
+    } finally {
+      clearTimeout(timer)
+      heldResponse!.end('{}')
+      await first
+      await rejected
+    }
+    assert.equal(blocked.count(), 1, 'cancelled requests stay absent after the predecessor completes')
   } finally {
     for (const socket of sockets) socket.destroy()
     await Promise.all(servers.map(server => new Promise<void>(resolve => server.close(() => resolve()))))
