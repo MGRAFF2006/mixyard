@@ -2,7 +2,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["-h"] {
-        println!("Usage: mixyard-runtime serve|inventory [--instance NAME]\n       mixyard-runtime serve [--instance NAME] --inventory-fixture-helper /ABSOLUTE/HELPER\nRead-only PipeWire discovery; fixture helpers always produce simulated evidence. No audio backend or automatic startup.");
+        println!("Usage: mixyard-runtime serve|inventory [--instance NAME]\n       mixyard-runtime serve [--instance NAME] --inventory-fixture-helper /ABSOLUTE/HELPER\nRead-only PipeWire/installed Windows/CoreAudio discovery; fixture helpers always produce simulated evidence. No audio backend or automatic startup.");
         return ExitCode::SUCCESS;
     }
     let mut instance = "default";

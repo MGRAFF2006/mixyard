@@ -159,13 +159,13 @@ install -m 0755 adapters/macos/inventory/build/mixyard-macos-inventory "$HOME/Ap
 
 Build output defaults to the ignored local `build/` directory; the macOS script
 also accepts an explicit small build directory. These are manual installation
-examples, not a runtime installer. Distributors must package the native helper
+examples. The [runtime integration and private local installers](runtime.md#installed-windows-and-macos-inventory-providers)
+connect these exact helpers to real OS IPC. Distributors must package the native helper
 for the target architecture, protect its executable and parent directories from
-untrusted writers and configure its exact absolute path through the owning
-runtime's trusted installation mechanism. A snapshot's own `evidence` field does
-not make an arbitrary executable native/trusted. No PATH discovery or automatic
-download is specified. Signing, hardened distribution and runtime path validation
-belong to packaging/integration. These unsigned CI artifacts are build evidence.
+untrusted writers and install it at the owning runtime's fixed sibling path.
+A snapshot's own `evidence` field does not make an arbitrary executable
+native/trusted. No PATH discovery or automatic download is specified. Signing
+and hardened distribution belong to packaging/integration. These unsigned CI artifacts are build evidence.
 The shared dependency-free serializer is in
 `adapters/windows/inventory/protocol.hpp`; the macOS source includes it directly.
 

@@ -1,22 +1,15 @@
 //! Read-only Linux discovery. No graph, device-default or audio operations.
+use super::inventory_json::Unique;
 use crate::{
     AudioFormat, BackendLimits, Evidence, Inventory, Observation, Origin, OutputObservation,
     Platform, Selector, Target,
 };
-use serde::Deserialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
-    fs::{self, OpenOptions},
-    io::{self, Read, Write},
-    os::{
-        fd::AsRawFd,
-        unix::{
-            fs::{MetadataExt, OpenOptionsExt},
-            process::CommandExt,
-        },
-    },
+    io::{self, Read},
+    os::{fd::AsRawFd, unix::process::CommandExt},
     path::Path,
     process::{Child, ChildStderr, ChildStdout, Command, Stdio},
     time::{Duration, Instant},
@@ -158,60 +151,6 @@ impl Capture for Job {
     }
 }
 
-// Value's usual decoder accepts duplicate keys. Native observations must not.
-struct Unique(Value);
-impl<'de> Deserialize<'de> for Unique {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = Unique;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("JSON without duplicate keys")
-            }
-            fn visit_bool<E: serde::de::Error>(self, v: bool) -> std::result::Result<Unique, E> {
-                Ok(Unique(v.into()))
-            }
-            fn visit_i64<E: serde::de::Error>(self, v: i64) -> std::result::Result<Unique, E> {
-                Ok(Unique(v.into()))
-            }
-            fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<Unique, E> {
-                Ok(Unique(v.into()))
-            }
-            fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<Unique, E> {
-                Ok(Unique(serde_json::json!(v)))
-            }
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<Unique, E> {
-                Ok(Unique(v.into()))
-            }
-            fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Unique, E> {
-                Ok(Unique(Value::Null))
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut a: A,
-            ) -> std::result::Result<Unique, A::Error> {
-                let mut out = Vec::new();
-                while let Some(Unique(v)) = a.next_element()? {
-                    out.push(v);
-                }
-                Ok(Unique(Value::Array(out)))
-            }
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut a: A,
-            ) -> std::result::Result<Unique, A::Error> {
-                let mut out = Map::new();
-                while let Some((k, Unique(v))) = a.next_entry::<String, Unique>()? {
-                    if out.insert(k, v).is_some() {
-                        return Err(serde::de::Error::custom("duplicate key"));
-                    }
-                }
-                Ok(Unique(Value::Object(out)))
-            }
-        }
-        d.deserialize_any(Visitor)
-    }
-}
 fn identity(v: &Value) -> Result<String> {
     let text = match v {
         Value::String(s) => s.clone(),
@@ -524,82 +463,8 @@ fn decode(bytes: &[u8], evidence: Evidence) -> Result<Inventory> {
     Ok(inventory)
 }
 
-/// Digest only: never persist raw observations or application metadata.
 pub(super) fn revision(inventory: &mut Inventory, directory: &Path) -> Result<()> {
-    inventory.revision = 0;
-    let bytes = serde_json::to_vec(inventory).map_err(|_| "inventory-serialization-failed")?;
-    if bytes.len() > super::MAX_INVENTORY_FRAME - 256 {
-        return Err("inventory-response-exceeds-1MiB-reduce-visible-graph");
-    }
-    let digest = Sha256::digest(&bytes);
-    let path = directory.join("inventory-revision-v1");
-    let previous = match OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(&path)
-    {
-        Ok(mut file) => {
-            let meta = file.metadata().map_err(|_| "inventory-state-unavailable")?;
-            if !meta.is_file()
-                || meta.uid() != unsafe { libc::geteuid() }
-                || meta.mode() & 0o777 != 0o600
-                || meta.len() != 80
-                || meta.nlink() != 1
-            {
-                return Err("inventory-state-insecure-or-corrupt-do-not-reset");
-            }
-            let mut state = [0; 80];
-            file.read_exact(&mut state)
-                .map_err(|_| "inventory-state-corrupt-do-not-reset")?;
-            if &state[..8] != b"MXYINV01" || Sha256::digest(&state[..48])[..] != state[48..] {
-                return Err("inventory-state-corrupt-do-not-reset");
-            }
-            Some(state)
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(_) => return Err("inventory-state-unavailable-do-not-reset"),
-    };
-    let old_revision = previous
-        .as_ref()
-        .map(|s| u64::from_be_bytes(s[8..16].try_into().unwrap()))
-        .unwrap_or(0);
-    if previous.is_some() && old_revision == 0 {
-        return Err("inventory-state-corrupt-do-not-reset");
-    }
-    if previous.as_ref().is_some_and(|s| s[16..48] == digest[..]) {
-        inventory.revision = old_revision;
-        return Ok(());
-    }
-    let next = old_revision
-        .checked_add(1)
-        .ok_or("inventory-revision-exhausted")?;
-    let mut random = [0; 16];
-    getrandom::fill(&mut random).map_err(|_| "inventory-state-entropy-unavailable")?;
-    let temporary = directory.join(format!(
-        "inventory-revision-{:032x}.tmp",
-        u128::from_be_bytes(random)
-    ));
-    let write = || -> io::Result<()> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        let mut state = Vec::from(b"MXYINV01".as_slice());
-        state.extend(next.to_be_bytes());
-        state.extend(digest);
-        let checksum = Sha256::digest(&state);
-        state.extend(checksum);
-        file.write_all(&state)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)?;
-        fs::File::open(directory)?.sync_all()
-    };
-    if write().is_err() {
-        return Err("inventory-state-atomic-write-failed-do-not-reset");
-    }
-    inventory.revision = next;
-    Ok(())
+    super::inventory_state::revision(inventory, directory)
 }
 
 #[cfg(test)]

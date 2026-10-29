@@ -2,9 +2,9 @@ name: Headless runtime lifecycle (no native audio)
 on:
   workflow_dispatch:
   push:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', '.github/workflows/runtime.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', 'tests/runtime_support/**', 'scripts/install-inventory-runtime.*', 'adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', '.github/workflows/runtime.yml']
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', '.github/workflows/runtime.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', 'tests/runtime_support/**', 'scripts/install-inventory-runtime.*', 'adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', '.github/workflows/runtime.yml']
 permissions:
   contents: read
 jobs:
@@ -18,6 +18,8 @@ jobs:
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - name: Require 10 GiB free
@@ -30,10 +32,28 @@ jobs:
               raise SystemExit('Less than 10 GiB free')
       - name: Build foreground runtime and CLI
         run: cargo build --locked --bins
+      - name: Build and privately install Windows read-only inventory helper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S adapters/windows -B build/native-inventory -A x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/native-inventory --config Release --target mixyard-windows-inventory
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $runtime = ./scripts/install-inventory-runtime.ps1 -Runtime target/debug/mixyard-runtime.exe -Helper build/native-inventory/Release/mixyard-windows-inventory.exe -Name "ci-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "MIXYARD_TEST_NATIVE_RUNTIME=$runtime" >> $env:GITHUB_ENV
+      - name: Build and privately install macOS read-only inventory helper
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash adapters/macos/inventory/build.sh
+          runtime=$(bash scripts/install-inventory-runtime.sh "$PWD/target/debug/mixyard-runtime" "$PWD/adapters/macos/inventory/build/mixyard-macos-inventory" "$HOME/MixyardRuntime-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT")
+          echo "MIXYARD_TEST_NATIVE_RUNTIME=$runtime" >> "$GITHUB_ENV"
       - name: Existing core and actual Windows kernel DACL checks
         run: cargo test --locked --lib --bins
       - name: Real headless subprocess lifecycle and endpoint security
-        run: cargo test --locked --test runtime_lifecycle --test runtime_readonly --test runtime_inventory
+        run: cargo test --locked --test runtime_lifecycle --test runtime_readonly --test runtime_inventory --test runtime_native_inventory
       - name: Record qualification boundary
         shell: bash
-        run: echo 'Real local IPC lifecycle and simulated bounded discovery helper only. Native audio/GUI independence and quality gates remain unverified.' >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo 'Real local IPC lifecycle, simulated failure/cancellation fixtures and installed Windows/CoreAudio read-only helper invocation. Hosted SDK/OS proof only: physical audio quality and native audio apply remain unverified.' >> "$GITHUB_STEP_SUMMARY"
