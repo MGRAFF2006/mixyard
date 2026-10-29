@@ -44,3 +44,12 @@ reset on error, monotonic source capture times across missing blocks, exact
 typed byte chunks for strict Clippy, and removal of unqualified cache-line
 padding that failed the supported MSVC build. No check was weakened and no
 held experimental branch was used as evidence.
+
+The separately reviewed [fixture publication repair](https://github.com/MGRAFF2006/mixyard/pull/84)
+also belongs to this integration. Accepted-main helpers exposed PID files before
+their contents were complete, so cancellation checks could fail parsing an empty
+marker before reaching their safety assertions. Complete sibling files now
+rename into place; Linux parent readiness follows descendant publication. The
+existing cancellation assertions and deadlines remain intact. Six real Linux
+private IPC/HTTP tests and the helper publication test pass; this fixture evidence
+is independent of native audio qualification.
