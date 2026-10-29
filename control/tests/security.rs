@@ -12,14 +12,18 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "mixyard-control-security-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        // Resolve only the pre-existing OS fixture base: macOS /var aliases
+        // /private/var. Production user-supplied identity paths stay literal.
+        let path = fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!(
+                "mixyard-control-security-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
         let builder = fs::DirBuilder::new();
         #[cfg(unix)]
         let builder = {
@@ -176,6 +180,41 @@ async fn raw_canonical_validation_and_remote_private_errors() {
     )
     .await;
     let settings_json = settings["body"]["settings"].to_string();
+    let nodes: Vec<_> = (0..257)
+        .map(|i| json!({"id":format!("terminal-{i}"),"kind":"terminal","action":{"kind":"no-change"}}))
+        .collect();
+    let (status, limited) = request(
+        &tls,
+        address,
+        "/control/request",
+        Some(credential),
+        envelope(&session, "/api/automation/validate", json!({"graph":{"schemaVersion":1,"id":"limit","name":"Owned cardinality regression","revision":1,"root":"terminal-0","nodes":nodes},"catalog":[]})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, 422);
+    assert_eq!(limited["body"]["error"]["code"], "resource-limit");
+    assert_eq!(
+        limited["body"]["error"]["message"],
+        "collection cardinality exceeds format-v1 limit"
+    );
+    assert_eq!(limited["revision"], session["revision"]);
+    let (status, version) = request(
+        &tls,
+        address,
+        "/control/request",
+        Some(credential),
+        envelope(&session, "/api/automation/validate", json!({"graph":{"schemaVersion":2,"id":"version","name":"Owned version regression","revision":1,"root":"hold","nodes":[{"id":"hold","kind":"terminal","action":{"kind":"no-change"}}]},"catalog":[]})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, 422);
+    assert_eq!(version["body"]["error"]["code"], "unsupported-version");
+    assert_eq!(
+        version["body"]["error"]["message"],
+        "expected graph and observation schemaVersion 1"
+    );
+    assert_eq!(version["revision"], session["revision"]);
     assert!(settings_json.contains("\"applications\":{}"));
     let ambiguous = settings_json.replace("\"applications\":{}", "\"applications\":{\"/not-executed/example\":\"first\",\"/not-executed/example\":\"second\"}");
     let wire = format!(
@@ -211,6 +250,10 @@ async fn raw_canonical_validation_and_remote_private_errors() {
     assert_eq!(
         after["body"]["settingsRevision"], 0,
         "rejected write cannot persist settings"
+    );
+    assert_eq!(
+        after["body"], settings["body"],
+        "pure validation and rejected duplicate mappings cannot alter settings"
     );
 
     #[cfg(unix)]
@@ -282,6 +325,90 @@ fn envelope(session: &Value, path: &str, body: Value) -> Value {
 }
 fn admin_envelope(session: &Value, body: Value) -> Value {
     json!({"deviceId":session["deviceId"],"authorityId":session["authorityId"],"revision":session["revision"],"body":body})
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn singleton_settings_reads_and_saves_only_settings_without_view() {
+    let fixture = Fixture::new();
+    let mut identity = fixture.initialize();
+    let id = identity.device_id().to_owned();
+    let tls = connector(&identity.trust().certificate_pem);
+    let invite = identity.invite(vec![Permission::Settings], 300).unwrap();
+    let control = Control::bind(identity, fixture.options()).await.unwrap();
+    let address = control.address();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(control.serve_until(async {
+        let _ = stop_rx.await;
+    }));
+    let (_, pair) = request(
+        &tls,
+        address,
+        "/control/pair",
+        None,
+        json!({"deviceId":id,"invitation":invite["invitation"],"name":"settings only"}),
+        &[],
+    )
+    .await;
+    let credential = pair["credential"].as_str().unwrap();
+    let (_, session) = request(
+        &tls,
+        address,
+        "/control/session",
+        Some(credential),
+        json!({}),
+        &[],
+    )
+    .await;
+    assert_eq!(session["permissions"], json!(["settings"]));
+    let (status, snapshot) = request(
+        &tls,
+        address,
+        "/control/request",
+        Some(credential),
+        envelope(&session, "/api/automation/settings/read", json!({})),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        status, 200,
+        "settings editor must read its revision before saving"
+    );
+    let (status, saved) = request(&tls, address, "/control/request", Some(credential), envelope(&session, "/api/automation/settings/write", json!({"expectedSettingsRevision":snapshot["body"]["settingsRevision"],"settings":snapshot["body"]["settings"]})), &[]).await;
+    assert_eq!(status, 200);
+    assert_eq!(saved["body"]["settingsRevision"], 1);
+    for route in [
+        "/api/status",
+        "/api/profiles/read",
+        "/api/profiles/edit",
+        "/api/automation/context",
+    ] {
+        assert_eq!(
+            request(
+                &tls,
+                address,
+                "/control/request",
+                Some(credential),
+                envelope(&session, route, json!({})),
+                &[]
+            )
+            .await
+            .0,
+            403,
+            "Settings must not imply View or Control"
+        );
+    }
+    let (_, current) = request(
+        &tls,
+        address,
+        "/control/session",
+        Some(credential),
+        json!({}),
+        &[],
+    )
+    .await;
+    assert_eq!(current["permissions"], json!(["settings"]));
+    stop_tx.send(()).unwrap();
+    task.await.unwrap().unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -1,14 +1,24 @@
-use crate::{fail, store_fs, Result};
+#[cfg(not(windows))]
+use crate::store_fs;
+use crate::{fail, Result};
+#[cfg(windows)]
+#[path = "identity_windows.rs"]
+mod windows_store;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
+    net::IpAddr,
+    path::{Component, Path},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+#[cfg(not(windows))]
+use std::{
     fs,
     io::{Read, Write},
-    net::IpAddr,
-    path::{Component, Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    path::PathBuf,
 };
 
 const LIMIT: u64 = 1024 * 1024;
@@ -71,7 +81,10 @@ struct Data {
 /// Private cooperating-writer store; a crash leaves a manual-recovery sentinel.
 /// Holds the sentinel for its entire lifetime, including while HTTP work is active.
 pub struct IdentityStore {
+    #[cfg(not(windows))]
     path: PathBuf,
+    #[cfg(windows)]
+    windows: windows_store::Store,
     data: Data,
     poisoned: bool,
 }
@@ -135,29 +148,51 @@ impl IdentityStore {
         } else {
             std::env::current_dir()?.join(path)
         };
-        let exists = store_fs::check_directory(&path, NAMES)?;
-        if !exists {
-            if initialize.is_none() {
-                return Err(fail(
-                    503,
-                    "identity-missing",
-                    "Run init locally before starting control",
-                ));
-            }
-            store_fs::create_directory(&path)?;
-        }
-        // Keep all uncertainty fail-closed. Never reclaim an existing owner's lock.
+        #[cfg(windows)]
+        let windows = windows_store::Store::open(&path, initialize.is_some())?;
+        #[cfg(not(windows))]
         let lock = path.join("owner.lock");
-        let owner = store_fs::create_file(&lock).map_err(|_| fail(409,"identity-busy","Owner lock exists or cannot be created; stop owner and inspect before manual recovery"))?;
+        #[cfg(not(windows))]
+        let owner = {
+            let exists = store_fs::check_directory(&path, NAMES)?;
+            if !exists {
+                if initialize.is_none() {
+                    return Err(fail(
+                        503,
+                        "identity-missing",
+                        "Run init locally before starting control",
+                    ));
+                }
+                store_fs::create_directory(&path)?;
+            }
+            // Never reclaim an existing owner's lock.
+            store_fs::create_file(&lock).map_err(|_| fail(409,"identity-busy","Owner lock exists or cannot be created; stop owner and inspect before manual recovery"))?
+        };
         let read = (|| -> Result<Data> {
-            if store_fs::check_file(&path.join("pending.json"))? {
+            #[cfg(windows)]
+            let pending = windows.pending()?;
+            #[cfg(not(windows))]
+            let pending = store_fs::check_file(&path.join("pending.json"))?;
+            if pending {
                 return Err(fail(
                     409,
                     "recovery-required",
                     "Pending identity write requires manual inspection",
                 ));
             }
-            if store_fs::check_file(&path.join("state.json"))? {
+            #[cfg(windows)]
+            let bytes = windows.read()?;
+            #[cfg(not(windows))]
+            let bytes = if store_fs::check_file(&path.join("state.json"))? {
+                let mut bytes = Vec::new();
+                fs::File::open(path.join("state.json"))?
+                    .take(LIMIT + 1)
+                    .read_to_end(&mut bytes)?;
+                Some(bytes)
+            } else {
+                None
+            };
+            if let Some(bytes) = bytes {
                 if initialize.is_some() {
                     return Err(fail(
                         409,
@@ -165,10 +200,6 @@ impl IdentityStore {
                         "Identity already exists; never replace implicitly",
                     ));
                 }
-                let mut bytes = Vec::new();
-                fs::File::open(path.join("state.json"))?
-                    .take(LIMIT + 1)
-                    .read_to_end(&mut bytes)?;
                 if bytes.len() as u64 > LIMIT {
                     return Err(fail(
                         503,
@@ -233,16 +264,21 @@ impl IdentityStore {
                 })
             }
         })();
+        #[cfg(not(windows))]
         drop(owner);
         let data = match read {
             Ok(d) => d,
             Err(e) => {
+                #[cfg(not(windows))]
                 fs::remove_file(lock)?;
                 return Err(e);
             }
         };
         let mut store = Self {
+            #[cfg(not(windows))]
             path,
+            #[cfg(windows)]
+            windows,
             data,
             poisoned: false,
         };
@@ -314,7 +350,10 @@ impl IdentityStore {
     }
     fn persist(&mut self, data: Data) -> Result<()> {
         self.ensure()?;
+        #[cfg(not(windows))]
         store_fs::check_directory(&self.path, NAMES)?;
+        #[cfg(windows)]
+        self.windows.check()?;
         let bytes = serde_json::to_vec(&data)
             .map_err(|_| fail(503, "identity-corrupt", "Cannot serialize identity"))?;
         if bytes.len() as u64 > LIMIT {
@@ -325,13 +364,22 @@ impl IdentityStore {
             ));
         }
         self.poisoned = true;
-        let mut pending = store_fs::create_file(&self.path.join("pending.json"))?;
-        pending.write_all(&bytes)?;
-        pending.sync_all()?;
-        drop(pending);
-        fs::rename(self.path.join("pending.json"), self.path.join("state.json"))?;
-        #[cfg(unix)]
-        fs::File::open(&self.path)?.sync_all()?;
+        #[cfg(windows)]
+        {
+            self.windows.retain_lock(true);
+            self.windows.write(&bytes)?;
+            self.windows.retain_lock(false);
+        }
+        #[cfg(not(windows))]
+        {
+            let mut pending = store_fs::create_file(&self.path.join("pending.json"))?;
+            pending.write_all(&bytes)?;
+            pending.sync_all()?;
+            drop(pending);
+            fs::rename(self.path.join("pending.json"), self.path.join("state.json"))?;
+            #[cfg(unix)]
+            fs::File::open(&self.path)?.sync_all()?;
+        }
         self.data = data;
         self.poisoned = false;
         Ok(())
@@ -455,6 +503,7 @@ impl IdentityStore {
 impl Drop for IdentityStore {
     fn drop(&mut self) {
         // On uncertain commit retain the lock as an explicit recovery barrier.
+        #[cfg(not(windows))]
         if !self.poisoned {
             let _ = fs::remove_file(self.path.join("owner.lock"));
         }

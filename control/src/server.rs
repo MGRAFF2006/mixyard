@@ -89,8 +89,15 @@ fn permission(credential: &Credential, role: Permission) -> Result<()> {
         ))
     }
 }
-fn route_permission(path: &str) -> Result<Permission> {
-    match path {
+fn route_permission(path: &str, credential: &Credential) -> Result<()> {
+    // Settings editing includes reading that same settings document, but grants
+    // neither runtime/profile observation nor any other View operation.
+    if path == "/api/automation/settings/read"
+        && credential.permissions.contains(&Permission::Settings)
+    {
+        return Ok(());
+    }
+    let required = match path {
         "/api/status" | "/api/validate" | "/api/inspect" | "/api/profiles/read" |
         "/api/dsp/preview" | "/api/dsp/validate" | "/api/dsp/delay" |
         "/api/automation/status" | "/api/automation/settings/read" |
@@ -98,7 +105,8 @@ fn route_permission(path: &str) -> Result<Permission> {
         "/api/profiles/edit" | "/api/automation/disarm" | "/api/automation/manual" => Ok(Permission::Control),
         "/api/automation/settings/write" => Ok(Permission::Settings),
         _ => Err(fail(422,"unsupported-route","Route is not remotely supported; remote arm/review/live and native audio are unavailable")),
-    }
+    }?;
+    permission(credential, required)
 }
 impl Inner {
     fn revision(&self) -> Result<u64> {
@@ -158,7 +166,7 @@ impl Inner {
                 .path
                 .as_deref()
                 .ok_or_else(|| fail(400, "invalid-json", "Request requires path"))?;
-            permission(&credential, route_permission(route)?)?;
+            route_permission(route, &credential)?;
             // The canonical parser must see duplicate fields and the original
             // number representation. Value would normalize them before validation.
             self.canonical
