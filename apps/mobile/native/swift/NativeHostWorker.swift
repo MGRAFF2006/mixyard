@@ -26,6 +26,7 @@ public struct HostStamp {
 /// Exclusive offline worker, not an audio callback or a source of authority.
 /// The canonical Rust host owns the only policy mixer, DSP and retained PCM.
 public final class NativeHostWorker {
+    private struct BlockBudget: Decodable { let maxFrames: UInt64 }
     private var host: OpaquePointer?
     private let owner = Thread.current
     private var borrowed = false
@@ -42,7 +43,10 @@ public final class NativeHostWorker {
         guard UInt16(littleEndian: 1) == 1, frames > 0, !sources.isEmpty, !outputs.isEmpty,
               sources.allSatisfy({ !$0.observedId.isEmpty && $0.mapping.count == $0.format.channels.count }),
               outputs.allSatisfy({ !$0.observedId.isEmpty && $0.mapping.count == $0.format.channels.count && $0.format.sample == .f64le }) else { throw MobileError.invalid("exact-host-format-required") }
+        guard requestJSON.utf8.count <= 1_048_576 else { throw MobileError.invalid("host-request-budget") }
         let bytes = Array(requestJSON.utf8)
+        let budget = try JSONDecoder().decode(BlockBudget.self, from: Data(bytes))
+        guard UInt64(frames) <= budget.maxFrames else { throw MobileError.invalid("host-frame-budget") }
         outputStatuses = Array(repeating: 7, count: outputs.count)
         var error = [CChar](repeating: 0, count: 512)
         let errorCapacity = error.count

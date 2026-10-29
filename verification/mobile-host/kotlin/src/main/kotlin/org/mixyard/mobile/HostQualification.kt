@@ -24,6 +24,10 @@ fun main(args: Array<String>) {
         }
     }
     val sources = ports("sources"); val outputs = ports("outputs")
+    var rejectedFrameBudget = false
+    try { NativeHostWorker(admitted, 65, sources, outputs).close() }
+    catch (_: IllegalArgumentException) { rejectedFrameBudget = true }
+    check(rejectedFrameBudget) { "worker-frame-budget-bypassed" }
     fun seed(worker: NativeHostWorker) {
         for ((index, level) in listOf(999.0, 4.0, 2.0).withIndex()) {
             val buffer = worker.input(index)

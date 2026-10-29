@@ -20,6 +20,10 @@ import NativeHost
             }
         }
         let sources = try ports("sources"), outputs = try ports("outputs")
+        var rejectedFrameBudget = false
+        do { let excessive = try NativeHostWorker(requestJSON: String(decoding: admitted, as: UTF8.self), frames: 65, sources: sources, outputs: outputs); try excessive.close() }
+        catch { rejectedFrameBudget = true }
+        precondition(rejectedFrameBudget, "worker-frame-budget-bypassed")
         func seed(_ worker: NativeHostWorker) throws {
             for (index, level) in [999.0, 4.0, 2.0].enumerated() {
                 try worker.withInput(index) { storage in

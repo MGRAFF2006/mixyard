@@ -34,24 +34,31 @@ class NativeHostWorker(
         // Snapshot admission descriptors: caller mutation cannot retarget native
         // ports. Mapping itself is canonical policy input, not inferred layout.
         (sources + outputs).forEach { require(it.observedId.isNotBlank() && it.mapping.size == it.format.channels.size) }
-        inputs = sources.map { ByteBuffer.allocateDirect(Math.multiplyExact(frames, it.format.frameBytes)).order(ByteOrder.LITTLE_ENDIAN) }
-        rendered = outputs.map { require(it.format.sample == Sample.F64LE); ByteBuffer.allocateDirect(Math.multiplyExact(frames, it.format.frameBytes)).order(ByteOrder.LITTLE_ENDIAN) }
-        views = rendered.map { it.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN) }
-        stamps = ByteBuffer.allocateDirect(Math.multiplyExact(sources.size + 1, 56)).order(ByteOrder.LITTLE_ENDIAN)
-        handle = create(requestJson.toByteArray(Charsets.UTF_8))
+        require(requestJson.length <= 1_048_576) { "host-request-budget" }
+        val encoded = requestJson.toByteArray(Charsets.UTF_8)
+        require(encoded.size <= 1_048_576 && frames.toLong() <= JSONObject(requestJson).getLong("maxFrames")) { "host-frame-budget" }
+        handle = create(encoded)
         check(handle != 0L) { "canonical-host-admission-rejected" }
         try {
             check(info(handle, false, sources.size) == null && info(handle, true, outputs.size) == null) { "exact-port-count-required" }
+            sources.forEachIndexed { index, port -> verify(info(handle, false, index), port, false) }
+            outputs.forEachIndexed { index, port ->
+                require(port.format.sample == Sample.F64LE)
+                verify(info(handle, true, index), port, true)
+            }
+            // Allocate only after Rust admission and exact port verification.
+            inputs = sources.map { ByteBuffer.allocateDirect(Math.multiplyExact(frames, it.format.frameBytes)).order(ByteOrder.LITTLE_ENDIAN) }
+            rendered = outputs.map { ByteBuffer.allocateDirect(Math.multiplyExact(frames, it.format.frameBytes)).order(ByteOrder.LITTLE_ENDIAN) }
+            views = rendered.map { it.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN) }
+            stamps = ByteBuffer.allocateDirect(Math.multiplyExact(sources.size + 1, 56)).order(ByteOrder.LITTLE_ENDIAN)
             sources.forEachIndexed { index, port ->
-                verify(info(handle, false, index), port, false)
                 check(bindInput(handle, index, inputs[index], encoding(port.format.sample), port.format.rate.toInt(), port.format.channels.size) == 0)
             }
             outputs.forEachIndexed { index, port ->
-                verify(info(handle, true, index), port, true)
                 check(bindOutput(handle, index, rendered[index]) == 0)
             }
             check(bindStamps(handle, stamps) == 0)
-        } catch (failure: Exception) { revoke(handle); destroy(handle); handle = 0; throw failure }
+        } catch (failure: Throwable) { revoke(handle); destroy(handle); handle = 0; throw failure }
     }
     private fun verify(json: String?, port: Port, output: Boolean) {
         val value = JSONObject(json ?: error("host-port-unavailable"))
