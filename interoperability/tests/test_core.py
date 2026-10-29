@@ -1,8 +1,10 @@
 from dataclasses import FrozenInstanceError, replace
 import unittest
+import json
 from unittest.mock import patch
 
 from mixyard_interop import Capability, Endpoint, Grant, Limits, Session, Spec
+from mixyard_interop.core import Source, Provenance
 
 
 def descriptor(codec="raw-f64-le", rate=44117, channels=None):
@@ -40,6 +42,30 @@ class CanonicalDescriptor(unittest.TestCase):
         session = Session("sender", [Grant("live-send", Endpoint("127.0.0.1", 5555), "sink", spec)],
                           consent=True, limits=Limits(max_bytes_per_second=2**63 - 1))
         session.require("live-send", Endpoint("127.0.0.1", 5555), spec)
+
+    def test_many_source_provenance_uses_exact_canonical_byte_budget(self):
+        wire = {"stream": 1, "name": "mix", "codec": "raw-s16-le",
+                "sample_rate": 48000, "channels": ["FC"], "frames_per_packet": 1,
+                "provenance": {"sources": [{"peer": "a", "source": str(i), "groups": []}
+                                             for i in range(96)], "visited_peers": ["a"]}}
+        raw = json.dumps(wire, ensure_ascii=False, separators=(",", ":")).encode()
+        self.assertEqual(len(raw), 3889)
+        parsed = Spec.from_json(raw)
+        self.assertEqual(parsed, Spec.from_dict(wire))
+        direct = Provenance(tuple(Source("a", str(i)) for i in range(96)), ("a",))
+        self.assertEqual(parsed.provenance, direct)
+        parsed.validate_path("a", "sink")
+        wire["provenance"]["sources"] = [{"peer": "a", "source": str(i), "groups": []}
+                                              for i in range(110)]
+        oversized = json.dumps(wire, ensure_ascii=False, separators=(",", ":")).encode()
+        self.assertGreater(len(oversized), 4096)
+        with self.assertRaises(ValueError):
+            Spec.from_json(oversized)
+        with self.assertRaises(ValueError):
+            Spec.from_dict(wire)
+        with self.assertRaises(ValueError):
+            Spec(1, "mix", "raw-s16-le", 48000, ("FC",), 1,
+                 Provenance(tuple(Source("a", str(i)) for i in range(110)), ("a",)))
 
     def test_rejects_unknown_or_ambiguous_wire_and_invalid_paths(self):
         mutations = [lambda w: w.update(extra=True), lambda w: w.update(stream=True),

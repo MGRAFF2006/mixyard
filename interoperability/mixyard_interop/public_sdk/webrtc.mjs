@@ -71,6 +71,7 @@ export class WebRTCAudio {
   #messages = 0;
   #remoteTrackId;
   #selectedTrackId;
+  #selecting = false;
   #supportedCodecs;
   constructor({ RTCPeerConnection, RTCRtpSender, secureContext = false, role, localIdentity, sessionId, remoteFingerprint, ports, codec, conversionAccepted = false, sendSignal, onTrack = () => {}, lifetimeMs = 30000, ...options }) {
     if (!secureContext || typeof RTCPeerConnection !== 'function') throw new Error('Secure browser WebRTC unavailable');
@@ -139,17 +140,31 @@ export class WebRTCAudio {
     return description;
   }
   selectTrack(track) {
-    if (this.#role !== 'live-send' || this.#local || track?.kind !== 'audio' || track.readyState !== 'live' || typeof track.clone !== 'function') throw new Error('Select one live audio track');
-    this.#selectedTrackId = text(track.id);
-    this.#policy.check('live-send', 'webrtc-select-track', { trackId: this.#selectedTrackId });
-    this.#local = track.clone();
+    if (this.#role !== 'live-send' || this.#local || this.#selecting) throw new Error('Select one live audio track');
+    // Reserve ownership before touching host track properties or authorization:
+    // synchronous host code can otherwise reenter and acquire a second clone.
+    this.#selecting = true;
+    let owned;
     try {
+      if (track?.kind !== 'audio' || track.readyState !== 'live' || typeof track.clone !== 'function') throw new Error('Select one live audio track');
+      this.#selectedTrackId = text(track.id);
+      this.#policy.check('live-send', 'webrtc-select-track', { trackId: this.#selectedTrackId });
+      owned = track.clone();
+      this.#local = owned;
       this.#check('live-send', 'webrtc-add-track');
-      const transceiver = this.#pc.addTransceiver(this.#local, { direction: 'sendonly' });
+      const transceiver = this.#pc.addTransceiver(owned, { direction: 'sendonly' });
       this.#check('live-send', 'webrtc-codec');
       transceiver.setCodecPreferences(this.#supportedCodecs);
-    } catch (error) { this.revoke(); throw error; }
-    return this.#local.id;
+      return owned.id;
+    } catch (error) {
+      // clone() can itself revoke before returning its newly acquired resource.
+      // Boundary.close is idempotent, so clean up this late clone explicitly.
+      if (this.#local === owned) this.#local = undefined;
+      try { owned?.stop(); } finally { this.revoke(); }
+      throw error;
+    } finally {
+      this.#selecting = false;
+    }
   }
   selectRemoteTrack(trackId) {
     if (this.#role !== 'live-receive' || this.#remoteTrackId) throw new Error('Select one remote audio track');

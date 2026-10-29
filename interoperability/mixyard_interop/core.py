@@ -41,6 +41,17 @@ def _tuple(value, name):
     return tuple(value)
 
 
+def _source_wire(source):
+    return {"peer": source.peer, "source": source.source, "groups": list(source.groups)}
+
+
+def _source_wire_bytes(source):
+    # Exact source serialization is a lower bound on the enclosing descriptor.
+    # A guessed per-source overhead can reject valid many-source premixes.
+    return len(json.dumps(_source_wire(source), ensure_ascii=False,
+                          separators=(",", ":")).encode("utf-8"))
+
+
 @dataclass(frozen=True)
 class Source:
     peer: str
@@ -80,8 +91,7 @@ class Provenance:
             raise ValueError("source origin missing from path")
         metadata = sum(len(p.encode("utf-8")) + 3 for p in peers)
         for source in sources:
-            metadata += len(source.peer.encode("utf-8")) + len(source.source.encode("utf-8"))
-            metadata += sum(len(g.encode("utf-8")) + 3 for g in source.groups) + 40
+            metadata += _source_wire_bytes(source)
         if metadata > 4096:
             raise ValueError("provenance metadata too large")
         object.__setattr__(self, "sources", sources)
@@ -126,9 +136,7 @@ class Spec:
         return {"stream": self.stream, "name": self.name, "codec": self.codec,
                 "sample_rate": self.sample_rate, "channels": list(self.channels),
                 "frames_per_packet": self.frames_per_packet,
-                "provenance": {"sources": [{"peer": s.peer, "source": s.source,
-                                              "groups": list(s.groups)}
-                                             for s in self.provenance.sources],
+                "provenance": {"sources": [_source_wire(s) for s in self.provenance.sources],
                                "visited_peers": list(self.provenance.visited_peers)}}
 
     def to_json(self):
@@ -161,8 +169,7 @@ class Spec:
         for source in _tuple(p["sources"], "sources"):
             _fields(source, ("peer", "source", "groups"))
             parsed = Source(**source)
-            source_bytes += len(parsed.peer.encode("utf-8")) + len(parsed.source.encode("utf-8"))
-            source_bytes += sum(len(g.encode("utf-8")) + 3 for g in parsed.groups) + 40
+            source_bytes += _source_wire_bytes(parsed)
             if source_bytes > 4096:
                 raise ValueError("source metadata too large")
             sources.append(parsed)

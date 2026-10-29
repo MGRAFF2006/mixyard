@@ -293,3 +293,60 @@ test('local SDP and trickle consume one combined outgoing candidate budget', asy
   assert.equal(f.sent.filter(item => item.candidate).length, 1);
   assert(f.calls.includes('close'));
 });
+
+test('reentrant selected-track authorization preserves one owned source and matching context', () => {
+  let adapter;
+  let innerAttempted = false;
+  const clones = [];
+  const selected = id => ({ ...track(id), clone() {
+    const owned = track(`${id}-owned`);
+    clones.push(owned);
+    return owned;
+  } });
+  const f = fixture({ authorize: (_role, context) => {
+    if (context.action === 'webrtc-select-track' && !innerAttempted) {
+      innerAttempted = true;
+      assert.throws(() => adapter.selectTrack(selected('B')), /Select/);
+    }
+    return true;
+  } });
+  adapter = f.adapter;
+  assert.equal(adapter.selectTrack(selected('A')), 'A-owned');
+  assert.deepEqual(clones.map(item => item.id), ['A-owned']);
+  assert.equal(f.calls.filter(item => item[0] === 'transceiver').length, 1);
+  for (const [, context] of f.contexts.filter(([, c]) => ['webrtc-add-track', 'webrtc-codec'].includes(c.action))) {
+    assert.equal(context.trackId, 'A');
+    assert.equal(context.wireTrackId, 'A-owned');
+  }
+  adapter.revoke();
+  assert(clones.every(item => item.stopped));
+});
+
+test('uncaught reentrant selection closes before acquiring any clone', () => {
+  let adapter;
+  let attempted = false;
+  let clones = 0;
+  const original = { ...track('A'), clone() { clones++; return track('A-owned'); } };
+  const f = fixture({ authorize: (_role, context) => {
+    if (context.action === 'webrtc-select-track' && !attempted) {
+      attempted = true;
+      adapter.selectTrack(track('B'));
+    }
+    return true;
+  } });
+  adapter = f.adapter;
+  assert.throws(() => adapter.selectTrack(original), /Select/);
+  assert.equal(clones, 0);
+  assert.equal(f.calls.filter(item => item[0] === 'transceiver').length, 0);
+  assert(f.calls.includes('close'));
+});
+
+test('revocation inside cloning stops the late owned clone before native handoff', () => {
+  const f = fixture();
+  const owned = track('A-owned');
+  const original = { ...track('A'), clone() { f.adapter.revoke(); return owned; } };
+  assert.throws(() => f.adapter.selectTrack(original), /closed/);
+  assert.equal(owned.stopped, true);
+  assert.equal(original.stopped, false);
+  assert.equal(f.calls.filter(item => item[0] === 'transceiver').length, 0);
+});

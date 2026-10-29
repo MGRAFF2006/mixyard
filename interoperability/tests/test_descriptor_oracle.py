@@ -63,6 +63,11 @@ def corpus():
     add("receiver loop", False, receiver="origin")
     add("self route", False, receiver="sender")
     add("empty sender", False, sender="")
+    for count, accepted in [(96, True), (110, False)]:
+        add(f"canonical many-source byte boundary {count}", accepted,
+            lambda s, n=count: s["provenance"].update(
+                sources=[{"peer": "a", "source": str(i), "groups": []} for i in range(n)],
+                visited_peers=["a"]), sender="a")
     return cases
 
 
