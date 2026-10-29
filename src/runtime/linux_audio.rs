@@ -465,7 +465,8 @@ impl Consumer {
             let bytes = &mut self.bytes[..count * self.encoding.width()];
             match self.encoding {
                 Encoding::Float64Le => {
-                    for (value, out) in samples.iter().zip(bytes.chunks_exact_mut(8)) {
+                    for (value, out) in samples.iter().zip(bytes.as_chunks_mut::<8>().0.iter_mut())
+                    {
                         out.copy_from_slice(&value.to_le_bytes());
                     }
                 }
@@ -473,7 +474,8 @@ impl Consumer {
                     if samples.iter().any(|v| !(*v as f32).is_finite()) {
                         return Err(ConsumerError::Conversion);
                     }
-                    for (value, out) in samples.iter().zip(bytes.chunks_exact_mut(4)) {
+                    for (value, out) in samples.iter().zip(bytes.as_chunks_mut::<4>().0.iter_mut())
+                    {
                         out.copy_from_slice(&(*value as f32).to_le_bytes());
                     }
                 }
