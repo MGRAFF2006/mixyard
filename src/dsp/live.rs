@@ -312,6 +312,20 @@ impl LiveChain {
         }
     }
 
+    /// Discard retained audio after a graph input discontinuity while preserving
+    /// this still-authorized attachment's controls. Never reactivates a revoked
+    /// instance or authorizes a source to resume; the owning host handles that.
+    pub fn discard_history(&mut self, binding: Binding) -> Result<(), Error> {
+        if let Err(error) = self.check_binding(binding) {
+            self.revoke();
+            return Err(error);
+        }
+        self.chain.reset();
+        self.output.fill(0.0);
+        self.valid_samples = 0;
+        Ok(())
+    }
+
     /// Already admitted, aligned interleaved Float64 only. No resampling,
     /// precision conversion, implicit channel mapping, allocation, locks or I/O.
     pub fn process(
