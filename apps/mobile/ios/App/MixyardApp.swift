@@ -72,7 +72,11 @@ struct ControllerView: UIViewRepresentable {
 struct MobileView: View {
     @StateObject private var shell = Shell()
     @Environment(\.scenePhase) private var phase
-    @State private var origin = "", pin = "", device = "", invitation = "", name = ""
+    @State private var origin = ""
+    @State private var pin = ""
+    @State private var device = ""
+    @State private var invitation = ""
+    @State private var name = ""
     var body: some View {
         VStack {
             DisclosureGroup("Pair verified device") {
