@@ -2,6 +2,7 @@
 import copy
 import os
 import re
+import signal
 import subprocess
 from pathlib import Path
 import tempfile
@@ -26,6 +27,29 @@ def private_snapshot():
 
 
 class Isolation(unittest.TestCase):
+    def test_stop_signal_mask_is_inherited_before_workers_and_acknowledged(self):
+        base = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory(prefix="mixyard-stop-signals-", dir="/dev/shm") as root:
+            binary = Path(root) / "stop-signals-check"
+            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                            "-O2", "-g0", "-pthread", str(base / "stop_signals_check.c"),
+                            "-o", str(binary)], env=dict(os.environ, TMPDIR=root),
+                           check=True, capture_output=True)
+            for name, number in [("INT", signal.SIGINT), ("TERM", signal.SIGTERM)]:
+                with self.subTest(signal=name):
+                    late = subprocess.run([str(binary), "late", name], capture_output=True,
+                                          text=True, timeout=5)
+                    self.assertEqual(late.returncode, -number, late.stdout + late.stderr)
+                    self.assertEqual(qualify.json.loads(late.stdout), {
+                        "workerIntBlocked": 0, "workerTermBlocked": 0, "ownerBlocked": True})
+                    early = subprocess.run([str(binary), "early", name], capture_output=True,
+                                           text=True, timeout=5, check=True)
+                    observed, ack = map(qualify.json.loads, early.stdout.splitlines())
+                    self.assertEqual(observed, {
+                        "workerIntBlocked": 1, "workerTermBlocked": 1, "ownerBlocked": True})
+                    self.assertEqual(ack, {"ownerAck": True, "workerJoined": True, "signal": number})
+                    self.assertEqual(early.stderr, "")
+
     def test_owned_consumer_boundary_has_no_native_pointer_retention(self):
         base = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix="mixyard-owned-copy-", dir="/dev/shm") as root:

@@ -211,3 +211,17 @@ boundary. The linked no-PipeWire oracle verifies nonzero final queued PCM
 survives host-only revocation, then the production owner-stop operation scrubs
 all slots and metadata without callback heap operations. Full native ordering
 still requires the hosted private-graph run; no local SDK execution is claimed.
+
+Cancellation signals are process-owned before any PipeWire worker can be
+created: startup blocks SIGINT/SIGTERM before `pw_init`, then verifies both
+owner-loop signal registrations before creating the context. Workers inherit
+the blocked mask. A signal received on the actual owner loop closes admission;
+shutdown invokes the DataLoop to revoke the host and scrub owned copies before
+withdrawing the pointer, destroys all native contexts, and directly inspects
+retired slot storage. Qualification requires the exact received signal,
+`cancelled=true`, owner retirement and zero retired copies; exit-by-signal or
+missing reports fail. The two server epochs exercise SIGTERM and SIGINT.
+`stop_signals_check.c` uses actual owned pthread/signalfd processes without a
+PipeWire context: late masking leaves the worker unmasked and terminates it;
+early masking inherits correctly and lets the owner acknowledge and join.
+This kernel-mechanism regression does not replace actual SDK cancellation proof.

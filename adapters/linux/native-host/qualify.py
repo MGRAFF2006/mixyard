@@ -177,7 +177,13 @@ def client_log(path):
         return text + (" [truncated]" if file.read(1) else "")
 
 
-def run(binary, env, directory, cancel=False, server_loss=None, mode="normal"):
+def verify_retirement(report):
+    if report.get("callbackHeapOperations") != 0 or any(report.get(field) is not True for field in
+           ("stopSignalsReady", "dataLoopRetired", "retiredOwnedCopiesZero")):
+        raise RuntimeError("owned signal/retirement/scrub/zero-heap completion missing: " + repr(report))
+
+
+def run(binary, env, directory, cancel=False, server_loss=None, mode="normal", stop_signal=signal.SIGTERM):
     directory.mkdir(mode=0o700)
     stderr = directory / "stderr.log"
     stdout = directory / "stdout.log"
@@ -191,7 +197,7 @@ def run(binary, env, directory, cancel=False, server_loss=None, mode="normal"):
             if cancel or server_loss:
                 await_file(directory / "flowing", process)
                 if cancel:
-                    process.send_signal(signal.SIGTERM)
+                    process.send_signal(stop_signal)
                 else:
                     stop_owned(server_loss)
             process.wait(timeout=35)
@@ -203,12 +209,16 @@ def run(binary, env, directory, cancel=False, server_loss=None, mode="normal"):
         raise RuntimeError(f"{mode}: {failure}; native stderr={client_log(stderr)} stdout={client_log(stdout)}") from failure
     if server_loss:
         report = json.loads(stdout.read_text())
+        verify_retirement(report)
         if process.returncode != 1 or report["error"] != 46 or report["sampleMismatches"]:
             raise RuntimeError("server loss failed closed-exit check: " + repr(report))
         return {"topology": topology, "activeIsolation": active, "result": report}
     if process.returncode:
         raise RuntimeError(f"native client exit {process.returncode}: {client_log(stderr)} {client_log(stdout)}")
     report = json.loads(stdout.read_text())
+    verify_retirement(report)
+    if cancel and (report["cancelled"] is not True or report["stopSignal"] != stop_signal):
+        raise RuntimeError("owner-loop cancellation signal was not acknowledged: " + repr(report))
     if report["error"] or report["sampleMismatches"]:
         raise RuntimeError("native sample oracle/lifecycle failed: " + repr(report))
     if not cancel:
@@ -282,7 +292,8 @@ context.modules = [
                               "integrated": run(binary, env, root / f"integrated-{epoch}"),
                               "outputFailure": run(binary, env, root / f"output-failure-{epoch}", mode="output-failure"),
                               "retainedTailLoss": run(binary, env, root / f"tail-loss-{epoch}", mode="tail-loss"),
-                              "cancelled": run(binary, env, root / f"cancelled-{epoch}", cancel=True)}
+                              "cancelled": run(binary, env, root / f"cancelled-{epoch}", cancel=True,
+                                               stop_signal=signal.SIGTERM if epoch == 0 else signal.SIGINT)}
                     if epoch == 1:
                         result["serverLoss"] = run(binary, env, root / "server-loss", server_loss=server)
                     report["serverEpochs"].append(result)

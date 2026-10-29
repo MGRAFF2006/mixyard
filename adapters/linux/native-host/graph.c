@@ -24,6 +24,7 @@
 #include "native_diagnostics.h"
 #include "consumer_copy.h"
 #include "generation_stop.h"
+#include "stop_signals.h"
 
 #define ROUTES 3
 #define FRAMES 128
@@ -93,7 +94,8 @@ struct app {
     unsigned ticks, stage, last_ack;
     uint64_t baseline[ROUTES], stall_closed, stall_dropped;
     bool quiet_started;
-    bool topology_written, linked, expected_loss, cancelled;
+    bool topology_written, linked, expected_loss, cancelled, stop_signals_ready;
+    int stop_signal;
     const char *directory;
 };
 
@@ -609,11 +611,12 @@ static int begin_warm(struct spa_loop *loop, bool async, uint32_t seq, const voi
     r->ready = atomic_load_explicit(&a->source_headers_ready, memory_order_acquire);
     return 0;
 }
-struct replacement { struct app *a; mx_host *next, *old; uint64_t generation; };
+struct replacement { struct app *a; mx_host *next, *old; uint64_t generation; bool complete; };
 static int replace_host(struct spa_loop *loop, bool async, uint32_t seq, const void *data, size_t size, void *userdata) {
     (void)loop; (void)async; (void)seq; (void)data; (void)size;
     struct replacement *r = userdata;
     struct app *a = r->a;
+    if (!pw_data_loop_in_thread(a->data_loop)) return -EINVAL;
     uint64_t clock_id = atomic_load_explicit(&a->clock_id, memory_order_acquire);
     if (r->next) {
         if (!clock_id || clock_id == SPA_ID_INVALID || atomic_load(&a->error) || a->warming_generation != r->generation || r->generation <= a->generation ||
@@ -625,8 +628,11 @@ static int replace_host(struct spa_loop *loop, bool async, uint32_t seq, const v
                 a->consumers[i].epoch == UINT64_MAX || a->native_frame > UINT64_MAX-FRAMES) return -EAGAIN;
         }
     }
+    struct app *previous_owner = callback_owner;
+    callback_owner = a;
+    mx_native_generation_stop(a->host, a->consumers, ROUTES);
+    callback_owner = previous_owner;
     for (unsigned i = 0; i < ROUTES; ++i) {
-        mx_consumer_close(&a->consumers[i]);
         if (r->next) {
             if (!mx_consumer_open(&a->consumers[i], a->consumers[i].epoch+1,
                     r->generation, clock_id, a->native_frame+FRAMES)) return -EINVAL;
@@ -641,6 +647,7 @@ static int replace_host(struct spa_loop *loop, bool async, uint32_t seq, const v
     a->timeline = (mx_graph_timeline){ .clock_id = atomic_load_explicit(&a->clock_id, memory_order_acquire) };
     atomic_store_explicit(&a->command_done, 0, memory_order_release);
     atomic_store_explicit(&a->command, r->next ? 1 : 0, memory_order_release);
+    r->complete = true;
     return 0;
 }
 struct consumer_admission {
@@ -827,6 +834,7 @@ static bool publish_marker(struct app *a, const char *name) {
 static void timer(void *userdata, uint64_t expirations) {
     (void)expirations;
     struct app *a = userdata;
+    if (a->cancelled) { pw_main_loop_quit(a->loop); return; }
     if (atomic_load(&a->heap_ops)) fail(a, 76);
     if (atomic_load_explicit(&a->error, memory_order_acquire) || atomic_load(&a->mismatches)) {
         pw_main_loop_quit(a->loop); return;
@@ -950,7 +958,11 @@ static void print_format_reports(const struct app *a) {
     printf("}\n");
 }
 static void quit(void *userdata, int signal) {
-    (void)signal; struct app *a = userdata; a->cancelled = true; pw_main_loop_quit(a->loop);
+    struct app *a = userdata;
+    if (!a->stop_signal) a->stop_signal = signal;
+    a->cancelled = true;
+    atomic_store_explicit(&a->command, 2, memory_order_release);
+    pw_main_loop_quit(a->loop);
 }
 int main(int argc, char **argv) {
     if (argc != 3 || !getenv("MIXYARD_PRIVATE_GRAPH") || strcmp(getenv("MIXYARD_PRIVATE_GRAPH"), "hosted-owned-only")) {
@@ -964,10 +976,22 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[2], "output-failure")) a.mode = OUTPUT_FAILURE;
     else if (!strcmp(argv[2], "tail-loss")) a.mode = TAIL_LOSS;
     else return 2;
+    // Block before pw_init can create workers: signalfd registration alone
+    // cannot retroactively mask a thread that already inherited an open mask.
+    int signal_error = mx_native_block_stop_signals();
+    if (signal_error) { fprintf(stderr, "stop signal ownership: %s\n", strerror(signal_error)); return 2; }
     atomic_init(&a.epoch_frame, UINT64_MAX); atomic_init(&a.overflow_frame, UINT64_MAX); atomic_init(&a.loss_frame, UINT64_MAX);
     pw_init(&argc, &argv);
     a.loop = pw_main_loop_new(NULL);
+    if (!a.loop) { pw_deinit(); return 2; }
+    struct pw_loop *loop = pw_main_loop_get_loop(a.loop);
+    if (!pw_loop_add_signal(loop, SIGINT, quit, &a) ||
+        !pw_loop_add_signal(loop, SIGTERM, quit, &a)) {
+        pw_main_loop_destroy(a.loop); pw_deinit(); return 2;
+    }
+    a.stop_signals_ready = true;
     a.context = pw_context_new(pw_main_loop_get_loop(a.loop), NULL, 0);
+    if (!a.context) { pw_main_loop_destroy(a.loop); pw_deinit(); return 2; }
     a.data_loop = pw_context_get_data_loop(a.context);
     if (!a.data_loop) return 2;
     a.core = pw_context_connect(a.context, pw_properties_new(PW_KEY_REMOTE_NAME, "mixyard-private", NULL), 0);
@@ -993,27 +1017,37 @@ int main(int argc, char **argv) {
         }
         if (pw_filter_connect(e->filter, PW_FILTER_FLAG_RT_PROCESS, NULL, 0) < 0) return 2;
     }
-    struct pw_loop *loop = pw_main_loop_get_loop(a.loop);
-    pw_loop_add_signal(loop, SIGINT, quit, &a); pw_loop_add_signal(loop, SIGTERM, quit, &a);
     a.timer = pw_loop_add_timer(loop, timer, &a);
     struct timespec interval = { .tv_nsec = 50000000 };
     pw_loop_update_timer(loop, a.timer, &interval, &interval, false);
     pw_main_loop_run(a.loop);
     // Serialize pointer withdrawal on the owning data loop before destroying Rust state.
     struct replacement replacement = { .a = &a };
-    if (pw_data_loop_invoke(a.data_loop, replace_host, 0, NULL, 0, true, &replacement) < 0) return 2;
+    if (pw_data_loop_invoke(a.data_loop, replace_host, 0, NULL, 0, true, &replacement) < 0 || !replacement.complete) return 2;
     if (replacement.old) mx_host_destroy(replacement.old);
     a.expected_loss = true;
     for (unsigned l = 0; l < ROUTES*2; ++l) if (a.links[l]) pw_proxy_destroy(a.links[l]);
     for (unsigned n = 0; n < 3; ++n) if (a.nodes[n].filter) pw_filter_destroy(a.nodes[n].filter);
     pw_proxy_destroy((struct pw_proxy *)a.registry);
     pw_core_disconnect(a.core); pw_context_destroy(a.context); pw_main_loop_destroy(a.loop); pw_deinit();
+    bool retired_owned_copies_zero = true;
+    for (unsigned r = 0; r < ROUTES; ++r) {
+        const struct mx_consumer_copy *q = &a.consumers[r];
+        if (q->active || q->count) retired_owned_copies_zero = false;
+        const uint8_t *storage = (const uint8_t *)q->slots;
+        for (size_t i = 0; i < sizeof(q->slots); ++i) if (storage[i]) retired_owned_copies_zero = false;
+    }
+    if (!retired_owned_copies_zero) fail(&a, 95);
+    if (atomic_load(&a.heap_ops)) fail(&a, 76);
     printf("{\"stage\":%u,\"error\":%u,\"sampleMismatches\":%" PRIu64 ",\"rendered\":%" PRIu64
         ",\"delivered\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"dropped\":%" PRIu64 ",\"cancelled\":%s,\"callbackHeapOperations\":%" PRIu64 ",\"inactiveOutputs\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"lossFrame\":%" PRIu64,
         a.stage, atomic_load(&a.error), atomic_load(&a.mismatches), atomic_load(&a.rendered),
         atomic_load(&a.delivered[0]), atomic_load(&a.delivered[1]), atomic_load(&a.delivered[2]),
         atomic_load(&a.dropped), a.cancelled ? "true" : "false", atomic_load(&a.heap_ops),
         atomic_load(&a.inactive[0]), atomic_load(&a.inactive[1]), atomic_load(&a.inactive[2]), atomic_load(&a.loss_frame));
+    printf(",\"stopSignalsReady\":%s,\"stopSignal\":%d,\"dataLoopRetired\":%s,\"retiredOwnedCopiesZero\":%s",
+        a.stop_signals_ready ? "true" : "false", a.stop_signal,
+        replacement.complete ? "true" : "false", retired_owned_copies_zero ? "true" : "false");
     print_format_reports(&a);
     return (a.stage == 10 || a.cancelled) && !atomic_load(&a.error) && !atomic_load(&a.mismatches) ? 0 : 1;
 }
