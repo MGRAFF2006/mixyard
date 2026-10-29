@@ -9,12 +9,13 @@ import type { DelayRequest, DelayResult, Feature } from './latency.ts'
 import { alignment } from './channels.ts'
 import DspNumber from './DspNumber.vue'
 
-const props = defineProps<{ api: Pick<Api, 'post'>; ready: boolean; config: ChainConfig; bypassed: boolean }>()
+const props = defineProps<{ api: Pick<Api, 'post'>; ready: boolean; epoch?: number; config: ChainConfig; bypassed: boolean }>()
 const emit = defineEmits<{ append: [effects: EffectConfig[]]; export: [value: { request: DelayRequest; result: DelayResult }] }>()
 const d = reactive(new DelayDraft())
 const block = ref(128), windowFrames = ref(2048), amplitude = ref(1), threshold = ref(0)
 const references = ref<string[]>([]), selected = ref<string[]>([]), feature = ref<Feature>('first-response')
 const busy = ref(false), error = ref(''), notice = ref(''), form = ref<HTMLFormElement | null>(null)
+watch(() => props.epoch, () => { d.changed(); busy.value = false; error.value = ''; notice.value = '' }, { flush: 'sync' })
 watch(() => props.config.format.channels.slice(), ids => {
   references.value = [...ids]; selected.value = [...ids]
 }, { immediate: true })

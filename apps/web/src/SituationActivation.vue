@@ -11,7 +11,7 @@ import { useSituationRows } from './situation-rows.ts'
 import { vSituationNumber } from './situation-number.ts'
 import SituationPreview from './SituationPreview.vue'
 const props = defineProps<{
-  api: Pick<Api, 'post'>; ready: boolean; visible: boolean
+  api: Pick<Api, 'post'>; epoch?: number; ready: boolean; visible: boolean
   graph: Graph; catalog: Definition[]; builderGeneration: number; builderReady: () => boolean
 }>()
 const emit = defineEmits<{ loadSavedGraph: [graph: Graph, catalog: Definition[]] }>()
@@ -24,6 +24,7 @@ const builderMatches = computed(() => !!s.saved && sameJson(props.graph, s.saved
 const armable = computed(() => { void clock.value; return s.reviewCurrent && acknowledged.value && builderMatches.value && !s.statusError })
 const state = computed(() => !s.status || s.statusError ? 'State unconfirmed' : `${s.status.manualOverride ? `Manually paused / ${s.status.armed ? 'armed authority retained' : 'disarmed'}` : s.status.armed ? 'Armed' : 'Disarmed'}${s.status.blocked ? ' / blocked' : ''}`)
 const locked = computed(() => !props.ready || s.busy || s.controlBusy)
+watch(() => props.epoch, () => { s.disconnect(); acknowledged.value = false }, { flush: 'sync' })
 watch(() => props.builderGeneration, () => s.builderChanged())
 watch(() => s.review, () => { acknowledged.value = false })
 function syncForm() {
@@ -96,7 +97,7 @@ function exportDraft() {
 }
 let poll: ReturnType<typeof setTimeout> | undefined, ticker: ReturnType<typeof setInterval> | undefined, disposed = false
 async function refresh() {
-  if (props.visible && document.visibilityState === 'visible' && s.connected && !s.busy && !s.controlBusy) await s.refreshStatus()
+  if (props.ready && props.visible && document.visibilityState === 'visible' && s.connected && !s.busy && !s.controlBusy) await s.refreshStatus()
 }
 async function cycle() { await refresh(); if (!disposed) poll = setTimeout(cycle, 2000) }
 function visibility() { if (document.visibilityState === 'visible') void refresh() }

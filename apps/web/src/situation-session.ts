@@ -20,6 +20,10 @@ export class SituationSession {
   constructor(api: Pick<Api, 'post'>) {
     this.api = api
   }
+  disconnect() {
+    this.generation++; this.evaluation = null; this.validated = false; this.live = null
+    this.liveError = ''; this.error = ''; this.notice = ''; this.busy = false; this.collecting = false
+  }
   invalidate() {
     this.generation++
     this.evaluation = null
@@ -145,11 +149,13 @@ export class SituationSession {
     this.collecting = true
     this.liveError = ''
     this.live = null
+    const generation = this.generation
     try {
-      this.live = readLiveContext(await this.api.post('/api/automation/context', {}))
+      const live = readLiveContext(await this.api.post('/api/automation/context', {}))
+      if (generation === this.generation) this.live = live
     }
     catch (error) {
-      this.liveError = error instanceof Error ? error.message : String(error)
+      if (generation === this.generation) this.liveError = error instanceof Error ? error.message : String(error)
     }
     finally {
       this.collecting = false
