@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import App from '../../../web/src/App.vue'
 import { Api } from '../../../web/src/api.ts'
 import '../../../web/src/style.css'
-import { MobileBridge } from './bridge.ts'
+import { MobileBridge, encodeNativeMessage } from './bridge.ts'
 import type { NativeCall } from './bridge.ts'
 
 declare global {
@@ -29,7 +29,7 @@ const call: NativeCall = async (method, payload) => {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { pending.delete(id); reject(new Error('Native operation timed out. Refresh; no automatic replay.')) }, 15_000)
     pending.set(id, { resolve: value => { clearTimeout(timer); resolve(value) }, reject: cause => { clearTimeout(timer); reject(cause) } })
-    window.mixyardNative!.postMessage(JSON.stringify({ ...message, id }))
+    window.mixyardNative!.postMessage(encodeNativeMessage(method, payload, id))
   })
 }
 const label = document.querySelector('#native-session')!

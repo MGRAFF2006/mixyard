@@ -3,42 +3,14 @@ import Security
 import CryptoKit
 import MobileCore
 
-struct Provisioning: Codable {
-    let endpoint: String; let pin: String; let deviceId: String
-    let credentialId: String; let credential: String
-}
-struct CredentialStore {
-    private var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "org.mixyard.mobile.control", kSecAttrAccount as String: "selected-device"] }
-    func load() throws -> Provisioning? {
-        var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?; let result = SecItemCopyMatching(q as CFDictionary, &item)
-        if result == errSecItemNotFound { return nil }
-        guard result == errSecSuccess, let data = item as? Data else { throw MobileError.invalid("keychain-unavailable") }
-        return try JSONDecoder().decode(Provisioning.self, from: data)
-    }
-    func save(_ value: Provisioning) throws {
-        let data = try JSONEncoder().encode(value)
-        let result = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if result == errSecSuccess { return }
-        guard result == errSecItemNotFound else { throw MobileError.invalid("keychain-write-failed") }
-        var q = query; q[kSecValueData as String] = data
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw MobileError.invalid("keychain-write-failed") }
-    }
-    func forget() throws {
-        let result = SecItemDelete(query as CFDictionary)
-        guard result == errSecSuccess || result == errSecItemNotFound else { throw MobileError.invalid("keychain-delete-failed") }
-    }
-}
-
 // Each exchange has an ephemeral session, an exact origin, bounded receive data, no redirects and normal PKI + leaf pin.
 private final class PinnedExchange: NSObject, URLSessionDataDelegate {
     let endpoint: URL; let pin: String
     private var buffer = Data(); private var status = 0
-    private var continuation: CheckedContinuation<(Int, [String: Any]), Error>?
+    private var continuation: CheckedContinuation<(Int, String), Error>?
     private var session: URLSession?
     init(endpoint: URL, pin: String) { self.endpoint = endpoint; self.pin = pin.lowercased() }
-    func run(_ request: URLRequest) async throws -> (Int, [String: Any]) {
+    func run(_ request: URLRequest) async throws -> (Int, String) {
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             let config = URLSessionConfiguration.ephemeral
@@ -74,7 +46,7 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
         defer { continuation = nil; self.session = nil; session.finishTasksAndInvalidate() }
         if let error { continuation?.resume(throwing: error); return }
         do {
-            guard let body = try JSONSerialization.jsonObject(with: buffer) as? [String: Any] else { throw MobileError.invalid("control-json") }
+            guard let body = String(data: buffer, encoding: .utf8) else { throw MobileError.invalid("control-utf8") }
             continuation?.resume(returning: (status, body))
         } catch { continuation?.resume(throwing: error) }
     }
@@ -82,12 +54,16 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
 
 @MainActor final class ControlClient {
     private var fence = SessionFence()
-    private let store = CredentialStore()
+    private let store: any CredentialVault
     private var configuration: Provisioning?
     private var active: PinnedExchange?
     private var busy = false
     var ticket: Ticket { fence.ticket }
-    init() throws { configuration = try store.load() }
+    init(store: any CredentialVault = CredentialStore()) throws { self.store = store; configuration = try store.load() }
+    private func object(_ json: String) throws -> [String: Any] {
+        guard let value = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { throw MobileError.invalid("control-json") }
+        return value
+    }
     func invalidate() { fence.invalidate(); active?.cancel(); active = nil }
     func forget() throws { invalidate(); try store.forget(); configuration = nil }
     private func permissions(_ value: [String: Any]) throws {
@@ -101,7 +77,7 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
               revision.doubleValue <= 9_007_199_254_740_991, revision.doubleValue.rounded(.down) == revision.doubleValue else { throw MobileError.invalid("unsafe-authority") }
         return try Authority(deviceId: device, authorityId: authority, revision: revision.uint64Value)
     }
-    private func request(config: Provisioning, path: String, body: [String: Any], ticket: Ticket, credential: Bool) async throws -> (Int, [String: Any]) {
+    private func request(config: Provisioning, path: String, body: String, ticket: Ticket, credential: Bool) async throws -> (Int, String) {
         let paths = ["/control/pair", "/control/session", "/control/request", "/control/credentials", "/control/rotate", "/control/revoke"]
         guard paths.contains(path), let endpoint = URL(string: config.endpoint), endpoint.scheme == "https", endpoint.host != nil,
               endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
@@ -111,7 +87,7 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
         var request = URLRequest(url: url); request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if credential { request.setValue("Bearer \(config.credential)", forHTTPHeaderField: "Authorization") }
-        let bytes = try JSONSerialization.data(withJSONObject: body)
+        let bytes = Data(body.utf8)
         guard bytes.count <= 2_097_152 else { throw MobileError.invalid("request-too-large") }
         request.httpBody = bytes
         let exchange = PinnedExchange(endpoint: endpoint, pin: config.pin); active = exchange
@@ -124,7 +100,9 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
         try fence.check(expected); guard !busy else { throw MobileError.invalid("native-busy") }
         invalidate(); let ticket = fence.ticket; busy = true; defer { busy = false }
         let config = Provisioning(endpoint: endpoint, pin: pin, deviceId: device, credentialId: "", credential: "")
-        let (status, value) = try await request(config: config, path: "/control/pair", body: ["deviceId": device, "invitation": invitation, "name": name], ticket: ticket, credential: false)
+        let pairBody = try JSONSerialization.data(withJSONObject: ["deviceId": device, "invitation": invitation, "name": name])
+        let (status, rawReply) = try await request(config: config, path: "/control/pair", body: String(decoding: pairBody, as: UTF8.self), ticket: ticket, credential: false)
+        let value = try object(rawReply)
         try permissions(value)
         guard status == 200, value["deviceId"] as? String == device, let credentialId = value["credentialId"] as? String,
               !credentialId.isEmpty, let credential = value["credential"] as? String, !credential.isEmpty,
@@ -133,7 +111,7 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
         let next = Provisioning(endpoint: endpoint, pin: pin, deviceId: device, credentialId: credentialId, credential: credential)
         try store.save(next); configuration = next
     }
-    func invoke(method: String, payload: [String: Any], expected: Ticket) async throws -> [String: Any] {
+    func invoke(method: String, payload: Any, expected: Ticket) async throws -> [String: Any] {
         try fence.check(expected)
         if method == "disconnect" { invalidate(); return [:] }
         guard !busy else { throw MobileError.invalid("native-busy") }
@@ -142,7 +120,8 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
         let ticket = fence.ticket; busy = true; defer { busy = false }
         do {
             if method == "session" {
-                let (status, value) = try await request(config: config, path: "/control/session", body: [:], ticket: ticket, credential: true)
+                let (status, rawReply) = try await request(config: config, path: "/control/session", body: "{}", ticket: ticket, credential: true)
+                let value = try object(rawReply)
                 try permissions(value)
                 guard status == 200, let backend = value["backendAvailable"] as? NSNumber, CFGetTypeID(backend) == CFBooleanGetTypeID(), !backend.boolValue,
                       let applied = value["audioApplied"] as? NSNumber, CFGetTypeID(applied) == CFBooleanGetTypeID(), !applied.boolValue else { throw MobileError.invalid("unsupported-backend-version") }
@@ -150,12 +129,21 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
                 guard next.deviceId == config.deviceId else { throw MobileError.invalid("device-mismatch") }
                 try fence.establish(ticket, next); return value
             }
-            guard method == "request", let before = ticket.authority, let path = payload["path"] as? String,
-                  path.range(of: "^/api/[a-z0-9/-]+$", options: .regularExpression) != nil, !path.contains("//"), path != "/api/session", let body = payload["body"], !["/api/automation/arm", "/api/automation/review"].contains(path) else { throw MobileError.invalid("request-path-denied") }
-            guard try authority(payload) == before else { throw MobileError.invalid("frozen-request-identity-mismatch") }
-            let (status, value) = try await request(config: config, path: "/control/request", body: ["deviceId": before.deviceId, "authorityId": before.authorityId, "revision": before.revision, "path": path, "body": body], ticket: ticket, credential: true)
-            guard value["error"] == nil, let canonical = value["status"] as? Int, canonical == status, value["body"] != nil else { throw MobileError.invalid("protocol-or-envelope-error") }
-            try fence.accept(ticket, authority(value)); return value
+            guard method == "request", let rawRequest = payload as? String else { throw MobileError.invalid("raw-control-json-required") }
+            guard rawRequest.utf8.count <= 2_097_152 else { throw MobileError.invalid("request-too-large") }
+            let envelope = try object(rawRequest)
+            guard let before = ticket.authority, let path = envelope["path"] as? String,
+                  path.range(of: "^/api/[a-z0-9/-]+$", options: .regularExpression) != nil, !path.contains("//"), path != "/api/session", envelope["body"] != nil, !["/api/automation/arm", "/api/automation/review", "/api/automation/live"].contains(path) else { throw MobileError.invalid("request-path-denied") }
+            guard try authority(envelope) == before else { throw MobileError.invalid("frozen-request-identity-mismatch") }
+            let (status, rawReply) = try await request(config: config, path: "/control/request", body: rawRequest, ticket: ticket, credential: true)
+            let value = try object(rawReply)
+            if let failure = value["error"] as? [String: Any] {
+                guard (400...599).contains(status), let code = failure["code"] as? String, failure["message"] is String else { throw MobileError.invalid("control-error") }
+                if status == 401 || status == 409 || code == "invalid-origin" { invalidate() }
+                return ["status": status, "json": rawReply]
+            }
+            guard let canonical = value["status"] as? Int, canonical == status, value["body"] != nil else { throw MobileError.invalid("protocol-or-envelope-error") }
+            try fence.accept(ticket, authority(value)); return ["status": status, "json": rawReply]
         } catch { if fence.ticket.epoch == ticket.epoch { invalidate() }; throw error }
     }
 }

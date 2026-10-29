@@ -24,7 +24,7 @@ final class RawSourcesTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: url) }
         try Data([1, 2, 3]).write(to: url)
-        let file = RawFileSource(file: try FileHandle(forReadingFrom: url), format: RawFormat(sample: .s16le, rate: 44117, channels: ["mono"]))
+        let file = RawFileSource(file: try FileHandle(forReadingFrom: url), format: try RawFormat(sample: .s16le, rate: 44117, channels: ["mono"]))
         XCTAssertThrowsError(try file.readFrames(maxFrames: 4))
     }
 }
