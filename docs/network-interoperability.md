@@ -1,10 +1,57 @@
 # Network audio interoperability roadmap
 
-Added: 2026-10-29. Status: planned; this document does not advertise implemented
-compatibility. Track interoperability in [#56](https://github.com/MGRAFF2006/mixyard/issues/56),
+Added: 2026-10-29. Status: optional standalone adapter work; device compatibility
+remains unqualified. Track interoperability in [#56](https://github.com/MGRAFF2006/mixyard/issues/56),
 native integration in [#51](https://github.com/MGRAFF2006/mixyard/issues/51),
 format preservation in [#29](https://github.com/MGRAFF2006/mixyard/issues/29),
 and processing/alignment in [#33](https://github.com/MGRAFF2006/mixyard/issues/33).
+
+## Implemented optional admission boundary
+
+[`interoperability/`](../interoperability/README.md) is an optional dependency-free
+adapter package, independent of the native runtime and paired raw QUIC workspace.
+Its immutable descriptor retains the canonical network `Spec` JSON, all five raw
+precisions, arbitrary positive u32 sample rates, explicit ordered channels and
+source provenance. Configurable resource budgets reject oversized work; format
+conversion remains explicit and local to one destination. The descriptor boundary
+does not inherit the v1 QUIC MTU.
+
+Local runtime consent grants exact roles, endpoint and media Spec separately:
+live send/receive, media serve/fetch, control, service control and advertisement.
+The only admitted addresses in this profile are explicitly owned literal IPv4
+loopback endpoints. Discovery and caller-pinned legacy identities are not pairing
+or authentication. Source-group exclusions reject a premix before IO, and a
+revoked or expired session cannot authorize later IO. An operation admitted before
+revocation may already have handed bytes to the OS/SDK; callers still own worker
+shutdown and downstream queue disposal. No physical capture/playback, native
+backend availability, timing synchronization or branded device qualification is
+established. `backendAvailable` and `audioApplied` remain false.
+
+The package README records execution and admission boundaries. Exact standalone
+profiles are listed below; none is a blanket ecosystem compatibility badge. All
+Python socket evidence is synthetic owned Linux loopback. Browser SDK/native
+boundaries are mocked; external SDK sessions, accounts, real browser media,
+Windows/macOS/mobile and physical devices remain unqualified.
+
+| Adapter | Implemented roles and formats | Evidence and remaining boundary |
+| --- | --- | --- |
+| [HTTP PCM](protocol-http-upnp.md) | Independent finite media/live-block serve and fetch; all five canonical raw codecs; explicitly selected L16 endian conversion at supported destination formats | Real TCP byte delivery, generic L16 MIME parsing, separate roles, malformed input/revoke/exclusions; no continuous scheduling, encoded-file decoder, HTTPS, seeking, playlists or native delivery |
+| [Partial UPnP AV/SSDP](protocol-http-upnp.md) | AVTransport:1 controller and renderer for explicitly approved finite PCM resources; owned unicast M-SEARCH, alive/byebye and device/service descriptions | Real source → controller/renderer → silent PCM sink and UDP discovery/withdrawal; no LAN/multicast, full generic MediaRenderer/DLNA profile, eventing, volume or certification |
+| [RTP](protocol-realtime.md) | Independent v2 L16/L24 send and receive, explicit PT/SSRC/format agreement, destination-local endian conversion | Golden wire and real UDP PCM, rollover/loss/reorder/injection/revoke; no SRTP/keying, RTCP, pacing, jitter buffer, synchronized playout or receiver advertisement |
+| [RTSP](protocol-realtime.md) | RTSP/1.0 UDP-unicast control client lifecycle | Real TCP control framing/session/transport checks; media needs a separate grant; no RTSP/2.0, server, discovery or authentication |
+| [Snapcast](protocol-realtime.md) | Bounded public NDJSON JSON-RPC service status/client volume/group mute | Real TCP synthetic public-wire peers; no upstream binary, PCM audio client/server or group synchronization proof |
+| [Cast / Safari AirPlay](protocol-public-sdk.md) | Injected official Cast session media/controller methods; Safari approved-element picker/control | SDK contract tests only; Cast loopback URLs cannot reach a remote receiver; no certified desktop Cast/AirPlay receiver, RAOP or receiver advertisement |
+| [Spotify](protocol-public-sdk.md) | Injected Web Playback SDK service player/connect/control and ready device identity | SDK contract tests only; account/OAuth/DRM/policy gates remain; no arbitrary PCM input, export or mixing and no certified hardware receiver |
+| [WebRTC](protocol-public-sdk.md) | Directional cooperating-browser selected-track send/receive, explicit destination Opus conversion, identity/fingerprint and bounded signaling/candidate admission | Real owned HTTP signaling ingress into production adapter with mocked native peer; no real browser media; ordinary browser ICE cannot bind the selected ports and candidate validation is not a socket sandbox |
+
+Python adapters use the shared runtime Session directly. Browser modules require
+a synchronous deny-by-default host authorization callback plus immediate host
+revoke/expiry notification. They copy the unchanged descriptor and provenance,
+but do not implement Python Session, pairing or canonical validation in JavaScript.
+Host integration must validate the same descriptor/path/exclusion/consent contract
+before SDK side effects. Unsafe JavaScript integers reject rather than round;
+larger canonical stream IDs need an explicit lossless host boundary. Vendor SDK
+network behavior and browser ICE are not confined by the loopback admission model.
 
 ## Product goal and direction
 
@@ -36,9 +83,10 @@ group synchronization and format support are separate capabilities.
 
 ## Integration targets
 
-All rows below are unimplemented roadmap targets. Ordering is an implementation
-proposal, not a reduction of the accepted breadth. Every receiver/advertisement
-role needs its own executable implementation and compatibility evidence.
+The rows below retain the broader product targets beyond the exact standalone
+profiles above. Ordering is an implementation proposal, not a reduction of the
+accepted breadth. Every additional receiver/advertisement role needs its own
+executable implementation and compatibility evidence.
 
 | Family | Send/control from Mixyard | Receive into / advertise Mixyard | Boundary and initial priority |
 | --- | --- | --- | --- |
