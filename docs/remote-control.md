@@ -158,6 +158,14 @@ Authenticated operations and credential changes serialize through one bounded
 operation slot. Revocation cannot acknowledge success while an earlier admitted
 write is still executing; later writes authenticate against the updated store.
 Concurrent requests can get `503 service-busy`; callers must refresh and review.
+This includes a revocation attempt while an earlier canonical mutation is still
+running: **503 means revocation was not accepted**, not that the credential was
+revoked. Refresh authoritative state and explicitly retry after that operation
+finishes. A remote mutation retains the single admission slot through the actual
+worker result or unwind, even if its HTTP caller times out at nine seconds or
+disconnects. The ordinary local web owner's eight-second response behavior is
+unchanged. Revocation can acknowledge success only after earlier admitted work
+has completed and the revocation itself is persisted; no mutation is replayed.
 Every HTTP body is at most 1 MiB, responses at most 9 MiB including the envelope,
 and at most 32 TLS/HTTP connections are admitted. HTTP/1 framing is Hyper-owned,
 TLS is Rustls/Tokio-Rustls, 0-RTT is disabled, and no wire parser is handwritten.
