@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 import uuid
 import xml.etree.ElementTree as ET
 from types import MappingProxyType
@@ -187,11 +188,11 @@ class Renderer(Server):
             ET.SubElement(variable, "dataType").text = datatype
         return ET.tostring(root, encoding="utf-8")
 
-    def _dispatch(self, method, path, headers, body):
+    def _dispatch(self, method, path, headers, body, *, deadline):
         with self._state_lock:
-            return self._handle(method, path, headers, body)
+            return self._handle(method, path, headers, body, deadline=deadline)
 
-    def _handle(self, method, path, headers, body):
+    def _handle(self, method, path, headers, body, *, deadline):
         if method == "GET" and path in ("/device.xml", "/avtransport.xml"):
             return {"Content-Type": "text/xml; charset=utf-8"}, self._description() if path == "/device.xml" else self._scpd()
         if method != "POST" or path != "/control" or headers.get("content-type") != "text/xml; charset=utf-8":
@@ -221,9 +222,11 @@ class Renderer(Server):
             self._pcm = b""
             resource = self.sources[self._selected]
             try:
-                pcm = HttpReceiver(self.session).fetch(resource)
+                pcm = HttpReceiver(self.session).fetch(resource, deadline=deadline)
                 self._check()
                 self.session.require("media-fetch", resource.endpoint, resource.spec)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("renderer request deadline")
                 self._pcm = pcm
             finally:
                 self.state = "STOPPED"

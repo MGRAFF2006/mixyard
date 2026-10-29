@@ -2,8 +2,10 @@
 import http.client
 import socket
 import threading
+import time
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 
 from mixyard_interop.core import Endpoint, Grant, Session, Spec
 from mixyard_interop.http_upnp import (Advertiser, Controller, HttpReceiver, MediaSource,
@@ -83,7 +85,7 @@ class HTTPTests(unittest.TestCase):
         fmt, ep = spec("raw-s16-le", ("FC",), 48000), endpoint()
         send = session("origin", [Grant("media-serve", ep, "sink", fmt)])
         receive = session("sink", [Grant("media-fetch", ep, "origin", fmt)])
-        def generic_source(*args):
+        def generic_source(*args, **kwargs):
             return {"Content-Type": "audio/L16;rate=48000;channels=1"}, b"\x80\x00\x00\x01"
         with Server(send, "media-serve", generic_source, fmt, endpoint=ep):
             self.assertEqual(HttpReceiver(receive).fetch(Resource(ep, "/pcm", fmt, "l16")),
@@ -107,7 +109,7 @@ class HTTPTests(unittest.TestCase):
                 ep = endpoint()
                 send = session("origin", [Grant("media-serve", ep, "sink", fmt)])
                 receive = session("sink", [Grant("media-fetch", ep, "origin", fmt)])
-                def generic_source(*args):
+                def generic_source(*args, **kwargs):
                     return {"Content-Type": mime}, b"\x80\x00\x00\x01"
                 with Server(send, "media-serve", generic_source, fmt, endpoint=ep):
                     resource = Resource(ep, "/pcm", fmt, "l16")
@@ -121,7 +123,7 @@ class HTTPTests(unittest.TestCase):
         ep = endpoint()
         send = session("origin", [Grant("media-serve", ep, "sink", stereo)])
         receive = session("sink", [Grant("media-fetch", ep, "origin", stereo)])
-        with Server(send, "media-serve", lambda *a: ({"Content-Type": "audio/L16;rate=48000"}, bytes(4)),
+        with Server(send, "media-serve", lambda *a, **kw: ({"Content-Type": "audio/L16;rate=48000"}, bytes(4)),
                     stereo, endpoint=ep):
             with self.assertRaises(ProtocolError):
                 HttpReceiver(receive).fetch(Resource(ep, "/pcm", stereo, "l16"))
@@ -157,8 +159,8 @@ class HTTPTests(unittest.TestCase):
         receive = session("sink", [Grant("media-fetch", ep, "origin", fmt)])
         with MediaSource(send, fmt, bytes(fmt.frame_bytes * 4), endpoint=ep) as source:
             dispatch = source.dispatch
-            def revoke_before_response(*args):
-                result = dispatch(*args)
+            def revoke_before_response(*args, **kwargs):
+                result = dispatch(*args, **kwargs)
                 receive.revoke()
                 return result
             source.dispatch = revoke_before_response
@@ -256,6 +258,74 @@ class HTTPTests(unittest.TestCase):
 
 
 class UPnPTests(unittest.TestCase):
+    def test_failed_worker_start_releases_http_and_ssdp_endpoints(self):
+        fmt, source_ep = spec(), endpoint()
+        send = session("origin", [Grant("media-serve", source_ep, "sink", fmt)])
+        failed = []
+        def fail_start(worker):
+            failed.append(worker._target.__self__)
+            raise RuntimeError("injected worker-start failure")
+        with patch.object(threading.Thread, "start", new=fail_start):
+            with self.assertRaisesRegex(RuntimeError, "worker-start"):
+                MediaSource(send, fmt, bytes(fmt.frame_bytes), endpoint=source_ep)
+            self.assertEqual(failed[-1]._sock.fileno(), -1)
+            with socket.socket() as retry:
+                retry.bind((source_ep.host, source_ep.port))
+            adv_ep, peer, renderer = endpoint("udp"), endpoint("udp"), endpoint()
+            identity = "db9debd8-967b-49e7-a97c-26529fb5dc8d"
+            adv = session("sink", [Grant("advertise", target, "searcher") for target in (adv_ep, peer, renderer)])
+            with self.assertRaisesRegex(RuntimeError, "worker-start"):
+                Advertiser(adv, renderer, identity, peer, endpoint=adv_ep)
+            self.assertEqual(failed[-1]._sock.fileno(), -1)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as retry:
+                retry.bind((adv_ep.host, adv_ep.port))
+
+    def test_withdrawal_failure_still_joins_worker_and_releases_udp_endpoint(self):
+        adv_ep, peer, renderer = endpoint("udp"), endpoint("udp"), endpoint()
+        identity = "db9debd8-967b-49e7-a97c-26529fb5dc8d"
+        adv = session("sink", [Grant("advertise", target, "searcher") for target in (adv_ep, peer, renderer)])
+        advertiser = Advertiser(adv, renderer, identity, peer, endpoint=adv_ep)
+        try:
+            advertiser.announce()
+            with patch.object(advertiser, "announce", side_effect=OSError("injected withdrawal failure")):
+                with self.assertRaisesRegex(OSError, "withdrawal"):
+                    advertiser.close()
+            self.assertFalse(advertiser._thread.is_alive())
+            self.assertEqual(advertiser._sock.fileno(), -1)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as retry:
+                retry.bind((adv_ep.host, adv_ep.port))
+        finally:
+            advertiser.close()
+
+    def test_play_fetch_shares_remaining_http_request_deadline(self):
+        fmt, source_ep, render_ep = spec(), endpoint(), endpoint()
+        send = session("origin", [Grant("media-serve", source_ep, "sink", fmt)])
+        render = session("sink", [Grant("control", render_ep, "controller"),
+                                  Grant("media-fetch", source_ep, "origin", fmt)])
+        control = session("controller", [Grant("control", render_ep, "sink")])
+        resource = Resource(source_ep, "/pcm", fmt)
+        from mixyard_interop.http_upnp.http import _message
+        def delayed_source(*args, **kwargs):
+            threading.Event().wait(0.20)
+            return {"Content-Type": "application/vnd.mixyard.pcm"}, bytes(fmt.frame_bytes)
+        with patch("mixyard_interop.http_upnp.http.TIMEOUT", 0.32):
+            with Server(send, "media-serve", delayed_source, fmt, endpoint=source_ep):
+                with Renderer(render, {"mix-37": resource}, endpoint=render_ep) as renderer:
+                    Controller(control, render_ep).set_uri("mix-37", resource)
+                    body = envelope("Play", {"InstanceID": "0", "Speed": "1"})
+                    message = _message("POST /control HTTP/1.1", {
+                        "Host": f"127.0.0.1:{render_ep.port}", "Content-Type": "text/xml; charset=utf-8",
+                        "SOAPAction": f'"{AVT}#Play"'}, body)
+                    with socket.create_connection((render_ep.host, render_ep.port), timeout=2) as sock:
+                        started = time.monotonic()
+                        sock.sendall(message[:-1])
+                        threading.Event().wait(0.20)
+                        sock.sendall(message[-1:])
+                        self.assertEqual(sock.recv(1), b"")
+                        self.assertLess(time.monotonic() - started, 0.75)
+                    self.assertEqual(renderer.take_pcm()[1], b"")
+                    self.assertEqual(renderer.errors, 1)
+
     def test_controller_renderer_media_and_discovery_real_sockets(self):
         fmt, source_ep, render_ep = spec(), endpoint(), endpoint()
         pcm = bytes((i * 37) % 256 for i in range(fmt.frame_bytes * 9))

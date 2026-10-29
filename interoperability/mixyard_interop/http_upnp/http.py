@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 import socket
 import threading
@@ -120,7 +121,7 @@ def _message(first: str, headers: dict[str, str], body: bytes) -> bytes:
 
 def request(session: Session, role: str, endpoint: Endpoint, path: str, *,
             spec: Spec | None = None, method: str = "GET", body: bytes = b"",
-            headers: dict[str, str] | None = None, limit: int = MAX_MEDIA):
+            headers: dict[str, str] | None = None, limit: int = MAX_MEDIA, deadline=None):
     endpoint_checked(endpoint)
     path_checked(path)
     if method not in ("GET", "POST") or len(body) > MAX_SOAP or not 0 <= limit <= MAX_MEDIA:
@@ -133,7 +134,9 @@ def request(session: Session, role: str, endpoint: Endpoint, path: str, *,
         raise ProtocolError("reserved outbound header")
     check = lambda: session.require(role, endpoint, spec)
     check()
-    deadline = time.monotonic() + TIMEOUT
+    if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
+        raise ProtocolError("invalid operation deadline")
+    deadline = min(time.monotonic() + TIMEOUT, deadline) if deadline is not None else time.monotonic() + TIMEOUT
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         _remaining(sock, deadline)
         sock.connect((endpoint.host, endpoint.port))
@@ -145,6 +148,7 @@ def request(session: Session, role: str, endpoint: Endpoint, path: str, *,
         if length > limit:
             raise ProtocolError("response body budget")
         result = _body(sock, length, deadline, check)
+        _remaining(sock, deadline)
     return response_headers, result
 
 
@@ -163,11 +167,12 @@ class Server:
             session.require(role, self.endpoint, spec)
             self._sock.listen(2)
             self._sock.settimeout(0.1)
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
         except BaseException:
+            self._stop.set()
             self._sock.close()
             raise
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
 
     def _check(self):
         if self._stop.is_set():
@@ -194,7 +199,7 @@ class Server:
                             or length > (MAX_SOAP if method == "POST" else 0)):
                         raise ProtocolError("invalid request")
                     body = _body(sock, length, deadline, self._check)
-                    response_headers, response_body = self.dispatch(method, path, headers, body)
+                    response_headers, response_body = self.dispatch(method, path, headers, body, deadline=deadline)
                     if len(response_body) > MAX_MEDIA:
                         raise ProtocolError("response body budget")
                     _send(sock, _message("HTTP/1.1 200 OK", response_headers, response_body), deadline, self._check)
@@ -204,8 +209,10 @@ class Server:
 
     def close(self):
         self._stop.set()
-        self._thread.join(TIMEOUT + 0.5)
-        self._sock.close()
+        try:
+            self._thread.join(TIMEOUT + 0.5)
+        finally:
+            self._sock.close()
         if self._thread.is_alive():
             raise RuntimeError("listener did not stop within deadline")
 
@@ -289,7 +296,7 @@ class MediaSource(Server):
             raise ProtocolError("metadata budget")
         payload = _swap16(pcm) if wire == "l16" else pcm
 
-        def dispatch(method, path, headers, body):
+        def dispatch(method, path, headers, body, *, deadline):
             if method != "GET" or path != "/pcm":
                 raise ProtocolError("unknown media resource")
             return {"Content-Type": mime, "X-Mixyard-Spec": metadata,
@@ -303,11 +310,11 @@ class HttpReceiver:
     def __init__(self, session: Session):
         self.session = session
 
-    def fetch(self, resource: Resource, *, mode="media") -> bytes:
+    def fetch(self, resource: Resource, *, mode="media", deadline=None) -> bytes:
         if mode not in ("media", "live"):
             raise ProtocolError("unknown receive mode")
         role = "media-fetch" if mode == "media" else "live-receive"
-        headers, pcm = request(self.session, role, resource.endpoint, resource.path, spec=resource.spec)
+        headers, pcm = request(self.session, role, resource.endpoint, resource.path, spec=resource.spec, deadline=deadline)
         if (not _content_type_matches(headers.get("content-type"), resource.spec, resource.wire)
                 or headers.get("x-mixyard-mode", mode) != mode
                 or headers.get("x-mixyard-spec", _spec_header(resource.spec)) != _spec_header(resource.spec)):

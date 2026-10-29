@@ -125,6 +125,14 @@ handles one datagram at a time; OS UDP queues may drop excess traffic. A slow
 request can delay that listener for at most its deadline, without affecting
 separate source/renderer objects.
 
+Renderer Play passes the active request's remaining monotonic deadline through
+the nested media fetch; body upload and media download share one request budget.
+Expired fetches cannot populate the PCM slot. Internal Server dispatch callbacks
+receive a keyword-only `deadline` and must keep their own work within it.
+Worker creation/start failures close the already-bound HTTP/SSDP endpoint.
+Advertiser withdrawal errors still join the owned worker and close its socket;
+an unsuccessful byebye may propagate after cleanup, and does not imply delivery.
+
 The session checks fresh consent, expiry/revocation, exact role/endpoint/Spec,
 source provenance, visited-peer loops and excluded groups. A premix containing an
 excluded source rejects as a whole before IO. Checks occur before connection or listener activation, before each bounded HTTP read/write and UDP
@@ -158,6 +166,9 @@ M-SEARCH discovery and alive/byebye notifications, role isolation, no-consent,
 revocation, excluded mixed provenance, relabelled specs, hostile URLs, malformed
 SOAP/DTD/depth/instance/action, malformed datagrams/headers, response redirects,
 oversized/truncated bodies, and recovery on subsequent requests. The standalone
+regressions also cover equivalent L16 media types versus format mismatches,
+failed worker startup, failed SSDP withdrawal and nested fetch deadline expiry.
+The standalone
 CI workflow runs the same Linux-only command. No Windows/macOS, physical device,
 long-running clock/latency, continuous-stream or DLNA compatibility claim follows.
 

@@ -65,11 +65,12 @@ class Advertiser:
             self._check()
             self._sock.bind((endpoint.host, endpoint.port))
             self._sock.settimeout(0.1)
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
         except BaseException:
+            self._stop.set()
             self._sock.close()
             raise
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
 
     def _check(self):
         if self._stop.is_set():
@@ -127,10 +128,12 @@ class Advertiser:
             pass
         finally:
             self._stop.set()
-        self._thread.join(TIMEOUT)
-        self._sock.close()
-        if self._thread.is_alive():
-            raise RuntimeError("SSDP responder did not stop")
+            try:
+                self._thread.join(TIMEOUT)
+            finally:
+                self._sock.close()
+            if self._thread.is_alive():
+                raise RuntimeError("SSDP responder did not stop")
 
     def __enter__(self):
         return self
