@@ -1,6 +1,6 @@
 //! Allocating network workers. Local arrival trends are not hardware clock synchronization.
 use crate::{Offer, Playout, PlayoutConfig, PlayoutReport, Session};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use std::{sync::Arc, time::Instant};
 use tokio::sync::{mpsc, watch};
 
@@ -504,26 +504,25 @@ impl ReceiveWorker {
                 offer.version == crate::VERSION,
                 "unsupported worker version"
             );
-            let playout = session.create_playout(
-                offer.spec.stream,
-                PlayoutConfig {
-                    anchor,
-                    target_buffer_frames: config.initial_frames,
-                },
-            )?;
-            ensure!(
-                playout.generation() == offer.generation && playout.spec() == &offer.spec,
-                "worker descriptor/generation mismatch"
-            );
+            // Reject invalid controller settings before acquiring a lifecycle.
             let controller = Controller::new(
                 offer.spec.sample_rate,
                 offer.spec.frames_per_packet,
                 offer.generation,
                 config,
-                playout.snapshot().capacity_frames,
+                (session.worker_packet_limit() as u64)
+                    .checked_mul(u64::from(offer.spec.frames_per_packet))
+                    .context("worker capacity overflow")?,
             )?;
             let cadence =
                 Cadence::new(anchor, offer.spec.sample_rate, offer.spec.frames_per_packet)?;
+            let playout = session.create_worker_playout(
+                &offer,
+                PlayoutConfig {
+                    anchor,
+                    target_buffer_frames: config.initial_frames,
+                },
+            )?;
             let block = vec![0; offer.spec.payload_bytes()?];
             tracks.push(ReceiveTrack {
                 session: session.clone(),

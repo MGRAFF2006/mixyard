@@ -207,6 +207,24 @@ impl Receiver {
     }
 
     /// Worker-only allocation; one exclusive consumer per stream generation.
+    pub(crate) fn create_playout_for(
+        &mut self,
+        offer: &Offer,
+        config: PlayoutConfig,
+    ) -> Result<Playout> {
+        let stream = self
+            .streams
+            .get(&offer.spec.stream)
+            .ok_or_else(|| anyhow::anyhow!("unadmitted stream"))?;
+        ensure!(
+            crate::worker::same_offer(&stream.offer, offer),
+            "worker descriptor/generation mismatch"
+        );
+        // Validation and claim share this exclusive Receiver borrow. A stale
+        // constructor must never acquire/drop the newer generation's lifecycle.
+        self.create_playout(offer.spec.stream, config)
+    }
+
     pub fn create_playout(&mut self, id: u64, config: PlayoutConfig) -> Result<Playout> {
         let stream = self
             .streams

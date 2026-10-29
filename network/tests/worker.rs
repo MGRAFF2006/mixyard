@@ -493,3 +493,40 @@ fn reordered_raw_packets_and_a_loss_drive_counted_local_delay_increase() {
     assert_eq!(delayed.prebuffer_frames, 5);
     assert!(silence.iter().all(|&x| x == 0));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejected_receive_constructor_preserves_new_generation_and_correct_owner()
+-> anyhow::Result<()> {
+    let s = spec(1, "a", Codec::RawF64Le, 1000, &["FR", "FL"], 20);
+    let (a, b, _ea, _eb) = pair(std::slice::from_ref(&s), &[]).await?;
+    let run_a = tokio::spawn(a.clone().run());
+    let run_b = tokio::spawn(b.clone().run());
+    a.negotiate(offer(s.clone(), 1)).await?;
+    a.negotiate(offer(s.clone(), 2)).await?;
+    a.enqueue(1, sample_bytes(&s, 0)).await?;
+    a.flush_round().await?;
+    wait_queued(&b, 1, 1).await?;
+    let anchor = Instant::now();
+    let jitter = config(s.frames_per_packet);
+    assert!(ReceiveWorker::new(b.clone(), vec![(offer(s.clone(), 1), jitter)], anchor).is_err());
+    let mut wrong = s.clone();
+    wrong.channels.reverse();
+    assert!(ReceiveWorker::new(b.clone(), vec![(offer(wrong, 2), jitter)], anchor).is_err());
+    let mut invalid = jitter;
+    invalid.max_frames = 1000;
+    assert!(ReceiveWorker::new(b.clone(), vec![(offer(s.clone(), 2), invalid)], anchor).is_err());
+    assert!(
+        b.arrival_observation(1, 2).is_some(),
+        "rejection must preserve current arrival state"
+    );
+    let correct = ReceiveWorker::new(b.clone(), vec![(offer(s, 2), jitter)], anchor)?;
+    // Keep the valid owner alive until after inspection: dropping it deliberately
+    // cancels its own generation, which the rejected constructors must not do.
+    assert!(b.arrival_observation(1, 2).is_some());
+    drop(correct);
+    a.close();
+    b.close();
+    let _ = run_a.await?;
+    let _ = run_b.await?;
+    Ok(())
+}

@@ -605,6 +605,22 @@ impl Session {
         self.limits.max_streams
     }
 
+    pub(crate) fn worker_packet_limit(&self) -> usize {
+        self.limits.packets_per_stream
+    }
+
+    pub(crate) fn create_worker_playout(
+        &self,
+        offer: &Offer,
+        config: crate::PlayoutConfig,
+    ) -> Result<crate::Playout> {
+        let mut receiver = self.receiver.lock().expect("receiver poisoned");
+        if self.connection.close_reason().is_some() {
+            receiver.disconnect();
+        }
+        receiver.create_playout_for(offer, config)
+    }
+
     pub(crate) fn cancel_receive_generation(&self, offer: &Offer) {
         self.receiver
             .lock()
