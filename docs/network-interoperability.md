@@ -27,9 +27,31 @@ shutdown and downstream queue disposal. No physical capture/playback, native
 backend availability, timing synchronization or branded device qualification is
 established. `backendAvailable` and `audioApplied` remain false.
 
-The package README records exact local verification and boundaries. Protocol
-profiles below remain targets until their own executable adapter and evidence are
-listed here; none is a blanket ecosystem compatibility badge.
+The package README records execution and admission boundaries. Exact standalone
+profiles are listed below; none is a blanket ecosystem compatibility badge. All
+Python socket evidence is synthetic owned Linux loopback. Browser SDK/native
+boundaries are mocked; external SDK sessions, accounts, real browser media,
+Windows/macOS/mobile and physical devices remain unqualified.
+
+| Adapter | Implemented roles and formats | Evidence and remaining boundary |
+| --- | --- | --- |
+| [HTTP PCM](protocol-http-upnp.md) | Independent finite media/live-block serve and fetch; all five canonical raw codecs; explicitly selected L16 endian conversion at supported destination formats | Real TCP byte delivery, generic L16 MIME parsing, separate roles, malformed input/revoke/exclusions; no continuous scheduling, encoded-file decoder, HTTPS, seeking, playlists or native delivery |
+| [Partial UPnP AV/SSDP](protocol-http-upnp.md) | AVTransport:1 controller and renderer for explicitly approved finite PCM resources; owned unicast M-SEARCH, alive/byebye and device/service descriptions | Real source → controller/renderer → silent PCM sink and UDP discovery/withdrawal; no LAN/multicast, full generic MediaRenderer/DLNA profile, eventing, volume or certification |
+| [RTP](protocol-realtime.md) | Independent v2 L16/L24 send and receive, explicit PT/SSRC/format agreement, destination-local endian conversion | Golden wire and real UDP PCM, rollover/loss/reorder/injection/revoke; no SRTP/keying, RTCP, pacing, jitter buffer, synchronized playout or receiver advertisement |
+| [RTSP](protocol-realtime.md) | RTSP/1.0 UDP-unicast control client lifecycle | Real TCP control framing/session/transport checks; media needs a separate grant; no RTSP/2.0, server, discovery or authentication |
+| [Snapcast](protocol-realtime.md) | Bounded public NDJSON JSON-RPC service status/client volume/group mute | Real TCP synthetic public-wire peers; no upstream binary, PCM audio client/server or group synchronization proof |
+| [Cast / Safari AirPlay](protocol-public-sdk.md) | Injected official Cast session media/controller methods; Safari approved-element picker/control | SDK contract tests only; Cast loopback URLs cannot reach a remote receiver; no certified desktop Cast/AirPlay receiver, RAOP or receiver advertisement |
+| [Spotify](protocol-public-sdk.md) | Injected Web Playback SDK service player/connect/control and ready device identity | SDK contract tests only; account/OAuth/DRM/policy gates remain; no arbitrary PCM input, export or mixing and no certified hardware receiver |
+| [WebRTC](protocol-public-sdk.md) | Directional cooperating-browser selected-track send/receive, explicit destination Opus conversion, identity/fingerprint and bounded signaling/candidate admission | Real owned HTTP signaling ingress into production adapter with mocked native peer; no real browser media; ordinary browser ICE cannot bind the selected ports and candidate validation is not a socket sandbox |
+
+Python adapters use the shared runtime Session directly. Browser modules require
+a synchronous deny-by-default host authorization callback plus immediate host
+revoke/expiry notification. They copy the unchanged descriptor and provenance,
+but do not implement Python Session, pairing or canonical validation in JavaScript.
+Host integration must validate the same descriptor/path/exclusion/consent contract
+before SDK side effects. Unsafe JavaScript integers reject rather than round;
+larger canonical stream IDs need an explicit lossless host boundary. Vendor SDK
+network behavior and browser ICE are not confined by the loopback admission model.
 
 ## Product goal and direction
 
@@ -61,9 +83,10 @@ group synchronization and format support are separate capabilities.
 
 ## Integration targets
 
-All rows below are unimplemented roadmap targets. Ordering is an implementation
-proposal, not a reduction of the accepted breadth. Every receiver/advertisement
-role needs its own executable implementation and compatibility evidence.
+The rows below retain the broader product targets beyond the exact standalone
+profiles above. Ordering is an implementation proposal, not a reduction of the
+accepted breadth. Every additional receiver/advertisement role needs its own
+executable implementation and compatibility evidence.
 
 | Family | Send/control from Mixyard | Receive into / advertise Mixyard | Boundary and initial priority |
 | --- | --- | --- | --- |

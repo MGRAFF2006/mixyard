@@ -5,10 +5,12 @@ load the native runtime, open a device or alter the paired QUIC transport. It is
 an explicit production adapter boundary for owned loopback endpoints, not a LAN
 compatibility claim. Browser modules are optional ES modules with injected SDKs.
 
-Run focused core checks without installing anything or generating bytecode:
+Run the optional Python policy/socket suite and installed-Node SDK contracts
+without installing packages or generating bytecode:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=interoperability python3 -m unittest discover -s interoperability/tests -v
+node --test --test-timeout=10000 interoperability/tests/public_sdk/*.test.mjs
 ```
 
 The optional `test_descriptor_oracle.py` also compares a 50-case positive/negative
@@ -64,14 +66,37 @@ literal `127.0.0.1` and a nonzero port, with `http`, `tcp`, `udp` or `rtsp` sche
 hostnames, redirects, other addresses and administration-token reuse are outside
 this profile. Only endpoints whose processes the caller owns may be admitted.
 
-Every adapter must call `Session.require` before each IO operation and after a
-receive before returning media. `revoke()` blocks later admissions. It cannot
+Python adapters call `Session.require` before each IO operation and after a
+receive before returning media. Browser adapters expose a synchronous
+deny-by-default `authorize(role, context)` callback, and require the host's
+canonical validation, live grants, exclusions and immediate revoke/expiry
+notification. The callback is an explicit integration boundary; it is not a
+Python Session implementation or pairing. See the public SDK profile for its
+safe-integer budget, SDK/URL-lease assumptions and real browser media gates.
+`revoke()` blocks later admissions. It cannot
 recall an operation already admitted or bytes already handed to an OS or SDK;
 stopping the owned worker and discarding queued media is the adapter/caller's
 responsibility. `check()` is only a coarse lifecycle check, never an IO grant.
 No physical-audio application or backend availability is claimed: both flags stay
 false. Tests establish finite policy/loopback behavior, not hardware, pacing,
 latency, clock synchronization, LAN security, throughput or endurance.
+
+Implemented role profiles and executable examples are documented separately:
+
+- [HTTP PCM, partial UPnP AV and unicast SSDP](../docs/protocol-http-upnp.md):
+  finite media/live blocks, explicit generic L16 conversion, approved renderer
+  source identity and separate control/media/advertise grants.
+- [RTP, RTSP and Snapcast](../docs/protocol-realtime.md): actual L16/L24 UDP
+  media, RTSP/1.0 control and Snapcast service control. SRTP, native clocks,
+  Snapcast PCM and group synchronization remain explicit gaps.
+- [Cast, Safari AirPlay, Spotify and WebRTC](../docs/protocol-public-sdk.md):
+  injected public API methods with mocked SDK/native boundaries and real owned
+  loopback signaling ingress. No vendor account/device/browser-media execution,
+  arbitrary Spotify PCM or certified Cast/AirPlay receiver is claimed.
+
+The adapters are optional importable production modules with focused socket or
+SDK-contract proofs. No native-runtime/web-console route, persistent consent,
+production signaling service or LAN deployment is connected by this package.
 
 Our adapter code remains MIT. Python is an external runtime under its
 [PSF license](https://docs.python.org/3/license.html), not vendored here. No SDK,
