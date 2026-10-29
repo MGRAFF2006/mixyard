@@ -245,6 +245,30 @@ test('scoped canonical conflicts revoke shared authority immediately, while perm
   }
 })
 
+test('a delayed same-epoch canonical conflict still revokes after a newer successful profile reply', async () => {
+  const held = deferred<Response>()
+  let requests = 0
+  const api = Api.forControl(async (path, init) => {
+    if (path === '/control/session') return Response.json({ deviceId: 'A', authorityId: 'boot', revision: 0, permissions: ['control', 'settings'], backendAvailable: false, audioApplied: false })
+    requests++
+    if (JSON.parse(String(init?.body)).path === '/api/automation/settings/write') return held.promise
+    return Response.json({ deviceId: 'A', authorityId: 'boot', revision: 1, status: 200, body: {} })
+  }, { deviceId: 'A', credential: 'private' })
+  await api.connect()
+  const epoch = api.epoch
+  const pending = api.post('/api/automation/settings/write', { expectedSettingsRevision: 0 })
+  const rejected = assert.rejects(pending, e => e instanceof ApiError && e.code === 'store-conflict')
+  await api.post('/api/profiles/edit', {})
+  assert.equal(api.identity!.revision, 1)
+  held.resolve(Response.json({ deviceId: 'A', authorityId: 'boot', revision: 0, status: 409, body: { error: { code: 'store-conflict', message: 'Reread settings before writing' } } }, { status: 409 }))
+  await rejected
+  assert.equal(api.connected, false)
+  assert.equal(api.identity, null)
+  assert.equal(api.epoch, epoch + 1)
+  await assert.rejects(api.post('/api/automation/settings/read'), /Refresh to reconnect/)
+  assert.equal(requests, 2, 'no replay or follow-up request under the revoked generation')
+})
+
 test('consumer continuations cannot restore validation, inspection or a snapshot after concurrent authority loss', async () => {
   const snapshot: Snapshot = { format: 'mixyard-local-drafts', schemaVersion: 1, storeRevision: 0, configRevision: 1, profiles: [], draft: config(), previousDraft: null }
   const inventory = JSON.parse(readFileSync(new URL('./example-inventory.json', import.meta.url), 'utf8'))
