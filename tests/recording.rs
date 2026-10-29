@@ -150,8 +150,10 @@ fn float64_low_bits_and_signed_zero_survive_without_float32_intermediate() {
     let bytes = fs::read(temp.path("archive")).unwrap();
     let start = payload_start(&bytes);
     let decoded: Vec<_> = bytes[start..start + 24]
-        .chunks_exact(8)
-        .map(|part| u64::from_le_bytes(part.try_into().unwrap()))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|part| u64::from_le_bytes(*part))
         .collect();
     assert_eq!(decoded, values.map(f64::to_bits));
 }
