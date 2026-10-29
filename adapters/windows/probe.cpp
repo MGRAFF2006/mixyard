@@ -410,11 +410,14 @@ void capture(const Options& opts) {
     if (degraded) throw Failure("capture-degraded", "Queue drops or WASAPI timing discontinuities occurred; WAV is not a passing recording (see .gaps.jsonl)");
 }
 
+int worker_bridge(int argc, wchar_t** argv);
 int wmain(int argc, wchar_t** argv) {
     try {
+        if (argc >= 2 && std::wstring(argv[1]) == L"bridge") return worker_bridge(argc, argv);
         if (argc == 2 && std::wstring(argv[1]) == L"snapshot") { snapshot(); return 0; }
         if (argc >= 2 && std::wstring(argv[1]) == L"capture") { capture(options(argc, argv)); return 0; }
         std::cerr << "Usage: mixyard-windows-probe snapshot\n"
+                     "       mixyard-windows-probe bridge --mic ENDPOINT_ID --render ENDPOINT_ID --seconds 1..600\n"
                      "       mixyard-windows-probe capture (--mic ENDPOINT_ID | --pid PID) --seconds 1..600 --out FILE.wav\n";
         return 2;
     } catch (const OutputError& error) {
