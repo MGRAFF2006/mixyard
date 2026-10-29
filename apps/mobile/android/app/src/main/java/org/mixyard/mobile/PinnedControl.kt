@@ -96,7 +96,15 @@ class PinnedControl(private val store: CredentialStore) {
                 return JSONObject().put("status", status).put("json", rawReply)
             }
             require(value.getInt("status") == status && value.has("body")) { "status-envelope-mismatch" }
-            synchronized(this) { fence.accept(ticket, authority(value)) }
+            val failureCode = if (status >= 400) {
+                val failure = value.getJSONObject("body").getJSONObject("error")
+                failure.getString("message")
+                failure.getString("code")
+            } else null
+            synchronized(this) {
+                fence.accept(ticket, authority(value))
+                if (status == 401 || status == 409 || failureCode == "invalid-origin") invalidate()
+            }
             return JSONObject().put("status", status).put("json", rawReply)
         } catch (failure: Exception) { synchronized(this) { if (fence.ticket().epoch == ticket.epoch) invalidate() }; throw failure }
     }
