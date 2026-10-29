@@ -13,6 +13,7 @@ mod inventory_os;
 mod inventory_state;
 #[cfg(any(target_os = "macos", windows, test))]
 mod native_inventory;
+pub mod worker;
 pub use client::{
     Availability, Backend, Capabilities, Lifecycle, LifecycleEvent, NativeAudioProof,
     ReadOnlyClient, RuntimeEvent, ServerError, Snapshot,

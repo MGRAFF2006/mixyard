@@ -24,6 +24,7 @@ function append() {
     emit('append', effect)
   } catch (e) { emit('error', e instanceof Error ? e.message : String(e)) }
 }
+defineExpose({ hasUnsavedDrafts: () => operation.value !== 'level' || first.value !== (channels.value[0] ?? '') || second.value !== (channels.value.find(id => id !== first.value) ?? '') || db.value !== 0 || inverted.value || amount.value !== 0 || frames.value !== 48 || !!fields.value?.querySelector(':invalid') })
 </script>
 <template>
   <fieldset ref="fields" class="channel-operations" :disabled="busy">

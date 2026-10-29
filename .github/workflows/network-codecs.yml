@@ -1,0 +1,87 @@
+name: Network codec qualification
+
+on:
+  pull_request:
+    paths: ['network/codecs/**', 'docs/network-codecs.md', '.github/workflows/network-codecs.yml']
+  push:
+    branches: [main, t3/network-codecs]
+    paths: ['network/codecs/**', 'docs/network-codecs.md', '.github/workflows/network-codecs.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: network-codecs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+
+jobs:
+  raw-codecs:
+    name: Raw codec checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set private target and require 10 GiB free
+        shell: python
+        run: |
+          import os, shutil
+          target = os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-network-codecs-raw')
+          os.makedirs(target, mode=0o700, exist_ok=True)
+          free = shutil.disk_usage(target).free
+          print(f'Available: {free / 2**30:.1f} GiB')
+          if free < 10 * 2**30:
+              raise SystemExit('Less than 10 GiB free before codec build')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'CARGO_TARGET_DIR={target}\n')
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path network/codecs/Cargo.toml -- --check
+      - name: Lint raw library, tests and example without system codecs
+        run: cargo clippy --locked --manifest-path network/codecs/Cargo.toml --no-default-features --all-targets
+      - name: Test raw envelopes and compile example without system codecs
+        run: cargo test --locked --manifest-path network/codecs/Cargo.toml --no-default-features --all-targets
+
+  linux-system-codecs:
+    name: Linux system Zstd and Opus loopback
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install public codec development libraries on ephemeral runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libzstd-dev libopus-dev pkg-config
+          pkg-config --modversion libzstd opus
+      - name: Set private target and require 10 GiB free
+        shell: python
+        run: |
+          import os, shutil
+          target = os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-network-codecs-system')
+          os.makedirs(target, mode=0o700, exist_ok=True)
+          free = shutil.disk_usage(target).free
+          print(f'Available: {free / 2**30:.1f} GiB')
+          if free < 10 * 2**30:
+              raise SystemExit('Less than 10 GiB free before codec build')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'CARGO_TARGET_DIR={target}\n')
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path network/codecs/Cargo.toml -- --check
+      - run: cargo clippy --locked --manifest-path network/codecs/Cargo.toml --all-features --all-targets
+      - run: cargo test --locked --manifest-path network/codecs/Cargo.toml --all-features --all-targets
+      - name: Execute raw, lossless and explicit lossy TCP loopback (synthetic only)
+        run: cargo run --locked --manifest-path network/codecs/Cargo.toml --all-features --example loopback

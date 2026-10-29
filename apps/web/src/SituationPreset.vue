@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { vSituationNumber } from './situation-number.ts'
 import { computed, reactive } from 'vue'
+import { dspJson } from './dsp-json.ts'
 import { emptyPreset, metadataIntegerLiteral, presetProblems } from './situations.ts'
 import type { Preset } from './situations.ts'
 import type { Config, Profile } from './model.ts'
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 const preset = reactive(emptyPreset())
 const timeErrors = reactive({ startMinute: '', endMinute: '' })
 const problems = computed(() => [...presetProblems(preset), ...Object.values(timeErrors).filter(Boolean)])
+defineExpose({ hasUnsavedDrafts: () => dspJson(preset) !== dspJson(emptyPreset()) || Object.values(timeErrors).some(Boolean) })
 function minute(key: 'startMinute' | 'endMinute', event: Event) {
   const input = event.target as HTMLInputElement
   timeErrors[key] = metadataIntegerLiteral(input.value) && Number(input.value) <= 1439 ? '' : 'Enter an exact minute of day (0–1439).'
