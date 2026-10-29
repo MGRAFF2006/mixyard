@@ -5,22 +5,15 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include "packet.hpp"
 
 // Native little-endian Float32 stereo interleaved at 48 kHz. One connection owns
 // one preselected fixture endpoint; packets cannot choose device IDs or controls.
 namespace mixyard {
-constexpr uint64_t maxPosition = (uint64_t{1} << 53) - 1;
-constexpr uint32_t packetFrames = 4096, creditFrames = 4096;
 static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559);
 #if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "The fixture packet contract requires native little-endian Float32."
 #endif
-struct Header {
-    uint32_t version = 1, sampleRate = 48000, channels = 2, format = 1;
-    uint64_t generation = 0, epoch = 0, revision = 0, position = 0;
-    uint32_t frames = 0, bytes = 0;
-};
-static_assert(sizeof(Header) == 56);
 // Reject broad identities and malformed/unavailable requirements before resume.
 // This artifact accepts only per-build exact cdhash authority, not a caller PID/path.
 inline bool oneHash(NSString *text) {

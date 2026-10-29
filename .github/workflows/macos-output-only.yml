@@ -1,0 +1,30 @@
+name: macOS output-only (SDK and API doubles, no audio)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'adapters/macos/**'
+      - '.github/workflows/macos-output-only.yml'
+  pull_request:
+    paths:
+      - 'adapters/macos/**'
+      - '.github/workflows/macos-output-only.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  output-only:
+    name: Output-only SDK link and lifecycle doubles
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile/link production library, exercise injected API boundary
+        run: bash adapters/macos/output-only/check.sh
+      - name: Record qualification limits
+        if: always()
+        run: |
+          echo 'Actual Apple SDK library compilation/linking plus synthetic strict public-API doubles. No native AudioUnit/device activation, input/output, TCC, GUI, install or OS/default changes.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Physical input exclusion, output PCM, channel integrity, scheduling, format/topology changes, teardown, fidelity and latency remain unqualified. Separate library: no Rust integration. backendAvailable=false; audioApplied=false.' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,82 @@
+name: macOS Rust host link (injected SDK audio boundary only)
+
+on:
+  pull_request:
+    paths:
+      - 'adapters/macos/native-host/**'
+      - '.github/workflows/macos-native-host.yml'
+  workflow_dispatch:
+    inputs:
+      host_ref:
+        description: Exact shared-host dependency commit (40 hex characters)
+        required: true
+        type: string
+        default: b71948fe0a5887ecd7226fe8b5d9beae8d24e1bf
+
+permissions:
+  contents: read
+
+jobs:
+  native-host:
+    name: Canonical Rust host and macOS production attachments
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      HOST_REF: ${{ inputs.host_ref || 'b71948fe0a5887ecd7226fe8b5d9beae8d24e1bf' }}
+    steps:
+      - name: Validate exact dependency revision
+        run: |
+          [[ "$HOST_REF" =~ ^[0-9a-f]{40}$ ]] || { echo 'An exact lowercase 40-character host SHA is required'; exit 2; }
+      - uses: actions/checkout@v4
+        with:
+          path: attachment
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HOST_REF }}
+          path: shared-host
+      - name: Record isolated environment and dependency revisions
+        run: |
+          test "$RUNNER_OS" = macOS
+          test "$GITHUB_ACTIONS" = true
+          python3 - <<'PY'
+          import os, shutil
+          for path in ('.', os.environ['RUNNER_TEMP']):
+              if shutil.disk_usage(path).free < 10 * 2**30:
+                  raise SystemExit(f'BLOCKED: preserve 10 GiB free on hosted {path}')
+          PY
+          git -C attachment rev-parse HEAD
+          git -C shared-host rev-parse HEAD
+          echo 'Hosted disposable Apple runner. SDK doubles only; no AudioUnit/tap/device activation, TCC, native input/output, default/service mutation or installation.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build the actual shared Rust mixer, DSP and clock library
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/mixyard-shared-host-build
+        run: |
+          cargo build --locked --manifest-path shared-host/adapters/engine/Cargo.toml --lib --release -j 1
+          du -sk "$CARGO_TARGET_DIR"
+      - name: Link production SDK code and execute injected consumer PCM oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash attachment/adapters/macos/native-host/check.sh \
+            "$GITHUB_WORKSPACE/shared-host" \
+            "$RUNNER_TEMP/mixyard-shared-host-build/release/libmixyard_host.dylib" \
+            2>&1 | tee "$RUNNER_TEMP/macos-native-host.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-native-host-result
+          path: ${{ runner.temp }}/macos-native-host.log
+          if-no-files-found: ignore
+      - name: Remove this runner's generated host artifacts
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/mixyard-shared-host-build" ]]; then
+            du -sk "$RUNNER_TEMP/mixyard-shared-host-build"
+            rm -rf -- "$RUNNER_TEMP/mixyard-shared-host-build"
+          fi
+          echo 'Injected SDK identities/common sample timeline only. Physical clocks, app identity, permissions, fidelity and latency remain unqualified; backendAvailable=false; audioApplied=false.' >> "$GITHUB_STEP_SUMMARY"
