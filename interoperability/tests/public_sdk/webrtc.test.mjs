@@ -214,10 +214,27 @@ test('oversized signal and unsupported runtime/codec reject without native signa
   f.adapter.selectTrack(track());
   await assert.rejects(f.adapter.accept('x'.repeat(32769)), /budget/);
   assert(!f.calls.some(item => item[0] === 'remote'));
-  f.adapter.revoke();
+  assert(f.calls.includes('close'));
+  assert.equal(f.calls.find(item => item[0] === 'transceiver')[1].stopped, true);
+  await assert.rejects(f.adapter.offer(), /closed/);
+  assert.equal(f.sent.length, 0);
   assert.throws(() => fixture({ secureContext: false }), /unavailable/);
   assert.throws(() => fixture({ conversionAccepted: false }), /conversion/);
   assert.throws(() => fixture({ codec: { ...codec, channels: 1 } }), /conversion/);
+});
+
+test('invalid signaling type or oversized UTF-8 also revokes the selected session', async () => {
+  for (const raw of [null, {}, 'é'.repeat(20000)]) {
+    const f = fixture();
+    const original = track();
+    f.adapter.selectTrack(original);
+    await assert.rejects(f.adapter.accept(raw), /budget/);
+    assert(f.calls.includes('close'));
+    assert.equal(f.calls.find(item => item[0] === 'transceiver')[1].stopped, true);
+    assert.equal(original.stopped, false);
+    await assert.rejects(f.adapter.offer(), /closed/);
+    assert.equal(f.sent.length, 0);
+  }
 });
 
 test('revocation during selected-track admission prevents cloning or native track effects', () => {

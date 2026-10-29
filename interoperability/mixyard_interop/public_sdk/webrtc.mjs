@@ -180,7 +180,10 @@ export class WebRTCAudio {
     });
   }
   async accept(raw) {
-    if (typeof raw !== 'string' || raw.length > MAX_SIGNAL || encoder.encode(raw).length > MAX_SIGNAL) throw new Error('Signal exceeds byte budget');
+    if (typeof raw !== 'string' || raw.length > MAX_SIGNAL || encoder.encode(raw).length > MAX_SIGNAL) {
+      this.revoke();
+      throw new Error('Signal exceeds byte budget');
+    }
     if (!this.#local && !this.#remoteTrackId) throw new Error('Selected-track consent required');
     if (++this.#messages > 68) { this.revoke(); throw new Error('Signaling message budget exceeded'); }
     let message;
