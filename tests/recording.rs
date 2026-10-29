@@ -6,7 +6,7 @@ mod recording;
 use recording::*;
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{Seek, SeekFrom, Write},
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -503,6 +503,7 @@ fn invalid_footer_and_trailing_data_do_not_claim_clean_completion() {
 #[cfg(unix)]
 #[test]
 fn owned_files_are_private_and_existing_symlinks_are_not_followed() {
+    use std::io::Read;
     use std::os::unix::fs::{symlink, PermissionsExt};
     let temp = Temp::new();
     let format = format(Encoding::S16Le);
