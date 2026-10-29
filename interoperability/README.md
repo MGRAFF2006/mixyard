@@ -1,7 +1,8 @@
 # Optional protocol adapters
 
-This standalone Python 3.12+ package has no third-party dependencies. It does not
-load the native runtime, open a device or alter the paired QUIC transport. It is
+This standalone Python 3.12+ package has no third-party Python dependencies. Its
+optional native bridge loads only an explicitly loaned, hash-pinned host library;
+ordinary imports do not load it. No module opens a device or alters the paired QUIC transport. It is
 an explicit production adapter boundary for owned loopback endpoints, not a LAN
 compatibility claim. Browser modules are optional ES modules with injected SDKs.
 
@@ -78,25 +79,33 @@ recall an operation already admitted or bytes already handed to an OS or SDK;
 stopping the owned worker and discarding queued media is the adapter/caller's
 responsibility. `check()` is only a coarse lifecycle check, never an IO grant.
 No physical-audio application or backend availability is claimed: both flags stay
-false. Tests establish finite policy/loopback behavior, not hardware, pacing,
-latency, clock synchronization, LAN security, throughput or endurance.
+false. Tests establish owned policy/loopback behavior and bounded HTTP cadence,
+not hardware timestamps, physical latency, clock synchronization, LAN security,
+throughput or endurance.
 
 Implemented role profiles and executable examples are documented separately:
 
 - [HTTP PCM, partial UPnP AV and unicast SSDP](../docs/protocol-http-upnp.md):
-  finite media/live blocks, explicit generic L16 conversion, approved renderer
+  finite media and continuous paced leased streams, explicit generic L16 conversion, approved renderer
   source identity and separate control/media/advertise grants.
-- [RTP, RTSP and Snapcast](../docs/protocol-realtime.md): actual L16/L24 UDP
-  media, RTSP/1.0 control and Snapcast service control. SRTP, native clocks,
+- [RTP, RTSP and Snapcast](../docs/protocol-realtime.md): actual leased L16/L24 UDP
+  media, bounded RTCP reports/local RTT diagnostics, RTSP/1.0 control and Snapcast service control. SRTP, native clocks,
   Snapcast PCM and group synchronization remain explicit gaps.
 - [Cast, Safari AirPlay, Spotify and WebRTC](../docs/protocol-public-sdk.md):
   injected public API methods with mocked SDK/native boundaries and real owned
   loopback signaling ingress. No vendor account/device/browser-media execution,
   arbitrary Spotify PCM or certified Cast/AirPlay receiver is claimed.
 
+- [Runtime leases, registry and optional actual host bridge](../docs/protocol-runtime.md):
+  exact current owner bindings, complete per-output compiled contributors tied
+  to actual source leases, packet/stamp evidence and explicit destination-only
+  conversion. Synthetic owned RTP → actual host → HTTP and HTTP → actual host →
+  RTP proofs remain separate from native capture/physical delivery.
+
 The adapters are optional importable production modules with focused socket or
-SDK-contract proofs. No native-runtime/web-console route, persistent consent,
-production signaling service or LAN deployment is connected by this package.
+SDK-contract proofs. The host bridge is an explicit local worker API, not an
+automatic web-console/native-device route. Persistent consent, production
+signaling/pairing and LAN deployment remain unavailable.
 
 Our adapter code remains MIT. Python is an external runtime under its
 [PSF license](https://docs.python.org/3/license.html), not vendored here. No SDK,

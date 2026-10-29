@@ -1,0 +1,17 @@
+# Rust native-static-libs includes linker directives as well as library names.
+# Preserve every actual token, but do not let CMake treat /defaultlib:* as files.
+function(mixyard_msvc_native_link tokens libraries_out options_out)
+  set(libraries)
+  set(options)
+  foreach(token IN LISTS tokens)
+    if(token MATCHES "^[-/]")
+      list(APPEND options "${token}")
+    elseif(token MATCHES "\\.[Ll][Ii][Bb]$")
+      list(APPEND libraries "${token}")
+    else()
+      message(FATAL_ERROR "Unsupported MSVC Rust native-static-libs token: ${token}")
+    endif()
+  endforeach()
+  set(${libraries_out} "${libraries}" PARENT_SCOPE)
+  set(${options_out} "${options}" PARENT_SCOPE)
+endfunction()

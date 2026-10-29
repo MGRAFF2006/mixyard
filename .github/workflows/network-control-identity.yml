@@ -1,0 +1,50 @@
+name: Network control identity bridge
+
+on:
+  pull_request:
+    paths: ['network/**', 'control/**', 'src/**', 'Cargo.toml', 'Cargo.lock', 'docs/network-control-identity.md', '.github/workflows/network-control-identity.yml']
+  push:
+    branches: [main]
+    paths: ['network/**', 'control/**', 'src/**', 'Cargo.toml', 'Cargo.lock', 'docs/network-control-identity.md', '.github/workflows/network-control-identity.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  persisted-raw-mtls:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set isolated Cargo target directory
+        shell: python
+        run: |
+          import os
+          target = os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-network-control-identity-target')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'CARGO_TARGET_DIR={target}\n')
+      - name: Require 10 GiB free
+        shell: python
+        run: |
+          import os, shutil
+          free = shutil.disk_usage(os.environ['RUNNER_TEMP']).free
+          print(f'Available: {free / 2**30:.1f} GiB')
+          if free < 10 * 2**30:
+              raise SystemExit('Less than 10 GiB free before bridge build')
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path network/control-identity/Cargo.toml -- --check
+      - run: cargo clippy --locked --manifest-path network/control-identity/Cargo.toml --all-targets -- -D warnings
+      - name: Persisted fixture identity and raw mutually authenticated loopback
+        run: cargo test --locked --manifest-path network/control-identity/Cargo.toml

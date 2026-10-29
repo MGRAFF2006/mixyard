@@ -1,0 +1,17 @@
+[package]
+name = "mixyard-network-control-identity"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Opt-in bridge; neither parent workspace depends on this package.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+mixyard-control = { path = "../../control" }
+mixyard-network = { path = ".." }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

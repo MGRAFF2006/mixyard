@@ -15,7 +15,8 @@ typedef struct mx_stamp {
 enum mx_encoding { MX_F32LE = 1, MX_F64LE = 2, MX_S16LE = 3, MX_S24LE = 4, MX_S32LE = 5 };
 enum mx_result {
     MX_OK = 0, MX_INVALID = 1, MX_POLICY = 2, MX_STALE = 3, MX_FORMAT = 4,
-    MX_SAMPLES = 5, MX_EXPIRED = 6, MX_INACTIVE = 7, MX_BUFFER = 8, MX_PROCESS = 9
+    MX_SAMPLES = 5, MX_EXPIRED = 6, MX_INACTIVE = 7, MX_BUFFER = 8, MX_PROCESS = 9,
+    MX_UNAVAILABLE = 10
 };
 typedef struct mx_input {
     const uint8_t* bytes;
@@ -41,6 +42,30 @@ size_t mx_host_output_count(const mx_host* host);
  * Control thread only, do not parse or compare identities on the callback. */
 int mx_host_source_info(const mx_host*, size_t index, uint8_t* json, size_t capacity, size_t* needed);
 int mx_host_output_info(const mx_host*, size_t index, uint8_t* json, size_t capacity, size_t* needed);
+/* Additive v1 metadata query, ABI1 source/output_info layouts remain unchanged.
+ * Control owner only; same two-pass exact JSON/no-NUL semantics as info.
+ * scope=compiled-plan-metadata conveys complete PLAN knowledge only, never
+ * authenticated identity, native binding/provenance/clock, consent or grants.
+ * The conservative per-output union includes muted/zero-gain/tail contributors.
+ * Missing/partial/oversize metadata returns MX_UNAVAILABLE, never a partial list.
+ * Invalid index returns MX_INVALID; revoked context returns MX_INACTIVE.
+ * See output-attestation.md for the closed schema and independent lease gates. */
+int mx_host_output_attestation_v1(const mx_host*, size_t index, uint8_t* json,
+                                 size_t capacity, size_t* needed);
+typedef struct mx_output_packet_v1 {
+    const double* samples;
+    size_t sample_count;
+    mx_stamp stamp;
+    uint64_t output_index;
+    uint8_t attestation_sha256[32];
+} mx_output_packet_v1;
+/* Borrowed packet from exactly this host/output. Stamp is the exact admitted
+ * engine stamp, not a new hardware-clock claim. Hash is SHA256 of queried JSON.
+ * Output storage expires on next process/revoke/destroy. Same exclusive owner
+ * requirements as output(); every error clears all packet fields. Missing
+ * attestation is MX_UNAVAILABLE. Check every external lease again before commit.
+ * ProcessId+instanceId is process-local freshness metadata, never authentication. */
+int mx_host_output_packet_v1(const mx_host*, size_t index, mx_output_packet_v1*);
 /* One exclusive graph owner, no concurrent calls/readers/revoke/destruction.
  * Exact interleaved little-endian native bytes. Missing source=NULL/0 is silence;
  * resuming after source loss requires fresh host admission (new generation).
