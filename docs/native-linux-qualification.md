@@ -68,10 +68,11 @@ the revised checker. No new laptop capture has been run for these repairs.
 
 ## Checker repair verification
 
-Eleven fixture/process tests cover symlinked roots and ancestors, pinned-directory
+Twelve fixture/process tests cover symlinked roots and ancestors, pinned-directory
 creation, report no-overwrite, private modes, strict JSON and object-ID bounds,
 unknown type disclosure, stderr/nonzero/oversize handling, timed-out descendants,
-normal-exit descendants and SIGTERM cancellation. These run on Linux without
+normal-exit descendants, SIGTERM cancellation and excessive JSON nesting through
+the actual capture/decoder/report path. These run on Linux without
 invoking native discovery or audio. Focused CI runs the same command.
 
 A fresh authorized laptop capture remains pending. No revised-checker result,

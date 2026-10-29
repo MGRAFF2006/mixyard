@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Fixture/process tests only; no native discovery or audio is invoked."""
 import importlib.util
+import io
+from contextlib import redirect_stdout
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('qualification', Path(__file__).with_name('qualify.py'))
 module = importlib.util.module_from_spec(spec)
@@ -181,6 +184,36 @@ class OwnedProcesses(unittest.TestCase):
             with self.subTest(code=code), self.assertRaises(ValueError) as caught:
                 module.capture([sys.executable, '-c', code], self.root / f'bad{i}.json')
             self.assertNotIn('private', str(caught.exception))
+
+    def test_excessive_json_nesting_reports_blocked_through_actual_capture(self):
+        script = self.root / 'verification/native-linux/qualify.py'
+        script.parent.mkdir(parents=True)
+        script.write_text('fixture checker')
+        output = self.root / 'verification/local-evidence/nesting'
+        original_capture = module.capture
+
+        def fixture_capture(argv, path, **options):
+            if argv[0] == '/usr/bin/pw-dump':
+                return original_capture(
+                    [sys.executable, '-c', 'print("["*10000+"0"+"]"*10000)'],
+                    path, **options)
+            if argv[0] == '/usr/bin/tailscale':
+                return {'Self': {'HostName': 'laptop'}}
+            if argv[1] == 'rev-parse':
+                return b'a' * 40
+            return b''
+
+        printed = io.StringIO()
+        with (patch.object(module, '__file__', str(script)),
+              patch.object(module, 'capture', side_effect=fixture_capture),
+              patch.object(sys, 'argv', ['qualify', '--output', str(output)]),
+              redirect_stdout(printed)):
+            self.assertEqual(module.main(), 2)
+        report = json.loads((output / 'report.json').read_bytes())
+        self.assertEqual(report['status'], 'blocked')
+        self.assertEqual(report['failure'], 'ValueError')
+        self.assertIn('pw-dump.json', report['artifacts'])
+        self.assertNotIn('RecursionError', printed.getvalue())
 
 
 if __name__ == '__main__':

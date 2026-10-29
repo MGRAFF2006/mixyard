@@ -40,7 +40,10 @@ def strict_json(data):
 
     if len(data) >= LIMIT:
         raise ValueError('input bound exceeded')
-    return json.loads(data, object_pairs_hook=object_pairs, parse_constant=invalid_constant)
+    try:
+        return json.loads(data, object_pairs_hook=object_pairs, parse_constant=invalid_constant)
+    except RecursionError:
+        raise ValueError('JSON nesting exceeds decoder limit') from None
 
 
 @contextmanager
