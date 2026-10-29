@@ -73,6 +73,8 @@ fn redact_diagnostics(value: &mut serde_json::Value) {
                 let public_validation = matches!(
                     code.as_str(),
                     "invalid-json"
+                        | "resource-limit"
+                        | "unsupported-version"
                         | "invalid-automation"
                         | "invalid-dsp-config"
                         | "invalid-dsp-signal"
@@ -148,7 +150,7 @@ mod tests {
 
     #[test]
     fn pure_graph_and_dsp_validation_keep_actionable_repair_reasons() {
-        let mut reply = serde_json::json!({"error":{"code":"invalid-automation","message":"unregistered fact: power.battery-percent"},"dsp":{"code":"invalid-dsp-config","message":"Channel IDs must be unique"}});
+        let mut reply = serde_json::json!({"error":{"code":"invalid-automation","message":"unregistered fact: power.battery-percent"},"limit":{"code":"resource-limit","message":"collection cardinality exceeds format-v1 limit"},"version":{"code":"unsupported-version","message":"unsupported graph/snapshot schema version"},"dsp":{"code":"invalid-dsp-config","message":"Channel IDs must be unique"}});
         let expected = reply.clone();
         super::redact_diagnostics(&mut reply);
         assert_eq!(reply, expected);
