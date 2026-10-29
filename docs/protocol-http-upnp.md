@@ -24,7 +24,7 @@ Nothing grants a wildcard permission automatically.
 | `HttpReceiver(session).fetch(resource, mode='media')` | HTTP GET to exactly `Resource(endpoint, path, spec, wire)`; `media-fetch` |
 | `HttpReceiver(...).fetch(resource, mode='live')` | Independently checks `live-receive`; no implied media URL rights |
 | `StreamSource(session, spec, read_block, check_lease=..., validate_block=..., endpoint=...)` | Paced continuous GET `/stream`; exact `live-send` and explicit source lease callbacks |
-| `StreamReceiver(session).receive(resource, write_block, check_lease=..., block_factory=..., cancel=...)` | Continuous exact raw PCM handoff; `live-receive` plus destination lease checks |
+| `StreamReceiver(session).receive(resource, write_block, check_lease=..., accept_block=..., block_factory=..., cancel=...)` | Continuous exact raw PCM handoff; `live-receive` plus destination lease checks |
 | `Renderer(session, {'source-id': resource}, endpoint=..., identity=UUID)` | Description/SCPD and SOAP control at renderer endpoint; `control` |
 | `Controller(session, renderer_endpoint)` | `set_uri(source_id, resource)`, `play()`, `stop()`, `info()`; `control` |
 | `renderer.take_pcm()` | Drains exact `(Resource, bytes)` to an owned caller; fresh `control` and independent `media-fetch` checks |
@@ -98,7 +98,8 @@ with StreamSource(send_session, spec,
                   endpoint=owned_endpoint) as source:
     result = StreamReceiver(receive_session).receive(
         source.resource,
-        lambda block: destination_lease.accept(block, consume_owned_block),
+        consume_owned_block,
+        accept_block=destination_lease.accept,
         check_lease=destination_lease.check,
         block_factory=LeasedBlock,
         cancel=cancel_event)
@@ -107,7 +108,8 @@ with StreamSource(send_session, spec,
 `read_owned_block()` returns a frozen `LeasedBlock` or `None` for clean EOF.
 Its constructor is `(spec, pcm, generation, revision, source_epoch, base_frame,
 clock_id)`. Every receive uses that constructor, then calls the destination lease
-before consumer handoff. Runtime admission checks exact observed identity/Spec,
+before consumer handoff. The exact Session grant is rechecked inside admission after
+all owner callbacks and immediately before the bounded consumer. Runtime admission checks exact observed identity/Spec,
 generation, revision, source epoch, common-clock ID and complete owner-attested
 clock mapping, frame range, first-frame pin, gaps and repeats. Owner changes,
 expiry or revoke fail closed; a connection or new
