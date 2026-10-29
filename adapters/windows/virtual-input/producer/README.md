@@ -6,6 +6,11 @@ Original MIT usermode code, building against the real Windows SDK and
 Production Apply stays disabled. **Native device execution is BLOCKED** in the
 current environment and CI; this artifact grants no guest or host permission.
 
+The [WASAPI worker bridge](../../WORKER.md) additionally exposes
+`PcmEncoder` / `StreamProducer` for actual caller-owned PCM blocks. These retain
+the existing exact 48 kHz/front-LR/Float32 destination restriction and unmapped
+global ingress identity; they do not make this artifact a selectable virtual mic.
+
 Build on an existing Windows C++ worker, from the repository root:
 
 ```powershell

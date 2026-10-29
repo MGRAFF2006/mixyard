@@ -1,6 +1,7 @@
 //! Bounded synchronous Float32/Float64 PCM processing, compiled from the policy planner.
 //!
-//! No device transport, clock adaptation, resampling, limiter or normalization.
+//! The processor performs no device transport, clock adaptation, resampling,
+//! limiter or normalization. Explicit destination adaptation lives in `clock`.
 //! See `docs/audio-core.md` for the adapter contract and qualification boundary.
 
 use crate::{plan, AudioFormat, Config, Inventory, Plan, ResolutionStatus};
