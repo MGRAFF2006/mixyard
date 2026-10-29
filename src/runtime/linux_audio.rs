@@ -45,6 +45,7 @@ pub struct LinuxAudio {
     binding: Binding,
     clock_id: u64,
     sources: Vec<Option<Endpoint>>,
+    source_capture_ns: Vec<Option<u64>>,
     outputs: Vec<Option<Queue<f64>>>,
     consumer_claimed: Vec<bool>,
     active: bool,
@@ -139,11 +140,13 @@ impl LinuxAudio {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let consumer_claimed = vec![false; plan.outputs.len()];
+        let source_capture_ns = vec![None; sources.len()];
         Ok(Self {
             processor,
             binding,
             clock_id,
             sources,
+            source_capture_ns,
             outputs,
             consumer_claimed,
             active: true,
@@ -207,6 +210,8 @@ impl LinuxAudio {
                     input.observed_id == bound.observed_id
                         && input.format == &bound.format
                         && self.current(now_ns, input.stamp)
+                        && self.source_capture_ns[index]
+                            .is_none_or(|previous| input.stamp.captured_ns >= previous)
                         && input.stamp.sequence == stamp.sequence
                         && input.stamp.first_frame == stamp.first_frame
                         // Output handoff must not extend a contributing source's
@@ -224,6 +229,11 @@ impl LinuxAudio {
         if let Err(error) = self.processor.render(frames, pcm) {
             self.revoke();
             return Err(Error::Render(error));
+        }
+        for (previous, input) in self.source_capture_ns.iter_mut().zip(metadata) {
+            if let Some(input) = input {
+                *previous = Some(input.stamp.captured_ns);
+            }
         }
         let mut result = Rendered::default();
         for (index, queue) in self.outputs.iter_mut().enumerate() {

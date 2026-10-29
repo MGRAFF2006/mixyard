@@ -289,6 +289,52 @@ fn stalled_output_does_not_stall_null_consumer_or_allocate_in_render() {
 }
 
 #[test]
+fn source_capture_time_cannot_regress_even_after_an_absent_block() {
+    for missing_block in [false, true] {
+        let (mut engine, sources, full, _, _) = engine(1, 3);
+        let mut consumer = Consumer::null(&mut engine, full, 8, 1024).unwrap();
+        let samples = [0.5, -0.5];
+        let pcm = [None, pcm(&samples)];
+        let first = stamp(1, 0, 0);
+        engine
+            .render(100, first, 1, &pcm, &[None, input(&sources[1], first)])
+            .unwrap();
+        let sequence = if missing_block {
+            let silence = Stamp {
+                captured_ns: 101,
+                ..stamp(1, 1, 1)
+            };
+            engine
+                .render(101, silence, 1, &[None, None], &[None, None])
+                .unwrap();
+            2
+        } else {
+            1
+        };
+        let output = Stamp {
+            captured_ns: 102,
+            ..stamp(1, sequence, sequence)
+        };
+        let stale_source = Stamp {
+            captured_ns: 99,
+            ..output
+        };
+        assert_eq!(
+            engine.render(
+                102,
+                output,
+                1,
+                &pcm,
+                &[None, input(&sources[1], stale_source)]
+            ),
+            Err(mixyard::runtime::linux_audio::Error::Source(1))
+        );
+        assert!(consumer.drain(&mut engine, 102).is_err());
+        assert_eq!(consumer.frames(), 0, "pending PCM must be discarded");
+    }
+}
+
+#[test]
 fn stale_source_and_revocation_erase_pending_output_and_restart_needs_new_consumer() {
     let (mut engine, sources, full, _, _) = engine(1, 2);
     assert_eq!(engine.binding(), binding(1));
