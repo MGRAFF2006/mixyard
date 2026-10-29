@@ -151,7 +151,7 @@ impl Service {
         assert_eq!(
             reply.status,
             200,
-            "{}",
+            "POST {path}: {}",
             String::from_utf8_lossy(&reply.body)
         );
         reply.json()

@@ -27,7 +27,11 @@ public:
     bool close() {
         if (encoder_) encoder_->revoke();
         if (file_ && file_ != INVALID_HANDLE_VALUE) {
-            const HANDLE old = file_; file_ = INVALID_HANDLE_VALUE; return ops_.close(old) != FALSE;
+            // A failed close does not prove driver cleanup. Retain the exact
+            // owned handle for a real retry; callers must retain this producer
+            // and keep completion pending until close actually succeeds.
+            if (ops_.close(file_) == FALSE) return false;
+            file_ = INVALID_HANDLE_VALUE;
         }
         return true;
     }

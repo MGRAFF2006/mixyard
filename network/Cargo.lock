@@ -279,6 +279,7 @@ name = "mixyard-network"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "mixyard-network-codecs",
  "quinn",
  "rcgen",
  "rustls",
@@ -286,6 +287,10 @@ dependencies = [
  "serde_json",
  "tokio",
 ]
+
+[[package]]
+name = "mixyard-network-codecs"
+version = "0.1.0"
 
 [[package]]
 name = "nom"

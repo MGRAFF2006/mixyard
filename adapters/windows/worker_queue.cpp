@@ -46,6 +46,11 @@ int fail(myw_port* p, int reason) {
     return p->state.load(std::memory_order_acquire);
 }
 }
+#ifdef MIXYARD_WINDOWS_SCRUB_CHECK
+// Test-only entry in this implementation TU inspects the opaque production PCM
+// storage directly; no public introspection/debug ABI is added.
+#include "native-host/scrub_check.cpp"
+#endif
 extern "C" {
 int myw_format_equal(myw_format a, myw_format b) {
     return a.rate == b.rate && a.channel_mask == b.channel_mask && a.channels == b.channels &&
@@ -64,6 +69,13 @@ int myw_port_create(myw_format format, myw_binding binding, uint64_t clock_id, m
 }
 void myw_port_destroy(myw_port* p) { delete p; }
 void myw_port_revoke(myw_port* p) { if (p) (void)fail(p, MYW_STALE); }
+int myw_port_scrub_quiescent(myw_port* p) {
+    if (!p || p->state.load(std::memory_order_acquire) == MYW_OK) return MYW_INVALID;
+    // The control owner has joined ALL users. Never call this concurrently
+    // with push/pop, even after revoke: an operation may still be unwinding.
+    for (auto& packet : p->packets) { packet.bytes.fill(0); packet.block = {}; }
+    return MYW_OK; // State/indices/binding remain terminal; never restart here.
+}
 int myw_port_state(const myw_port* p) { return p ? p->state.load(std::memory_order_acquire) : MYW_INVALID; }
 int myw_port_info(const myw_port* p, myw_format* format, myw_binding* binding, uint64_t* clock_id) {
     if (!p || !format || !binding || !clock_id) return MYW_INVALID;

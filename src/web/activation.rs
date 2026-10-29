@@ -105,6 +105,7 @@ pub(super) struct Service {
     worker: Option<thread::JoinHandle<()>>,
     settings: Option<settings::Store>,
     initial_error: Option<Failure>,
+    wait_for_mutations: bool,
 }
 impl Service {
     pub(super) fn start(profile_path: &Path, instance: String) -> Self {
@@ -135,6 +136,7 @@ impl Service {
             worker: None,
             settings: settings_store.ok(),
             initial_error,
+            wait_for_mutations: false,
         };
         if let Ok(engine) = engine {
             let (tx, rx) = mpsc::sync_channel::<Envelope>(4);
@@ -150,6 +152,14 @@ impl Service {
                 Err(e) => service.initial_error = Some(fail("owner-unavailable", e.to_string())),
             }
         }
+        service
+    }
+    /// The remote transport bounds its HTTP response separately. Its admitted
+    /// mutation must keep the caller's serialization owner until this worker
+    /// actually replies or unwinds, rather than ending at a response deadline.
+    pub(super) fn start_remote(profile_path: &Path, instance: String) -> Self {
+        let mut service = Self::start(profile_path, instance);
+        service.wait_for_mutations = true;
         service
     }
     pub(super) fn is_available(&self) -> bool {
@@ -190,6 +200,8 @@ impl Service {
             }
         }
         let _slow = Slow(&self.shared.slow, slow);
+        let complete =
+            self.wait_for_mutations && !matches!(&command, Command::Context | Command::Live(_));
         let (tx, rx) = mpsc::sync_channel(1);
         let envelope = Envelope {
             command,
@@ -216,12 +228,7 @@ impl Service {
                     )
                 })?;
         }
-        rx.recv_timeout(Duration::from_secs(8)).map_err(|_| {
-            fail(
-                "operation-timeout",
-                "Owner response deadline exceeded; reread status/store before retrying a mutation",
-            )
-        })?
+        receive_owner_reply(rx, complete)
     }
     pub(super) fn edit(&self, revision: u64, edit: profiles::Edit) -> Reply {
         reply(self.request(Command::Edit(revision, edit), true, false))
@@ -293,6 +300,26 @@ impl Drop for Service {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+    }
+}
+fn receive_owner_reply(rx: mpsc::Receiver<Result<Value>>, complete: bool) -> Result<Value> {
+    if complete {
+        // The sender belongs to the queued envelope, and stays alive through
+        // command execution, publishing and unwinding. HTTP cancellation does
+        // not own this receiver or the caller's remote serialization permit.
+        rx.recv().map_err(|_| {
+            fail(
+                "owner-unavailable",
+                "Owner stopped without confirming the mutation; reread authoritative state",
+            )
+        })?
+    } else {
+        rx.recv_timeout(Duration::from_secs(8)).map_err(|_| {
+            fail(
+                "operation-timeout",
+                "Owner response deadline exceeded; reread status/store before retrying a mutation",
+            )
+        })?
     }
 }
 fn reply(result: Result<Value>) -> Reply {
@@ -1285,6 +1312,73 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicU32;
     static NEXT: AtomicU32 = AtomicU32::new(0);
+    #[test]
+    fn remote_reply_wait_retains_caller_guard_through_success_error_and_owner_disconnect() {
+        for outcome in 0..3 {
+            let gate = Arc::new(Mutex::new(()));
+            let owned = gate.clone();
+            let (tx, rx) = mpsc::sync_channel(1);
+            let (started, ready) = mpsc::sync_channel(1);
+            let (done, finished) = mpsc::sync_channel(1);
+            let waiter = thread::spawn(move || {
+                let _guard = owned.lock().unwrap();
+                started.send(()).unwrap();
+                done.send(receive_owner_reply(rx, true)).unwrap();
+            });
+            ready.recv().unwrap();
+            assert!(
+                gate.try_lock().is_err(),
+                "no other operation before worker outcome"
+            );
+            assert!(finished.recv_timeout(Duration::from_millis(20)).is_err());
+            match outcome {
+                0 => tx.send(Ok(json!({"completed":true}))).unwrap(),
+                1 => tx
+                    .send(Err(fail("commit-uncertain", "owned commit failure")))
+                    .unwrap(),
+                _ => drop(tx),
+            }
+            let result = finished.recv_timeout(Duration::from_secs(1)).unwrap();
+            if outcome == 0 {
+                assert!(result.is_ok());
+            } else {
+                assert_eq!(
+                    result.unwrap_err().code,
+                    if outcome == 1 {
+                        "commit-uncertain"
+                    } else {
+                        "owner-unavailable"
+                    }
+                );
+            }
+            waiter.join().unwrap();
+            assert!(gate.try_lock().is_ok());
+        }
+        let (tx, rx) = mpsc::sync_channel(1);
+        drop(tx);
+        assert_eq!(
+            receive_owner_reply(rx, false).unwrap_err().code,
+            "operation-timeout",
+            "ordinary local response behavior is unchanged"
+        );
+        let (commands, owner_queue) = mpsc::sync_channel(1);
+        let (reply, outcome) = mpsc::sync_channel(1);
+        commands
+            .try_send(Envelope {
+                command: Command::Disarm,
+                deadline: Instant::now() + Duration::from_secs(7),
+                reply,
+            })
+            .unwrap_or_else(|_| panic!("owned queue admission failed"));
+        // Owner stop/panic drops an unexecuted envelope even while the service's
+        // command sender survives. There can be no orphaned completion owner.
+        drop(owner_queue);
+        assert!(matches!(
+            outcome.recv_timeout(Duration::from_secs(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
+        drop(commands);
+    }
     struct Fixture(std::path::PathBuf);
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -1468,7 +1562,10 @@ mod tests {
                 },
                 &shared,
             );
-            assert_eq!(rx.recv().unwrap().unwrap_err().code, "operation-timeout");
+            assert_eq!(
+                receive_owner_reply(rx, true).unwrap_err().code,
+                "operation-timeout"
+            );
             assert!(!engine.controller.as_ref().unwrap().is_armed());
             assert_eq!(engine.profiles.read().unwrap().store_revision, 1);
         }

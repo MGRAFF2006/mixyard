@@ -12,6 +12,12 @@ struct RenderCursor {
     std::array<uint8_t, MYW_MAX_FRAMES * MYW_MAX_FRAME_BYTES> bytes{};
     myw_block block{};
     uint32_t offset = 0;
+    // Control-only AFTER the owning consumer has stopped/joined. Atomic revoke
+    // rejects later fill/commit first; it does not authorize concurrent clearing.
+    int scrub_quiescent(myw_port* port) {
+        if (!port || myw_port_state(port) == MYW_OK) return MYW_INVALID;
+        bytes.fill(0); block = {}; offset = 0; return MYW_OK;
+    }
     int fill(myw_port* port, myw_binding binding, size_t width, uint8_t* out,
              uint32_t frames, uint64_t& missing) {
         if (!out || !width || width > MYW_MAX_FRAME_BYTES || frames > MYW_MAX_FRAMES) return MYW_INVALID;

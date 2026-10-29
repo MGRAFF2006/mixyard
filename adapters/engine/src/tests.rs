@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
@@ -386,4 +387,285 @@ fn callback_success_failure_and_revoke_have_no_heap_operations() {
     let operations = HEAP.with(|n| n.replace(None).unwrap());
     assert_eq!(operations, 0);
     inactive(&host, 0);
+}
+
+fn attested(host: &Owned, index: usize) -> (Vec<u8>, Value) {
+    let mut needed = 0;
+    assert_eq!(
+        unsafe {
+            attestation::mx_host_output_attestation_v1(
+                host.0,
+                index,
+                ptr::null_mut(),
+                0,
+                &mut needed,
+            )
+        },
+        MX_BUFFER
+    );
+    let mut bytes = vec![0; needed];
+    assert_eq!(
+        unsafe {
+            attestation::mx_host_output_attestation_v1(
+                host.0,
+                index,
+                bytes.as_mut_ptr(),
+                bytes.len(),
+                &mut needed,
+            )
+        },
+        MX_OK
+    );
+    let value = serde_json::from_slice(&bytes).unwrap();
+    (bytes, value)
+}
+fn contributor_ids(value: &Value) -> Vec<&str> {
+    value["contributors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["binding"]["observedId"].as_str().unwrap())
+        .collect()
+}
+#[test]
+fn per_output_union_matches_actual_call_record_policy_and_pcm() {
+    let request = fixture();
+    let request_bytes = serde_json::to_vec(&request).unwrap();
+    let host = create(request);
+    let (_, call) = attested(&host, 0);
+    let (_, record) = attested(&host, 1);
+    assert_eq!(contributor_ids(&call), ["owned-source-shared"]);
+    assert_eq!(
+        contributor_ids(&record),
+        ["owned-source-return", "owned-source-shared"]
+    );
+    assert_eq!(call["requestSha256"], attestation::digest(&request_bytes));
+    assert_eq!(call["scope"], "compiled-plan-metadata");
+    assert_eq!(call["generation"], 7);
+    assert_eq!(call["revision"], 1);
+    assert_eq!(call["inventoryRevision"], 1);
+    assert_eq!(call["clockId"], 11);
+    assert_eq!(call["output"]["observedId"], "owned-consumer-call");
+    assert_eq!(call["contributors"][0]["sourceIndex"], 2);
+    assert_eq!(call["contributors"][0]["origin"], "external");
+    assert_eq!(call["planSha256"], record["planSha256"]);
+    assert_eq!(call["dspSnapshotSha256"], record["dspSnapshotSha256"]);
+    let data = blocks();
+    assert_eq!(run(&host, 0, &inputs(&data, stamp(0))), MX_OK);
+    assert_eq!(output(&host, 0), [0.4, -0.4, 0.8, -0.8]);
+    assert_eq!(output(&host, 1), [0.125, -0.125, 0.25, -0.25]);
+}
+#[test]
+fn muted_and_zero_gain_dependencies_are_never_removed_from_union() {
+    let mut value = fixture();
+    value["config"]["sends"][0]["mute"] = json!(true);
+    value["config"]["sends"][0]["gain"] = json!(0);
+    value["config"]["sends"][2]["gain"] = json!(0);
+    let host = create(value);
+    assert_eq!(
+        contributor_ids(&attested(&host, 0).1),
+        ["owned-source-shared"]
+    );
+    assert_eq!(
+        contributor_ids(&attested(&host, 1).1),
+        ["owned-source-return", "owned-source-shared"]
+    );
+    let data = blocks();
+    assert_eq!(run(&host, 0, &inputs(&data, stamp(0))), MX_OK);
+    assert_eq!(output(&host, 0), [0.0; 4]);
+}
+#[test]
+fn unknown_dependency_is_unavailable_but_unreachable_missing_source_is_irrelevant() {
+    let mut value = fixture();
+    value["inventory"]["sources"]
+        .as_array_mut()
+        .unwrap()
+        .remove(2);
+    value["sources"][2] = Value::Null;
+    let host = create(value);
+    let mut needed = 99;
+    let mut untouched = [77u8; 64];
+    assert_eq!(
+        unsafe {
+            attestation::mx_host_output_attestation_v1(
+                host.0,
+                0,
+                untouched.as_mut_ptr(),
+                64,
+                &mut needed,
+            )
+        },
+        MX_UNAVAILABLE
+    );
+    assert_eq!(needed, 0);
+    assert_eq!(untouched, [77; 64]);
+    let mut value = fixture();
+    value["inventory"]["sources"]
+        .as_array_mut()
+        .unwrap()
+        .remove(0);
+    value["sources"][0] = Value::Null;
+    let host = create(value);
+    assert_eq!(
+        contributor_ids(&attested(&host, 0).1),
+        ["owned-source-shared"]
+    );
+}
+#[test]
+fn packet_binds_instance_output_json_and_exact_engine_stamp_and_errors_clear_it() {
+    let host = create(fixture());
+    let other = create(fixture());
+    let (json, metadata) = attested(&host, 0);
+    let (_, other_meta) = attested(&other, 0);
+    assert_ne!(metadata["instanceId"], other_meta["instanceId"]);
+    let mut packet = attestation::MxOutputPacket {
+        samples: std::ptr::dangling(),
+        sample_count: 99,
+        stamp: stamp(99),
+        output_index: 99,
+        attestation_sha256: [88; 32],
+    };
+    assert_eq!(
+        unsafe { attestation::mx_host_output_packet_v1(host.0, 0, &mut packet) },
+        MX_INACTIVE
+    );
+    assert!(packet.samples.is_null());
+    assert_eq!(packet.sample_count, 0);
+    assert_eq!(packet.stamp.generation, 0);
+    assert_eq!(packet.attestation_sha256, [0; 32]);
+    let data = blocks();
+    assert_eq!(run(&host, 0, &inputs(&data, stamp(0))), MX_OK);
+    HEAP.with(|n| n.set(Some(0)));
+    for _ in 0..512 {
+        assert_eq!(
+            unsafe { attestation::mx_host_output_packet_v1(host.0, 0, &mut packet) },
+            MX_OK
+        );
+    }
+    let operations = HEAP.with(|n| n.replace(None).unwrap());
+    assert_eq!(operations, 0);
+    assert_eq!(packet.output_index, 0);
+    assert_eq!(packet.sample_count, 4);
+    assert_eq!(
+        packet.attestation_sha256,
+        <[u8; 32]>::from(sha2::Sha256::digest(&json))
+    );
+    assert_eq!(packet.stamp.clock_id, 11);
+    assert_eq!(packet.stamp.sequence, 0);
+    assert_eq!(packet.stamp.first_frame, 0);
+    assert_eq!(packet.stamp.captured_ns, stamp(0).captured_ns);
+    assert_eq!(packet.stamp.deadline_ns, stamp(0).deadline_ns);
+    assert_eq!(
+        unsafe { slice::from_raw_parts(packet.samples, packet.sample_count) },
+        [0.4, -0.4, 0.8, -0.8]
+    );
+    assert_eq!(
+        unsafe { attestation::mx_host_output_packet_v1(host.0, 1, &mut packet) },
+        MX_OK
+    );
+    assert_eq!(packet.output_index, 1);
+    assert_ne!(
+        packet.attestation_sha256,
+        <[u8; 32]>::from(sha2::Sha256::digest(&json))
+    );
+    unsafe { mx_host_revoke(host.0) };
+    assert_eq!(
+        unsafe { attestation::mx_host_output_packet_v1(host.0, 0, &mut packet) },
+        MX_INACTIVE
+    );
+    assert!(packet.samples.is_null());
+    assert_eq!(packet.sample_count, 0);
+    assert_eq!(packet.attestation_sha256, [0; 32]);
+    let mut needed = 99;
+    assert_eq!(
+        unsafe {
+            attestation::mx_host_output_attestation_v1(host.0, 0, ptr::null_mut(), 0, &mut needed)
+        },
+        MX_INACTIVE
+    );
+    assert_eq!(needed, 0);
+}
+#[test]
+fn query_short_buffers_never_truncate_and_snapshot_digests_change_independently() {
+    let host = create(fixture());
+    let (full, initial) = attested(&host, 0);
+    let mut bytes = vec![99; full.len() - 1];
+    let mut needed = 0;
+    assert_eq!(
+        unsafe {
+            attestation::mx_host_output_attestation_v1(
+                host.0,
+                0,
+                bytes.as_mut_ptr(),
+                bytes.len(),
+                &mut needed,
+            )
+        },
+        MX_BUFFER
+    );
+    assert_eq!(needed, full.len());
+    assert!(bytes.iter().all(|v| *v == 99));
+    let mut value = fixture();
+    value["outputDsp"][1]["effects"][0]["effect"]["gain"] = json!(0.25);
+    let changed = create(value);
+    let (_, changed) = attested(&changed, 0);
+    assert_ne!(initial["requestSha256"], changed["requestSha256"]);
+    assert_ne!(initial["dspSnapshotSha256"], changed["dspSnapshotSha256"]);
+    assert_eq!(initial["planSha256"], changed["planSha256"]);
+}
+
+#[test]
+fn destination_failure_never_borrows_another_outputs_packet() {
+    let mut value = fixture();
+    value["outputDsp"][1]["effects"][0]["effect"]["gain"] = json!(f64::MAX);
+    let host = create(value);
+    let data = [bytes(&[0.5; 4]), bytes(&[8.0; 4]), bytes(&[0.25; 4])];
+    assert_eq!(run(&host, 0, &inputs(&data, stamp(0))), MX_OK);
+    let mut packet = std::mem::MaybeUninit::uninit();
+    assert_eq!(
+        unsafe { attestation::mx_host_output_packet_v1(host.0, 0, packet.as_mut_ptr()) },
+        MX_OK
+    );
+    assert_eq!(unsafe { *packet.assume_init().samples }, 0.25);
+    assert_eq!(
+        unsafe { attestation::mx_host_output_packet_v1(host.0, 1, packet.as_mut_ptr()) },
+        MX_INACTIVE
+    );
+    let packet = unsafe { packet.assume_init() };
+    assert!(packet.samples.is_null());
+    assert_eq!(packet.sample_count, 0);
+    assert_eq!(packet.attestation_sha256, [0; 32]);
+}
+#[test]
+fn source_loss_discards_tail_without_shrinking_immutable_packet_union() {
+    let mut value = fixture();
+    let delay = json!({"name":"retained","format":{"sampleRateHz":48000,"channels":["FL","FR"]},"effects":[{"name":"delay","enabled":true,"effect":{"kind":"delay","frames":4,"wet":1.0,"dry":0.0,"feedback":0.0}}]});
+    value["mixDsp"][1] = delay.clone();
+    value["outputDsp"][1] = delay;
+    let host = create(value);
+    let (before, record) = attested(&host, 1);
+    assert_eq!(
+        contributor_ids(&record),
+        ["owned-source-return", "owned-source-shared"]
+    );
+    let data = blocks();
+    assert_eq!(run(&host, 0, &inputs(&data, stamp(0))), MX_OK);
+    let mut input = inputs(&data, stamp(1));
+    input[2].bytes = ptr::null();
+    input[2].byte_count = 0;
+    assert_eq!(run(&host, 1, &input), MX_OK);
+    assert_eq!(output(&host, 0), [0.0; 4]);
+    assert_eq!(output(&host, 1), [0.0; 4]);
+    assert_eq!(attested(&host, 1).0, before);
+    let mut packet = std::mem::MaybeUninit::uninit();
+    assert_eq!(
+        unsafe { attestation::mx_host_output_packet_v1(host.0, 1, packet.as_mut_ptr()) },
+        MX_OK
+    );
+    let packet = unsafe { packet.assume_init() };
+    assert_eq!(packet.stamp.sequence, 1);
+    assert_eq!(
+        packet.attestation_sha256,
+        <[u8; 32]>::from(sha2::Sha256::digest(&before))
+    );
 }
