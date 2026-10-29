@@ -1,10 +1,35 @@
 # Network audio interoperability roadmap
 
-Added: 2026-10-29. Status: planned; this document does not advertise implemented
-compatibility. Track interoperability in [#56](https://github.com/MGRAFF2006/mixyard/issues/56),
+Added: 2026-10-29. Status: optional standalone adapter work; device compatibility
+remains unqualified. Track interoperability in [#56](https://github.com/MGRAFF2006/mixyard/issues/56),
 native integration in [#51](https://github.com/MGRAFF2006/mixyard/issues/51),
 format preservation in [#29](https://github.com/MGRAFF2006/mixyard/issues/29),
 and processing/alignment in [#33](https://github.com/MGRAFF2006/mixyard/issues/33).
+
+## Implemented optional admission boundary
+
+[`interoperability/`](../interoperability/README.md) is an optional dependency-free
+adapter package, independent of the native runtime and paired raw QUIC workspace.
+Its immutable descriptor retains the canonical network `Spec` JSON, all five raw
+precisions, arbitrary positive u32 sample rates, explicit ordered channels and
+source provenance. Configurable resource budgets reject oversized work; format
+conversion remains explicit and local to one destination. The descriptor boundary
+does not inherit the v1 QUIC MTU.
+
+Local runtime consent grants exact roles, endpoint and media Spec separately:
+live send/receive, media serve/fetch, control, service control and advertisement.
+The only admitted addresses in this profile are explicitly owned literal IPv4
+loopback endpoints. Discovery and caller-pinned legacy identities are not pairing
+or authentication. Source-group exclusions reject a premix before IO, and a
+revoked or expired session cannot authorize later IO. An operation admitted before
+revocation may already have handed bytes to the OS/SDK; callers still own worker
+shutdown and downstream queue disposal. No physical capture/playback, native
+backend availability, timing synchronization or branded device qualification is
+established. `backendAvailable` and `audioApplied` remain false.
+
+The package README records exact local verification and boundaries. Protocol
+profiles below remain targets until their own executable adapter and evidence are
+listed here; none is a blanket ecosystem compatibility badge.
 
 ## Product goal and direction
 
