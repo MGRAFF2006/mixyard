@@ -66,13 +66,13 @@ impl OwnedDescendant {
     fn terminate(&self) {
         if let Some(stat) = process_stat(self.pid) {
             // Never signal a reused PID during failure cleanup.
-            if stat_fields(&stat)[19] == self.start_time {
-                if unsafe { libc::kill(self.pid as i32, libc::SIGKILL) } != 0 {
-                    let error = std::io::Error::last_os_error();
-                    // The same owned task may disappear after stat but before
-                    // signal delivery. Only ESRCH is idempotent absence.
-                    assert_eq!(error.raw_os_error(), Some(libc::ESRCH), "{error}");
-                }
+            if stat_fields(&stat)[19] == self.start_time
+                && unsafe { libc::kill(self.pid as i32, libc::SIGKILL) } != 0
+            {
+                let error = std::io::Error::last_os_error();
+                // The same owned task may disappear after stat but before
+                // signal delivery. Only ESRCH is idempotent absence.
+                assert_eq!(error.raw_os_error(), Some(libc::ESRCH), "{error}");
             }
         }
     }
