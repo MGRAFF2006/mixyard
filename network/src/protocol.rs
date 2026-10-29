@@ -141,6 +141,20 @@ impl Spec {
     }
 
     pub fn validate(&self, sender: &str, receiver: &str, limits: &Limits) -> Result<()> {
+        self.validate_descriptor(sender, receiver)?;
+        ensure!(
+            self.payload_bytes()?
+                .checked_add(HEADER)
+                .is_some_and(|bytes| bytes <= limits.max_datagram),
+            "packet exceeds datagram budget: reduce frames_per_packet; a single sample frame must fit"
+        );
+        Ok(())
+    }
+
+    /// Validate the canonical raw format, identity and provenance independently
+    /// of framing. A block adapter must additionally admit its own exact payload,
+    /// rate, queue and framing budgets; this method grants no transport permission.
+    pub fn validate_descriptor(&self, sender: &str, receiver: &str) -> Result<()> {
         identifier(sender)?;
         identifier(receiver)?;
         ensure!(
@@ -158,10 +172,9 @@ impl Spec {
             ensure!(channels.insert(channel), "duplicate channel identifier");
         }
         ensure!(self.frames_per_packet > 0, "empty packet");
-        ensure!(
-            self.payload_bytes()? + HEADER <= limits.max_datagram,
-            "packet exceeds datagram budget: reduce frames_per_packet; a single sample frame must fit"
-        );
+        // Reject unsupported representations and arithmetic overflow even when
+        // a destination uses blocks rather than the original datagram framing.
+        self.payload_bytes()?;
         let p = &self.provenance;
         ensure!(
             !p.sources.is_empty() && p.visited_peers.last().map(String::as_str) == Some(sender),

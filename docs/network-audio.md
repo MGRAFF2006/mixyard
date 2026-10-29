@@ -116,6 +116,14 @@ explicit channel IDs, never an implicit speaker count or guessed downmix.
 Descriptors are bounded to 4096 serialized bytes, names/IDs to 128 UTF-8 bytes.
 This limits metadata/resources, not source precision or a predetermined channel count.
 
+`Spec::validate_descriptor(sender, receiver)` checks the canonical raw format,
+identity and complete provenance independently of packet framing. Block and
+protocol adapters can reuse it without inheriting the original datagram MTU.
+It grants no send/receive permission or resource admission: each adapter must
+also check its exact payload, aggregate rate, queues and framing budgets.
+The existing `Spec::validate` and directional permissions retain the v1 datagram
+limit below; a large valid descriptor does not enable that transport implicitly.
+
 Packets contain a negotiated fixed positive number of whole sample frames.
 `sample_bytes * channel_count * frames_per_packet + 40` must fit the configured
 application datagram budget (at most 1200 bytes) **and** Quinn's current path
