@@ -83,7 +83,14 @@ export class Api {
       }
       if (!this.identity || (v.revision as number) < this.identity.revision) throw new StaleSessionError()
       this.identity = { ...scope, revision: v.revision as number }
-      if ((v.status as number) < 200 || (v.status as number) >= 300) throw this.apiError(v.status as number, v.body)
+      if ((v.status as number) < 200 || (v.status as number) >= 300) {
+        const error = this.apiError(v.status as number, v.body)
+        // Canonical conflicts arrive inside a verified scope as well as at the
+        // transport boundary. Native hosts revoke their generation on either;
+        // every consumer must require a fresh session immediately too.
+        if (error.status === 401 || error.status === 409 || error.code === 'invalid-origin') this.disconnect(`${error.code}: ${error.message}`)
+        throw error
+      }
       return v.body
     }
     if (!this.token) throw new Error('Service session unavailable. Refresh to reconnect.')
