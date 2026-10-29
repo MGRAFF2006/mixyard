@@ -143,7 +143,13 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
                 return ["status": status, "json": rawReply]
             }
             guard let canonical = value["status"] as? Int, canonical == status, value["body"] != nil else { throw MobileError.invalid("protocol-or-envelope-error") }
-            try fence.accept(ticket, authority(value)); return ["status": status, "json": rawReply]
+            try fence.accept(ticket, authority(value))
+            if status >= 400 {
+                guard let body = value["body"] as? [String: Any], let failure = body["error"] as? [String: Any],
+                      let code = failure["code"] as? String, failure["message"] is String else { throw MobileError.invalid("canonical-error") }
+                if status == 401 || status == 409 || code == "invalid-origin" { invalidate() }
+            }
+            return ["status": status, "json": rawReply]
         } catch { if fence.ticket.epoch == ticket.epoch { invalidate() }; throw error }
     }
 }
