@@ -230,3 +230,171 @@ async fn actual_fragment_header_rate_and_source_exclusions_gate_admission() -> R
     assert!(rejected.to_string().contains("excluded source"));
     Ok(())
 }
+
+// Regressions derived from the independent exact-HEAD feature/safety review.
+
+// Current-thread manual polls make the race deterministic without sleeps.
+async fn poll_once<F: std::future::Future>(
+    mut future: std::pin::Pin<&mut F>,
+) -> std::task::Poll<F::Output> {
+    std::future::poll_fn(|cx| std::task::Poll::Ready(future.as_mut().poll(cx))).await
+}
+
+#[tokio::test]
+async fn replacement_negotiation_reserves_stream_before_reliable_exchange() -> Result<()> {
+    let s = spec(1, "a", Codec::RawS16Le, 10, &["mono"], 1000);
+    let (a, b, _ea, _eb) = block_pair(std::slice::from_ref(&s), &[], 1000).await?;
+    let arun = tokio::spawn(a.clone().run());
+    let brun = tokio::spawn(b.clone().run());
+    a.negotiate(offer(s.clone(), 1)).await?;
+    let negotiation = a.negotiate(offer(s.clone(), 2));
+    tokio::pin!(negotiation);
+    assert!(poll_once(negotiation.as_mut()).await.is_pending());
+    let bytes = sample_bytes(&s, 0);
+    let old_send = a.send(1, 1, &bytes);
+    tokio::pin!(old_send);
+    let old_poll = poll_once(old_send.as_mut()).await;
+    // No old send should enter once replacement has begun, or replacement
+    // must not commit while that send is in flight.
+    let entered = old_poll.is_pending();
+    assert!(
+        matches!(&old_poll, std::task::Poll::Ready(Err(_))),
+        "pending replacement must reject a newly starting old send"
+    );
+    let result = negotiation.await;
+    assert!(
+        result.is_ok(),
+        "reserved replacement should finish normally: {result:?}"
+    );
+    let old_result = match old_poll {
+        std::task::Poll::Ready(r) => r,
+        std::task::Poll::Pending => old_send.await,
+    };
+    a.close();
+    let _ = arun.await?;
+    let _ = brun.await?;
+    assert!(
+        !entered || result.is_err(),
+        "new generation committed over an active old send: negotiation={result:?}, old_send={old_result:?}"
+    );
+    Ok(())
+}
+
+async fn single_fragment_queue_pair(
+    s: &Spec,
+) -> Result<(
+    Arc<FragmentSession>,
+    Arc<FragmentSession>,
+    FragmentEndpoint,
+    FragmentEndpoint,
+)> {
+    let a = identity("a")?;
+    let b = identity("b")?;
+    let pin_a = PairedPeer {
+        peer: "a".into(),
+        certificate: a.certificate.clone(),
+        server_name: "mixyard-peer".into(),
+    };
+    let pin_b = PairedPeer {
+        peer: "b".into(),
+        certificate: b.certificate.clone(),
+        server_name: "mixyard-peer".into(),
+    };
+    let mut budget = limits();
+    budget.max_streams = 1;
+    budget.packets_per_stream = 1;
+    budget.max_datagram = 1000;
+    let mut c = config();
+    c.max_streams = 1;
+    c.window = 1;
+    let ea = fragment_endpoint(
+        "127.0.0.1:0".parse()?,
+        a,
+        pin_b,
+        permissions("a", "b", std::slice::from_ref(s), &[]),
+        budget.clone(),
+        c.clone(),
+    )?;
+    let eb = fragment_endpoint(
+        "127.0.0.1:0".parse()?,
+        b,
+        pin_a,
+        permissions("b", "a", &[], std::slice::from_ref(s)),
+        budget,
+        c,
+    )?;
+    let (a, b) = tokio::try_join!(ea.connect(eb.local_addr()?), eb.accept())?;
+    Ok((a, b, ea, eb))
+}
+
+#[tokio::test]
+async fn revocation_cancels_capacity_blocked_fragment_before_enqueue() -> Result<()> {
+    // Exactly two full fragments; the transport queue can only hold one.
+    let s = spec(1, "a", Codec::RawS16Le, 10, &["mono"], 952);
+    let (a, b, _ea, _eb) = single_fragment_queue_pair(&s).await?;
+    let arun = tokio::spawn(a.clone().run());
+    let brun = tokio::spawn(b.clone().run());
+    a.negotiate(offer(s.clone(), 1)).await?;
+    let bytes = sample_bytes(&s, 0);
+    let send = a.send(1, 1, &bytes);
+    tokio::pin!(send);
+    assert!(
+        poll_once(send.as_mut()).await.is_pending(),
+        "first fragment yields"
+    );
+    assert!(
+        poll_once(send.as_mut()).await.is_pending(),
+        "second fragment waits for queue capacity"
+    );
+    // No driver tick has occurred between these synchronous polls.
+    a.revoke_send(1)?;
+    let completed = poll_once(send.as_mut()).await;
+    assert!(
+        matches!(&completed, std::task::Poll::Ready(Err(_))),
+        "revoked pending fragment must stop before a driver tick"
+    );
+    let result = match completed {
+        std::task::Poll::Ready(r) => r,
+        std::task::Poll::Pending => send.await,
+    };
+    let received = b.receive(1, 1, 0).await;
+    a.close();
+    let _ = arun.await?;
+    let _ = brun.await?;
+    assert!(
+        result.is_err(),
+        "revoked blocked send reported success; remote completed={}",
+        received.is_ok()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelled_fragmented_send_preserves_sibling_and_requires_new_generation() -> Result<()> {
+    let s = spec(1, "a", Codec::RawS16Le, 10, &["mono"], 1000);
+    let sibling = spec(2, "a", Codec::RawS16Le, 10, &["mono"], 1000);
+    let (a, b, _ea, _eb) = block_pair(&[s.clone(), sibling.clone()], &[], 1000).await?;
+    let arun = tokio::spawn(a.clone().run());
+    let brun = tokio::spawn(b.clone().run());
+    a.negotiate(offer(s.clone(), 1)).await?;
+    a.negotiate(offer(sibling.clone(), 1)).await?;
+    let bytes = sample_bytes(&s, 0);
+    {
+        let send = a.send(1, 1, &bytes);
+        tokio::pin!(send);
+        assert!(poll_once(send.as_mut()).await.is_pending());
+    }
+    assert!(a.send(1, 1, &bytes).await.is_err());
+    a.send(2, 1, &sample_bytes(&sibling, 0)).await?;
+    assert_eq!(
+        b.receive(2, 1, 0).await?.1.payload,
+        sample_bytes(&sibling, 0)
+    );
+    a.negotiate(offer(s.clone(), 2)).await?;
+    a.send(1, 2, &bytes).await?;
+    assert_eq!(b.receive(1, 2, 0).await?.1.payload, bytes);
+    a.close();
+    let _ = arun.await?;
+    let _ = brun.await?;
+    Ok(())
+}

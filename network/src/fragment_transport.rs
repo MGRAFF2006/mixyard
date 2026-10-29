@@ -15,6 +15,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    task::{Poll, Waker},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -186,12 +187,14 @@ struct ReceiveState {
 struct SendState {
     streams: BTreeMap<u64, Sending>,
     revoked: BTreeSet<u64>,
+    negotiating: BTreeSet<u64>,
 }
 struct Sending {
     offer: Offer,
     next: u64,
     busy: bool,
     active: bool,
+    waiter: Option<Waker>,
 }
 
 pub struct FragmentSession {
@@ -241,6 +244,7 @@ impl Drop for SendingGuard {
             && state.offer.generation == self.generation
         {
             state.busy = false;
+            state.waiter = None;
             if !self.committed {
                 state.active = false;
             }
@@ -339,7 +343,7 @@ impl FragmentSession {
         );
         let _admission = self.admission.lock().await;
         {
-            let tx = self.outgoing.lock().expect("send poisoned");
+            let mut tx = self.outgoing.lock().expect("send poisoned");
             ensure!(
                 !tx.revoked.contains(&offer.spec.stream),
                 "send permission revoked"
@@ -349,6 +353,10 @@ impl FragmentSession {
                     .get(&offer.spec.stream)
                     .is_none_or(|s| !s.busy && offer.generation > s.offer.generation),
                 "generation busy/stale"
+            );
+            ensure!(
+                tx.negotiating.insert(offer.spec.stream),
+                "stream already negotiating"
             );
         }
         let mut uncertain = NegotiationGuard {
@@ -381,6 +389,10 @@ impl FragmentSession {
             !tx.revoked.contains(&offer.spec.stream),
             "send permission revoked during negotiation"
         );
+        ensure!(
+            !self.closed.load(Ordering::Acquire) && tx.negotiating.remove(&offer.spec.stream),
+            "negotiation invalidated"
+        );
         tx.streams.insert(
             offer.spec.stream,
             Sending {
@@ -388,6 +400,7 @@ impl FragmentSession {
                 next: 0,
                 busy: false,
                 active: true,
+                waiter: None,
             },
         );
         // Successful reliable agreement owns the new generation. Cancel/error closes
@@ -403,6 +416,10 @@ impl FragmentSession {
         let (offer, sequence) = {
             let mut tx = self.outgoing.lock().expect("send poisoned");
             ensure!(!tx.revoked.contains(&stream), "send permission revoked");
+            ensure!(
+                !tx.negotiating.contains(&stream),
+                "stream generation negotiating"
+            );
             let state = tx
                 .streams
                 .get_mut(&stream)
@@ -434,19 +451,28 @@ impl FragmentSession {
         timeout(self.limits.control_timeout, async {
             for fragment in fragmenter.fragments(sequence, bytes)? {
                 self.connected()?;
-                {
-                    let tx = self.outgoing.lock().expect("send poisoned");
-                    ensure!(
-                        tx.streams
-                            .get(&stream)
-                            .is_some_and(|s| s.active && s.offer.generation == generation),
-                        "block send invalidated"
-                    );
-                }
-                self.base
-                    .connection
-                    .send_datagram_wait(fragment.into())
-                    .await?;
+                let pending = self.base.connection.send_datagram_wait(fragment.into());
+                tokio::pin!(pending);
+                std::future::poll_fn(|cx| {
+                    let mut tx = self.outgoing.lock().expect("send poisoned");
+                    if self.closed.load(Ordering::Acquire) || tx.revoked.contains(&stream) {
+                        return Poll::Ready(Err(anyhow::anyhow!("block send invalidated")));
+                    }
+                    let Some(state) = tx.streams.get_mut(&stream) else {
+                        return Poll::Ready(Err(anyhow::anyhow!("block sender removed")));
+                    };
+                    if !state.active || state.offer.generation != generation {
+                        return Poll::Ready(Err(anyhow::anyhow!("block send invalidated")));
+                    }
+                    state.waiter = Some(cx.waker().clone());
+                    // The permission check and actual enqueue poll share the
+                    // revocation lock. No guard survives a Pending return.
+                    pending
+                        .as_mut()
+                        .poll(cx)
+                        .map(|result| result.map_err(anyhow::Error::from))
+                })
+                .await?;
                 // Bound work per poll even when an entire large block fits the
                 // empty transport queue; independent streams must get a turn.
                 tokio::task::yield_now().await;
@@ -527,10 +553,16 @@ impl FragmentSession {
             self.permissions.send.contains_key(&stream),
             "unknown send permission"
         );
-        let mut tx = self.outgoing.lock().expect("send poisoned");
-        tx.revoked.insert(stream);
-        if let Some(s) = tx.streams.get_mut(&stream) {
-            s.active = false;
+        let waiter = {
+            let mut tx = self.outgoing.lock().expect("send poisoned");
+            tx.revoked.insert(stream);
+            tx.streams.get_mut(&stream).and_then(|s| {
+                s.active = false;
+                s.waiter.take()
+            })
+        };
+        if let Some(waiter) = waiter {
+            waiter.wake();
         }
         Ok(())
     }
@@ -542,7 +574,16 @@ impl FragmentSession {
             .expect("receive poisoned")
             .reassembler
             .disconnect();
-        self.outgoing.lock().expect("send poisoned").streams.clear();
+        let streams = {
+            let mut tx = self.outgoing.lock().expect("send poisoned");
+            tx.negotiating.clear();
+            std::mem::take(&mut tx.streams)
+        };
+        for state in streams.into_values() {
+            if let Some(waiter) = state.waiter {
+                waiter.wake();
+            }
+        }
         self.changed.notify_waiters();
     }
 }

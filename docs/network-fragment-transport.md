@@ -71,7 +71,11 @@ close the session instead of assuming one peer applied an offer.
 
 A canceled/failed send invalidates that stream generation locally; an explicit
 higher reliable generation is needed to restart. Reliable admission cannot
-replace a stream while its send is busy. Local send or receive revocation removes
+replace a stream while its send is busy. A pending replacement reserves the
+stream against newly starting old-generation sends. Each fragment's authority
+check and actual QUIC enqueue poll share the revocation lock; a pending poll
+releases that lock, and revocation wakes that stream's waiter before it can
+enqueue later. Local send or receive revocation removes
 that direction until a new session, including revocation before admission.
 Sibling grants remain independent. Already queued datagrams and returned caller
 blocks cannot be recalled; remote consumption needs its own receive revocation.
@@ -87,6 +91,9 @@ exceeds the datagram), S24 and S32 blocks. It exercises generation restart,
 consumed-block replay rejection, independent sender revocation, receiver
 revocation, disconnect, exact fragment-size negotiation, aggregate header-rate
 admission and premix exclusions. The isolated file is removed after comparison.
+Current-thread manual-poll regressions exercise revocation with a final fragment
+blocked on capacity, replacement admission racing a newly starting old send,
+and cancellation followed by explicit generation recovery with sibling progress.
 
 The underlying fragmentation tests additionally exercise reordered/duplicate/lost
 chunks, complete unconsumed expiry, canonical malicious input, failed replacement
