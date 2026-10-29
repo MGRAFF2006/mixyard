@@ -112,7 +112,7 @@ Java_org_mixyard_mobile_host_NativeHostWorker_process(JNIEnv*, jobject, jlong ha
     for (size_t i = 0; i < value->outputs.size(); ++i) {
         const double* samples = nullptr; size_t count = 0;
         const auto status = mx_host_output(value->host, i, &samples, &count);
-        if (status != MX_OK || !samples || count > value->output_sizes[i] / sizeof(double) || !value->outputs[i]) { scrub(value); return MX_BUFFER; }
+        if (status != MX_OK || !samples || count != value->output_sizes[i] / sizeof(double) || !value->outputs[i]) { scrub(value); return MX_BUFFER; }
         std::memset(value->outputs[i], 0, value->output_sizes[i]);
         std::memcpy(value->outputs[i], samples, count * sizeof(double));
     }

@@ -114,7 +114,7 @@ public final class NativeHostWorker {
                 var samples: UnsafePointer<Double>?
                 var count = 0
                 guard mx_host_output(host, index, &samples, &count) == 0, let samples,
-                      count <= outputStorage[index].count / MemoryLayout<Double>.size else { throw MobileError.invalid("host-output-buffer") }
+                      count == outputStorage[index].count / MemoryLayout<Double>.size else { throw MobileError.invalid("host-output-buffer") }
                 outputStorage[index].initializeMemory(as: UInt8.self, repeating: 0)
                 outputStorage[index].baseAddress!.copyMemory(from: samples, byteCount: count * MemoryLayout<Double>.size)
             }
