@@ -19,17 +19,32 @@ permissions:
   contents: read
 
 jobs:
+  provenance:
+    name: Git provenance fixtures (no SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check approved-base ancestry and exact source/artifact binding
+        run: python3 -B verification/macos-input/test_evidence.py -v
   artifact:
     name: Apple ABI and authenticated anonymous XPC fixture
+    needs: provenance
     runs-on: macos-latest
     timeout-minutes: 10
     env:
       MIXYARD_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-      MIXYARD_CURRENT_BASE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+      MIXYARD_CURRENT_BASE: ${{ github.event.pull_request.base.sha || 'refs/remotes/origin/main' }}
+      MIXYARD_TARGET_BASE_REF: ${{ format('refs/remotes/origin/{0}', github.event.pull_request.base.ref || 'main') }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Fetch the configured target branch independently of the test merge
+        run: |
+          git check-ref-format "$MIXYARD_TARGET_BASE_REF"
+          git fetch --no-tags --no-recurse-submodules origin \
+            "refs/heads/${MIXYARD_TARGET_BASE_REF#refs/remotes/origin/}:$MIXYARD_TARGET_BASE_REF"
       - name: Bind source, current base and executed ancestry before building
         run: python3 verification/macos-input/evidence.py verification/macos-input/build incomplete
       - name: Build, sign, and test in-process only (no install or audio access)
