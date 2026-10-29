@@ -32,6 +32,32 @@ unsafe extern "C" {
     fn opus_packet_get_nb_samples(input: *const u8, len: c_int, rate: c_int) -> c_int;
     fn opus_packet_get_nb_channels(input: *const u8) -> c_int;
 }
+#[cfg(test)]
+std::thread_local! {
+    static LAST_ENCODE_CAPACITY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(crate) fn last_encode_capacity() -> usize {
+    LAST_ENCODE_CAPACITY.with(std::cell::Cell::get)
+}
+
+// One boundary for the native call. Tests observe the actual forwarded capacity,
+// independently of how many bytes a particular libopus version chooses to emit.
+#[inline]
+unsafe fn encode_float(
+    state: *mut c_void,
+    input: *const f32,
+    frames: c_int,
+    output: *mut u8,
+    capacity: c_int,
+) -> c_int {
+    #[cfg(test)]
+    LAST_ENCODE_CAPACITY.with(|value| value.set(capacity as usize));
+    // SAFETY: same pointer/count contract as the original libopus call; the
+    // caller supplies admitted initialized slices and exclusive encoder state.
+    unsafe { opus_encode_float(state, input, frames, output, capacity) }
+}
+
 pub(crate) fn version() -> Option<&'static str> {
     // SAFETY: libopus documents a static NUL-terminated version string.
     let pointer = unsafe { opus_get_version_string() };
@@ -126,7 +152,7 @@ impl Engine {
         let mut output = vec![0; super::OPUS_MAX_PACKET_BYTES];
         // SAFETY: admitted frame count/rate/channels, aligned samples, bounded packet output.
         let len = checked(unsafe {
-            opus_encode_float(
+            encode_float(
                 self.encoder.as_mut_ptr().cast(),
                 samples.as_ptr(),
                 f.frames as i32,

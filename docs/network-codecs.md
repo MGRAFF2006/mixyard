@@ -205,8 +205,13 @@ malformed headers, expansion/unknown size, window/dictionary/checksum/trailing
 frame rejection; exact parameter mismatch; revoke, restart and foreign reconnect
 envelopes. Opus runs all 300 combinations of five rates, six durations, two layouts
 and five containers, plus conversion oracles, nonfinite rejection, wrong packet
-duration/layout, predictor invalidation, and a 512 kbit/s CBR 60 ms frame larger
-than 1275 bytes. Physical native precision remains unproved.
+duration/layout and predictor invalidation. The 512 kbit/s CBR 60 ms fixture checks
+the actual 4000-byte capacity argument forwarded to libopus, then uses its public
+packet-padding API to create a valid 4000-byte packet and proves byte-identical
+decode through the public envelope worker. Native output size is not assumed:
+installed libopus versions may emit at most 1275 bytes for the same input while
+reporting the requested target bitrate. The target readback and measured encoded
+bytes remain distinct. Physical native precision remains unproved.
 
 One example run on 2026-10-29 produced these **fixture observations**:
 
