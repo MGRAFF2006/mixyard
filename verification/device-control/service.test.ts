@@ -63,7 +63,9 @@ class Device {
     this.child = null
     if (!child || child.exitCode !== null || child.signalCode !== null) return
     const exited = once(child, 'exit')
-    const timer = setTimeout(() => child.kill('SIGKILL'), 3000)
+    // Canonical operations may already be committing. Give the service time to
+    // drain and release its ownership lock before forcing our own process out.
+    const timer = setTimeout(() => child.kill('SIGKILL'), 25_000)
     try { child.kill(); await exited } finally { clearTimeout(timer) }
   }
   fetcher() { return pinnedFetch(this.url, this.trust.certificatePem) }
@@ -85,7 +87,7 @@ class Device {
   }
 }
 
-test('real TLS service and shared Vue API isolate devices, authorities, revisions and revoked controllers', { timeout: 60_000 }, async () => {
+test('real TLS service and shared Vue API isolate devices, authorities, revisions and revoked controllers', { timeout: 120_000 }, async () => {
   const directory = mkdtempSync('/dev/shm/mixyard-device-control-')
   const devices: Device[] = []
   try {
@@ -97,10 +99,21 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
     const ownerB = await b.pair('view,control,settings')
     const viewer = await a.pair('view')
     assert.ok((await a.post('/control/pair', { deviceId: a.trust.deviceId, invitation: a.invitations.view, name: 'Replay' })).status >= 400, 'pairing grant cannot be reused')
-    assert.equal((await a.post('/control/session', {})).status, 401, 'TLS without application authorization cannot administer a device')
+    const unauthorized = await a.post('/control/session', {})
+    assert.equal(unauthorized.status, 401, 'TLS without application authorization cannot administer a device')
+    const privateError = await unauthorized.text()
+    for (const secret of [ownerA.credential, ownerB.credential, viewer.credential, a.invitations.view, a.directory]) {
+      assert.ok(!privateError.includes(secret), 'unauthorized errors must not expose credentials, invitations or private store paths')
+    }
     await assert.rejects(pinnedFetch(a.url, b.trust.certificatePem)('/control/session', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } }), 'another device certificate must fail trust validation')
 
-    const apiA = a.api(ownerA.credential), competing = a.api(ownerA.credential), apiB = b.api(ownerB.credential), view = a.api(viewer.credential)
+    let competingWrites = 0
+    const competingTransport = a.fetcher()
+    const competing = a.api(ownerA.credential, (input, init) => {
+      if (input === '/control/request' && JSON.parse(String(init?.body)).path === '/api/profiles/edit') competingWrites++
+      return competingTransport(input, init)
+    })
+    const apiA = a.api(ownerA.credential), apiB = b.api(ownerB.credential), view = a.api(viewer.credential)
     await apiA.connect(); await competing.connect(); await apiB.connect(); await view.connect()
     const initialA = await apiA.post('/api/profiles/read') as { storeRevision: number; draft: unknown }
     const initialB = await apiB.post('/api/profiles/read') as { storeRevision: number; draft: unknown }
@@ -110,8 +123,11 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
     assert.ok(saved.storeRevision > initialA.storeRevision)
     assert.deepEqual((await apiB.post('/api/profiles/read') as { draft: unknown }).draft, initialB.draft, 'editing A must not alter B')
     await assert.rejects(competing.post('/api/profiles/edit', { expectedRevision: initialA.storeRevision, edit: { kind: 'undo' } }), 'competing stale controller cannot overwrite current revision')
+    assert.equal(competingWrites, 1, 'revision conflict must not automatically retry a write')
     await competing.connect()
-    assert.deepEqual((await competing.post('/api/profiles/read') as { draft: unknown }).draft, config)
+    // The canonical store advances config revision and fills schema defaults;
+    // reopening must reproduce that committed value rather than the import.
+    assert.deepEqual((await competing.post('/api/profiles/read') as { draft: unknown }).draft, saved.draft)
 
     // Delay a real response after the server has produced it. Reconnection must
     // prevent that old operation from being accepted into the new authority.
@@ -134,14 +150,42 @@ test('real TLS service and shared Vue API isolate devices, authorities, revision
     assert.equal((await a.post('/control/request', { deviceId: authority.deviceId, authorityId: authority.authorityId, revision: authority.revision, path: '/api/profiles/read', body: {} }, ownerA.credential)).status, 409, 'restart invalidates previous authority even with durable credentials')
     const restarted = a.api(ownerA.credential)
     await restarted.connect()
-    assert.deepEqual((await restarted.post('/api/profiles/read') as { draft: unknown }).draft, config, 'stored intent survives service restart')
+    assert.deepEqual((await restarted.post('/api/profiles/read') as { draft: unknown }).draft, saved.draft, 'stored intent survives service restart')
     const current = await (await a.post('/control/session', {}, ownerA.credential)).json()
     const revoked = await a.post('/control/revoke', { deviceId: current.deviceId, authorityId: current.authorityId, revision: current.revision, body: { credentialId: viewer.credentialId } }, ownerA.credential)
     assert.equal(revoked.status, 200)
     assert.equal((await a.post('/control/session', {}, viewer.credential)).status, 401, 'revoked controller cannot reconnect')
     assert.ok((await a.post('/control/request', { deviceId: current.deviceId, authorityId: current.authorityId, revision: current.revision, path: '/api/automation/arm', body: {} }, ownerA.credential)).status >= 400, 'remote transport cannot resurrect an automation approval')
     assert.ok((await a.post('/control/request', { deviceId: current.deviceId, authorityId: current.authorityId, revision: current.revision, path: '/api/not-a-real-admin-route', body: {} }, ownerA.credential)).status >= 400, 'route allowlist has no default administrative pass-through')
+    const rotation = await a.post('/control/rotate', { deviceId: current.deviceId, authorityId: current.authorityId, revision: current.revision, body: {} }, ownerA.credential)
+    assert.equal(rotation.status, 200)
+    const rotated = (await rotation.json()).body
+    assert.equal(typeof rotated.credential, 'string')
+    assert.notEqual(rotated.credential, ownerA.credential)
+    assert.equal((await a.post('/control/session', {}, ownerA.credential)).status, 401, 'rotation invalidates the old bearer')
+    const rotatedApi = a.api(rotated.credential)
+    await rotatedApi.connect()
+    assert.deepEqual((await rotatedApi.post('/api/profiles/read') as { draft: unknown }).draft, saved.draft)
     assert.deepEqual((await apiB.post('/api/profiles/read') as { draft: unknown }).draft, initialB.draft)
+
+    if (process.env.MIXYARD_CONTROL_BROWSER === '1') {
+      const c = new Device(join(directory, 'c')); devices.push(c)
+      const d = new Device(join(directory, 'd')); devices.push(d)
+      await c.start(); await d.start()
+      const ownerC = await c.pair('view,control,settings'), ownerD = await d.pair('view,control,settings')
+      const { verifyBrowser } = await import('./browser.ts')
+      await verifyBrowser(root, directory, [
+        { id: 'a', displayName: 'Owned device A', deviceId: c.trust.deviceId, credential: ownerC.credential, url: c.url, certificate: c.trust.certificatePem },
+        { id: 'b', displayName: 'Owned device B', deviceId: d.trust.deviceId, credential: ownerD.credential, url: d.url, certificate: d.trust.certificatePem },
+      ], async () => {
+        const scope = await (await c.post('/control/session', {}, ownerC.credential)).json()
+        assert.equal((await c.post('/control/revoke', { deviceId: scope.deviceId, authorityId: scope.authorityId, revision: scope.revision, body: { credentialId: ownerC.credentialId } }, ownerC.credential)).status, 200)
+      }, async id => {
+        const api = id === 'a' ? c.api(ownerC.credential) : d.api(ownerD.credential)
+        await api.connect()
+        return (await api.post('/api/profiles/read') as { draft: unknown }).draft
+      })
+    }
   } finally {
     await Promise.all(devices.map(device => device.stop()))
     rmSync(directory, { recursive: true, force: true })
