@@ -31,8 +31,8 @@ struct myw_port {
     const myw_binding binding;
     const uint64_t clock_id;
     std::array<Packet, MYW_SLOTS> packets{};
-    alignas(64) std::atomic<uint64_t> written{0};
-    alignas(64) std::atomic<uint64_t> read{0};
+    std::atomic<uint64_t> written{0};
+    std::atomic<uint64_t> read{0};
     std::atomic<int> state{MYW_OK};
     uint64_t next_frame = 0; // Producer-owned.
     myw_port(myw_format f, myw_binding b, uint64_t c) : format(f), binding(b), clock_id(c) {}
