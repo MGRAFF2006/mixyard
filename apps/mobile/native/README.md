@@ -53,3 +53,19 @@ The Swift module map imports the same actual host header supplied with `-Xcc -I`
 No copied header, placeholder host implementation or downloaded local SDK belongs
 to this subtree. Hosted linkage tests must record both the actual engine revision
 and this attachment revision; a source/syntax check alone is not linkage proof.
+
+The actual executable host prerequisite is #96 at
+`b71948fe0a5887ecd7226fe8b5d9beae8d24e1bf`, merged without rewriting history.
+The dedicated hosted workflow builds that merged engine source and executes both
+shipping Kotlin/JNI and Swift workers against it. Its tests use explicit synthetic
+common-clock stamps, known binary source levels, canonical mix-minus/independent
+DSP expectations, stale bindings and retained-PCM scrubbing. They open no audio
+device and create no network/native capture authority.
+
+The small Java source-file probe declares only actual JNI entrypoints; it is not
+a second Kotlin worker or policy implementation. A local execution linked this
+PR's actual JNI C++ code to the native lead's read-only production library and
+passed policy/DSP/output and staged-input revocation checks. This qualifies the
+JNI/Rust boundary; the full Kotlin and Swift worker executions belong to hosted
+qualification. The local private target peaked at 95,830 bytes and was removed;
+the parent library/cache was neither copied nor mutated.
