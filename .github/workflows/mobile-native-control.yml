@@ -54,6 +54,30 @@ jobs:
             apps/mobile/android/http/gradle.lockfile
       - name: Build pinned production control service
         run: cargo build --locked --manifest-path .qualification-control/control/Cargo.toml --bin mixyard-control --jobs 2
+      - name: Prove scoped Settings409 regression against previous shipping Kotlin client
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/native-control-gradle
+          MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/.qualification-control/control/target/debug/mixyard-control
+          MIXYARD_NATIVE_COMMAND: '["bash","verification/mobile-native/run-jvm.sh"]'
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin 7da358ea416b4fae5ac011599014693e04648f36
+          git show 7da358ea416b4fae5ac011599014693e04648f36:apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt > verification/mobile-native/kotlin/build/production/PinnedControl.kt
+          gradle --no-daemon -p verification/mobile-native/kotlin installDist
+          if node --test --test-reporter=tap verification/mobile-native/control.test.ts > "$RUNNER_TEMP/native-scoped-settings-before.tap" 2>&1; then
+            echo 'Previous shipping client unexpectedly passed the scoped Settings409 regression'
+            exit 1
+          fi
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const result = readFileSync(process.env.RUNNER_TEMP + "/native-scoped-settings-before.tap", "utf8");
+            assert.ok(result.includes("scoped Settings conflict must revoke native authority"), "failure must be the scoped native revocation regression");
+            assert.match(result, /# fail 2(?:\r?\n|$)/, "only the scoped conflict subtest and its parent may fail");
+            console.log("PASS: strict Settings409 authority assertion fails against the previous shipping client");
+          '
+          cp apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt verification/mobile-native/kotlin/build/production/
+          gradle --no-daemon -p verification/mobile-native/kotlin installDist
       - name: Actual Kotlin JSSE and shipping pin/dispatch/serializer against actual TLS services
         env:
           MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/.qualification-control/control/target/debug/mixyard-control

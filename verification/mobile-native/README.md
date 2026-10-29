@@ -35,6 +35,15 @@ stored writes, nested signed-zero/low-bit/subnormal Float64 offline DSP, client
 reconstruction from the boundary vault and real server restart, role 403
 preserving authority, revoked 401 clearing authority,
 certificate/hostname mismatch, rejected redirect and failed vault writes/forget.
+The Settings regression commits a valid write, then submits its old settings
+revision inside a fresh outer control envelope. The original scoped HTTP 409
+`store-conflict` reason must survive unchanged and native authority must clear;
+another read requires explicit session admission. A viewer's Settings write gets
+403 while its authority and authorized Settings read remain intact. The hosted
+Kotlin job first runs these strict assertions against the previous shipping
+client `7da358ea416b4fae5ac011599014693e04648f36` and requires exactly this scoped
+revocation failure, then rebuilds the current shipping source and runs the same
+suite. No expected-authority assertion is relaxed for the old implementation.
 The TLS redirect server is a negative test fixture only; successful scenarios use
 the production service. All endpoints are owned loopback. No microphone, speaker,
 human browser, network audio role, signing or deployment is enabled.

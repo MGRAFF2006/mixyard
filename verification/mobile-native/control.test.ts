@@ -206,6 +206,26 @@ test('shipping native pinned control client against owned production TLS service
       assert.notEqual(scope.authorityId, old.authorityId)
       assert.deepEqual(envelope(await client.request(scope, '/api/profiles/read', {})).body.draft, saved)
     })
+    await t.test('canonical Settings409 retains raw conflict and revokes native generation', async () => {
+      const before = envelope(await client.request(scope, '/api/automation/settings/read', {})).body
+      const written = envelope(await client.request(scope, '/api/automation/settings/write', {
+        expectedSettingsRevision: before.settingsRevision, settings: before.settings,
+      }))
+      assert.ok(written.body.settingsRevision > before.settingsRevision)
+      scope = { ...scope, revision: written.revision }
+      const reply = await client.request(scope, '/api/automation/settings/write', {
+        expectedSettingsRevision: before.settingsRevision, settings: before.settings,
+      })
+      const conflict = envelope(reply, 409)
+      assert.equal(conflict.deviceId, scope.deviceId)
+      assert.equal(conflict.authorityId, scope.authorityId)
+      assert.equal(conflict.body.error.code, 'store-conflict')
+      assert.equal(conflict.body.error.message, `Expected settings revision ${before.settingsRevision}, found ${written.body.settingsRevision}; reread and review before retrying`)
+      assert.equal(reply.hasAuthority, false, 'scoped Settings conflict must revoke native authority')
+      assert.equal((await client.request(scope, '/api/automation/settings/read', {})).ok, false, 'a new read needs explicit native session admission')
+      scope = await client.session()
+      assert.deepEqual(envelope(await client.request(scope, '/api/automation/settings/read', {})).body, written.body, 'the conflict must not replay or overwrite settings')
+    })
     await t.test('role 403 preserves session; durable revocation 401 clears it', async () => {
       const invite = viewer.provisioning()
       await client.ok(invite); const viewScope = await client.session()
@@ -217,6 +237,20 @@ test('shipping native pinned control client against owned production TLS service
         assert.ok(value.error || value.status === 403)
       }
       envelope(await client.request(viewScope, '/api/profiles/read', {}))
+      const settings = envelope(await client.request(viewScope, '/api/automation/settings/read', {})).body
+      const settingsDenied = await client.request(viewScope, '/api/automation/settings/write', {
+        expectedSettingsRevision: settings.settingsRevision, settings: settings.settings,
+      })
+      assert.equal(settingsDenied.ok, true)
+      assert.equal(settingsDenied.status, 403)
+      assert.equal(settingsDenied.hasAuthority, true, 'Settings permission denial must preserve independent view authority')
+      assert.equal(typeof settingsDenied.raw, 'string')
+      const settingsError = JSON.parse(settingsDenied.raw!).error
+      assert.equal(settingsError.code, 'permission-denied')
+      assert.equal(settingsError.message, 'This operation requires Settings permission')
+      const readable = await client.request(viewScope, '/api/automation/settings/read', {})
+      assert.equal(readable.hasAuthority, true)
+      assert.deepEqual(envelope(readable).body, settings, 'Settings403 must permit the unchanged authorized read')
       // Offline host revoke targets the credential ID in its own protected
       // fixture state. The test never asks native code to export a bearer.
       await viewer.stop()
