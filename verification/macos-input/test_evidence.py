@@ -138,6 +138,28 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(m['source_sha256'], m['working_tree_sha256'])
         self.assertIn('CI artifact provenance only', m['qualification_limit'])
 
+    def test_queued_main_push_binds_event_before_separately_from_fresh_target(self):
+        # The pushed accepted main merge is older than the freshly fetched main
+        # by the time its queued job runs. Event.before is its real baseline.
+        self.git('checkout', '--quiet', '--detach', self.executed)
+        self.write(f'{SCOPE}/later-main.txt', 'accepted after this main push was queued\n')
+        newer_target = self.commit('newer accepted main')
+        self.git('update-ref', TARGET, newer_target)
+        self.git('checkout', '--quiet', '--detach', self.executed)
+        self.env['MIXYARD_SOURCE_HEAD'] = self.executed
+        # Old event wiring conflated the newer approved target with the baseline.
+        self.env['MIXYARD_CURRENT_BASE'] = TARGET
+        self.capture(valid=False)
+        self.env['MIXYARD_CURRENT_BASE'] = self.actual_base
+        m = self.capture()
+        self.assertEqual(m['checkout_kind'], 'source')
+        self.assertEqual(m['source_head'], self.executed)
+        self.assertEqual(m['declared_base'], self.actual_base)
+        self.assertEqual(m['target_base'], newer_target)
+        self.assertEqual(m['source_tree'], m['executed_tree'])
+        self.assertIs(m['source_contains_declared_base'], True)
+        self.assertNotIn(f'{SCOPE}/later-main.txt', m['source_sha256'])
+
     def test_direct_source_must_contain_declared_base(self):
         self.git('checkout', '--quiet', '--detach', self.source)
         self.env['MIXYARD_CURRENT_BASE'] = self.actual_base

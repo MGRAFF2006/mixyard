@@ -104,6 +104,20 @@ source tree. A direct source checkout instead requires the declared base to be
 an ancestor of both the source and fetched target; it qualifies only that source
 tree, without claiming coverage of later target changes.
 
+Native artifact qualification is scheduled for actual PR events and main pushes.
+Feature pushes do not schedule a redundant direct-source artifact job; they
+qualify only through their PR's executed merge and independently fetched target.
+A main push binds its exact event `before` SHA as the declared integrated baseline,
+not the main tip freshly fetched later by a queued job. The source must contain
+that real previous-main baseline, which must also be approved by the fresh target.
+The artifact and hashes cover the pushed source only; later main commits are not
+claimed tested. Manual artifact qualification is limited to main and uses that
+event's exact main SHA as its declared baseline. Feature-branch manual runs may
+exercise Git fixtures but skip native qualification; a skipped job is not proof.
+Zero/missing/invalid baseline objects still fail closed; no arbitrary ancestor is
+selected to make a source qualify. PR declarations remain the event's base SHA,
+with exact actual executed merge parents and independently fetched target checks.
+
 The environment inputs are `MIXYARD_SOURCE_HEAD` (default `HEAD`),
 `MIXYARD_CURRENT_BASE` (the event's declared base SHA, default
 `refs/remotes/origin/main`), and `MIXYARD_TARGET_BASE_REF` (default

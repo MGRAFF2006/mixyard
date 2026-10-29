@@ -3,6 +3,7 @@ name: macOS input publication artifact (no HAL execution)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'adapters/macos/virtual-input/**'
       - 'adapters/macos/input-broker/**'
@@ -30,11 +31,14 @@ jobs:
   artifact:
     name: Apple ABI and authenticated anonymous XPC fixture
     needs: provenance
+    # Feature branches qualify through the actual PR test merge, not a second
+    # direct checkout that cannot contain a subsequently advanced main.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: macos-latest
     timeout-minutes: 10
     env:
       MIXYARD_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-      MIXYARD_CURRENT_BASE: ${{ github.event.pull_request.base.sha || 'refs/remotes/origin/main' }}
+      MIXYARD_CURRENT_BASE: ${{ github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before) || github.sha }}
       MIXYARD_TARGET_BASE_REF: ${{ format('refs/remotes/origin/{0}', github.event.pull_request.base.ref || 'main') }}
     steps:
       - uses: actions/checkout@v4
