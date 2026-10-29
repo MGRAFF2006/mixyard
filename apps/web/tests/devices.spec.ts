@@ -94,6 +94,22 @@ test('an inventory-only import guards close after its paste field clears and on 
   expect(await page.evaluate(() => !window.dispatchEvent(new Event('beforeunload', { cancelable: true })))).toBe(true)
 })
 
+test('the original host-held Api disconnect clears UI and native authority without affecting another target', async ({ page }) => {
+  await fixture(page, true)
+  await page.getByRole('button', { name: 'Validate config', exact: true }).click()
+  await expect(page.getByText('Core validation passed for the current config.', { exact: false })).toBeVisible()
+  await page.evaluate(() => window.deviceHarness.disconnect('A'))
+  await expect(page.getByRole('region', { name: 'Management target', exact: true })).toContainText('Disconnected / authority unconfirmed')
+  await expect(page.getByRole('button', { name: 'Save draft', exact: true })).toBeDisabled()
+  await expect(page.getByText('Core validation passed for the current config.', { exact: false })).toHaveCount(0)
+  expect(await page.evaluate(() => window.deviceHarness.states.at(-1))).toMatchObject({ connected: false, deviceId: null, authorityId: null })
+  await switchTo(page, 'B')
+  await expect(page.getByRole('button', { name: 'Save draft', exact: true })).toBeEnabled()
+  await page.evaluate(() => window.deviceHarness.disconnect('A'))
+  await expect(page.getByRole('region', { name: 'Management target', exact: true })).toContainText('Device B · Authority B-boot')
+  expect(await page.evaluate(() => window.deviceHarness.states.at(-1))).toMatchObject({ connected: true, deviceId: 'B', authorityId: 'B-boot' })
+})
+
 test('A/B retain complete drafts and invalid settings DOM; in-flight save stays with A and no stale state reaches native host', async ({ page }) => {
   const f = await fixture(page)
   expect(await page.evaluate(() => window.deviceHarness.hasUnsaved())).toBe(false)
