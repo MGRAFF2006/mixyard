@@ -19,7 +19,7 @@ Use an x64 Developer PowerShell, from the repository root:
 
 ```powershell
 cmake -S adapters/windows -B adapters/windows/build -A x64
-cmake --build adapters/windows/build --config Release --target mixyard-windows-probe mixyard-windows-model-check mixyard-inventory-check
+cmake --build adapters/windows/build --config Release --target mixyard-windows-probe mixyard-windows-model-check mixyard-inventory-check mixyard-windows-worker-check mixyard-windows-worker-sdk-check
 ctest --test-dir adapters/windows/build -C Release --output-on-failure
 $probe = '.\adapters\windows\build\Release\mixyard-windows-probe.exe'
 & $probe snapshot
