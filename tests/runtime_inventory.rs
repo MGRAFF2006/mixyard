@@ -26,7 +26,12 @@ static NEXT: AtomicU32 = AtomicU32::new(0);
 fn process_stat(pid: u32) -> Option<String> {
     match fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(stat) => Some(stat),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e)
+            if e.kind() == std::io::ErrorKind::NotFound
+                || e.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            None
+        }
         Err(e) => panic!("read stat for owned PID {pid}: {e}"),
     }
 }
@@ -344,6 +349,32 @@ fn disconnect_cancel_busy_and_shutdown_kill_only_owned_discovery_process_group()
     r.stop();
     r.reaped(pid);
     assert!(unrelated.0.try_wait().unwrap().is_none());
+}
+
+#[test]
+fn process_stat_accepts_concurrent_owned_reaping_as_absence() {
+    // /proc can report ESRCH as well as ENOENT while a task exits. Exercise the
+    // actual reader against owned kill/wait races, never an unrelated process.
+    for _ in 0..128 {
+        let mut child = sentinel();
+        let pid = child.0.id();
+        let (tx, rx) = mpsc::channel();
+        thread::scope(|scope| {
+            let killer = scope.spawn(move || {
+                rx.recv().unwrap();
+                child.0.kill().unwrap();
+                child.0.wait().unwrap();
+            });
+            tx.send(()).unwrap();
+            for _ in 0..10_000 {
+                if process_stat(pid).is_none() {
+                    break;
+                }
+            }
+            killer.join().unwrap();
+        });
+        assert!(process_stat(pid).is_none());
+    }
 }
 
 #[test]
