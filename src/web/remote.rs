@@ -21,7 +21,7 @@ impl Canonical {
         let store = profiles::Store::new(profile_path)?;
         store.read_bounded(MAX_RESPONSE)?;
         let assets = assets::Assets::load(assets)?;
-        let activation = activation::Service::start(profile_path, instance.clone());
+        let activation = activation::Service::start_remote(profile_path, instance.clone());
         Ok(Self {
             state: State {
                 authority: String::new(),

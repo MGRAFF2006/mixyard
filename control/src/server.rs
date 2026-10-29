@@ -341,7 +341,11 @@ fn reply(status: u16, body: Value) -> Reply {
 fn failure(mut error: Failure) -> Reply {
     if error.status >= 500 {
         eprintln!("Remote control {}: {}", error.code, error.message);
-        error.message = "The owning device could not complete this operation. Inspect its local diagnostics before retrying.".into();
+        error.message = if error.code == "operation-timeout" {
+            "The admitted operation may still complete. Reread authoritative state before retrying a mutation; never replay automatically."
+        } else {
+            "The owning device could not complete this operation. Inspect its local diagnostics before retrying."
+        }.into();
     }
     reply(error.status, json!({"error":error}))
 }
