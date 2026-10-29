@@ -5,7 +5,7 @@ use std::{
     collections::BTreeMap,
     io::{BufRead, Write},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
@@ -13,6 +13,8 @@ use std::{
 struct TestVault {
     values: Arc<Mutex<BTreeMap<String, String>>>,
     fail: Arc<AtomicBool>,
+    fail_write_at: Arc<AtomicUsize>,
+    writes: Arc<AtomicUsize>,
 }
 impl Vault for TestVault {
     fn read(&self, key: &str) -> Result<Option<String>, String> {
@@ -23,7 +25,8 @@ impl Vault for TestVault {
         }
     }
     fn write(&self, key: &str, value: &str) -> Result<(), String> {
-        if self.fail.load(Ordering::SeqCst) {
+        let number = self.writes.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.fail.load(Ordering::SeqCst) || self.fail_write_at.load(Ordering::SeqCst) == number {
             Err("Injected vault unavailable".into())
         } else {
             self.values.lock().unwrap().insert(key.into(), value.into());
@@ -87,6 +90,14 @@ fn main() {
                     vault
                         .fail
                         .store(value["fail"].as_bool().unwrap(), Ordering::SeqCst);
+                    Ok(json!({"injected":true}))
+                }
+                "vault-write-fail" => {
+                    vault.writes.store(0, Ordering::SeqCst);
+                    vault.fail_write_at.store(
+                        value["at"].as_u64().ok_or("Missing write index")? as usize,
+                        Ordering::SeqCst,
+                    );
                     Ok(json!({"injected":true}))
                 }
                 "platform-vault-unavailable" => {

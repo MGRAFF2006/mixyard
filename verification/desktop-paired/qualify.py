@@ -51,7 +51,7 @@ class Harness:
     def close(self):
         self.process.stdin.close()
         self.process.wait(timeout=15)
-        assert self.process.returncode == 0, f'Owned service exit {self.process.returncode}: ' + self.process.stderr.read()
+        assert self.process.returncode == 0, f'Owned native harness exit {self.process.returncode}: ' + self.process.stderr.read()
 
 
 class Service:
@@ -204,6 +204,19 @@ def qualify(args):
             assert 'credential' not in target_a and 'credential' not in target_b
             assert len(harness.ok('list')) == 2
             results.append('pair actual rcgen service using narrow OOB trust anchor; failed storage probe preserves invitation; no credential in IPC')
+            failure = Service(args.service, root / 'storage-failure', args.assets); services.append(failure)
+            harness.ok('vault-write-fail', at=2)  # probe succeeds; credential write after real pairing fails
+            failed = harness.call('pair', endpoint=failure.endpoint, name='failed secure write', invitation=failure.invite)
+            assert 'error' in failed and 'consumed' in failed['error'].lower()
+            harness.ok('vault-write-fail', at=0)
+            assert 'error' in harness.call('pair', endpoint=failure.endpoint, name='no invitation replay', invitation=failure.invite)
+            assert len(harness.ok('list')) == 2
+            failure.stop()
+            # Owning fixture inspects only its own private state to revoke the stranded synthetic controller.
+            state = json.loads((failure.state / 'state.json').read_text())
+            stranded = next(value['credentialId'] for value in state['credentials'].values() if value['name'] == 'failed secure write')
+            failure.cli('revoke', '--credential-id', stranded)
+            results.append('post-pair secure write failure never claims saved authority; consumed invitation is not replayed; owning fixture revokes stranded controller')
             generation, session = opened(harness, target_a)
             config = json.loads((Path(args.assets).parent / 'src' / 'example-config.json').read_text())
             saved = request(harness, target_a, generation, session, '/api/profiles/edit',
@@ -261,7 +274,7 @@ def qualify(args):
                     return 200, json.dumps({'deviceId': synthetic_id, 'credentialId': 'f' * 64,
                                              'credential': 'a' * 64, 'permissions': ['view', 'settings']})
                 if route == '/control/session':
-                    return 200, json.dumps({'deviceId': synthetic_id, 'authorityId': authority, 'revision': 0,
+                    return 200, json.dumps({'deviceId': '0' * 64 if mode[0] == 'wrong-identity' else synthetic_id, 'authorityId': authority, 'revision': 0,
                                              'permissions': ['view', 'settings'], 'backendAvailable': False, 'audioApplied': False})
                 if mode[0] == 'redirect':
                     return 307, '{}'
@@ -276,6 +289,8 @@ def qualify(args):
                 mode[0] = 'redirect'
                 assert 'error' in harness.call('request', id=synthetic_id, generation=gs, raw=raw)
                 assert len(received) == 4  # pair, session, raw, redirect; no redirect destination call
+                mode[0] = 'wrong-identity'
+                assert 'error' in harness.call('open', id=synthetic_id)
                 harness.ok('forget', id=synthetic_id)
             results.append('exact certificate mismatch before secret HTTP; native raw request/reply -0 and finite bits; redirect denied without retry')
             harness.ok('forget', id=target_a['deviceId'])
