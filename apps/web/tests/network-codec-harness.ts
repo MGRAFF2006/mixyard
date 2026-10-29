@@ -7,13 +7,13 @@ import { codecFixture, unavailableWideSource } from './network-codec-fixture.ts'
 import type { CodecBinding, CodecConfig } from '../src/network-codecs.ts'
 type Exposed = { hasUnsavedDrafts(): boolean; navigate(page: 'Network codecs'): void }
 declare global {
-  interface Window { codecHarness: { hasUnsaved(): boolean; disconnect(): void; advance(): void; hold(): void; release(): void; mode(value: 'fixture' | 'unavailable' | 'error' | 'busy-send' | 'different-plan' | 'wide-source'): void; calls: { binding: Readonly<CodecBinding>; request: Readonly<CodecConfig> }[] } }
+  interface Window { codecHarness: { hasUnsaved(): boolean; disconnect(): void; advance(): void; hold(): void; release(): void; mode(value: 'fixture' | 'unavailable' | 'error' | 'busy-send' | 'different-plan' | 'wide-source' | 'whitespace-source'): void; calls: { binding: Readonly<CodecBinding>; request: Readonly<CodecConfig> }[] } }
 }
 export function mount() {
   const element = document.querySelector('#app') as HTMLElement & { __vue_app__?: VueApp }
   element.__vue_app__?.unmount()
   let held = false, release: (() => void) | null = null
-  let mode: 'fixture' | 'unavailable' | 'error' | 'busy-send' | 'different-plan' | 'wide-source' = 'fixture'
+  let mode: 'fixture' | 'unavailable' | 'error' | 'busy-send' | 'different-plan' | 'wide-source' | 'whitespace-source' = 'fixture'
   const calls: { binding: Readonly<CodecBinding>; request: Readonly<CodecConfig> }[] = []
   const targets = ['A', 'B'].map(id => {
     const api = Api.forControl(async (path, init) => {
@@ -27,6 +27,13 @@ export function mount() {
       if (held) await new Promise<void>(resolve => { release = resolve }) // Deliberately ignore abort to exercise stale completion guards.
       if (mode === 'error') throw Error('Fixture capability service unavailable')
       if (mode === 'wide-source') return unavailableWideSource(binding, request)
+      if (mode === 'whitespace-source') {
+        const result = unavailableWideSource(binding, request)
+        result.originalSpec.name = ' '
+        result.originalSpec.channels[0] = '\u00a0'
+        result.originalSpec.provenance.sources[0]!.groups = ['\u3000']
+        return result
+      }
       const result = codecFixture(binding, request)
       if (mode === 'unavailable') { result.capability.available = false; result.capability.unavailableReason = 'Exact codec/consent not granted by this fixture'; result.timeline = null }
       if (mode === 'busy-send' || mode === 'different-plan') {

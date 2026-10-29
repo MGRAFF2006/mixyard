@@ -132,18 +132,31 @@ function readBinding(value: unknown): CodecBinding {
   integer(v.revision); integer(v.epoch); return v as CodecBinding
 }
 function stringList(value: unknown): string[] { return list(value).map(nonempty) }
+function sourceIdentifier(value: unknown): string {
+  const id = text(value)
+  // Match protocol::identifier, not human-facing required text: whitespace is
+  // a valid literal identity. Rust strings cannot contain lone UTF-16 surrogates.
+  if (!id.length || new TextEncoder().encode(id).length > 128 || /[\p{Cc}\p{Cs}]/u.test(id)) throw Error('Expected a nonempty, control-free source identifier of at most 128 UTF-8 bytes.')
+  return id
+}
 function readSpec(value: unknown): OriginalSpec {
   const v = exact(value, ['stream', 'name', 'codec', 'sample_rate', 'channels', 'frames_per_packet', 'provenance'])
-  decimalU64(v.stream); nonempty(v.name)
+  decimalU64(v.stream); sourceIdentifier(v.name)
   if (!['raw-s16-le', 'raw-s24-le', 'raw-s32-le', 'raw-f32-le', 'raw-f64-le'].includes(text(v.codec))) throw Error('Expected the original raw PCM format.')
   integer(v.sample_rate, 1, 0xffffffff); integer(v.frames_per_packet, 1, 65535)
-  const channels = stringList(v.channels)
+  const channels = list(v.channels).map(sourceIdentifier)
   // This is the admitted original descriptor, not codec-worker admission.
   // An unsupported worker must still report its exact source and reason.
   if (!channels.length || new Set(channels).size !== channels.length) throw Error('Expected unique ordered source channels.')
-  const p = exact(v.provenance, ['sources', 'visited_peers']), sources = list(p.sources), peers = stringList(p.visited_peers), identities = new Set<string>()
-  if (!sources.length || !peers.length || new Set(peers).size !== peers.length) throw Error('Incomplete or repeated source provenance.')
-  for (const source of sources) { const s = exact(source, ['peer', 'source', 'groups']); const id = codecSignature([nonempty(s.peer), nonempty(s.source)]); stringList(s.groups); if (identities.has(id)) throw Error('Duplicate source provenance.'); identities.add(id) }
+  const p = exact(v.provenance, ['sources', 'visited_peers']), sources = list(p.sources), peers = list(p.visited_peers).map(sourceIdentifier), peerIds = new Set(peers), identities = new Set<string>()
+  if (!sources.length || !peers.length || peerIds.size !== peers.length) throw Error('Incomplete or repeated source provenance.')
+  for (const source of sources) {
+    const s = exact(source, ['peer', 'source', 'groups']), peer = sourceIdentifier(s.peer), id = codecSignature([peer, sourceIdentifier(s.source)]), groups = list(s.groups).map(sourceIdentifier)
+    if (!peerIds.has(peer)) throw Error('Source origin is missing from the declared provenance path.')
+    if (new Set(groups).size !== groups.length) throw Error('Duplicate source group.')
+    if (identities.has(id)) throw Error('Duplicate source provenance.')
+    identities.add(id)
+  }
   // protocol::Spec bounds its serialized metadata to CONTROL_LIMIT / 2 (4096).
   // This DTO quotes the full-u64 stream; the Rust wire field is a JSON integer.
   // Exclude only those two quotes, without rounding the identifier through Number.

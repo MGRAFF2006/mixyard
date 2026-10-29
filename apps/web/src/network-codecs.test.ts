@@ -92,6 +92,33 @@ test('unavailable codec reports retain canonical source metadata above the worke
   assert.throws(() => readCodecEvidence(boundary, codecBinding, rawIntent), /canonical 4096-byte limit/)
 })
 
+test('original descriptor identifiers preserve canonical whitespace and UTF-8 boundaries without accepting malformed provenance', () => {
+  const variants = [
+    (f: CodecEvidence) => { f.originalSpec.name = ' ' },
+    (f: CodecEvidence) => { f.originalSpec.channels[0] = '\u00a0' },
+    (f: CodecEvidence) => { f.originalSpec.provenance.sources[0]!.groups = ['\u3000'] },
+    (f: CodecEvidence) => { f.originalSpec.provenance.sources[0]!.source = '\u2028' },
+    (f: CodecEvidence) => { f.originalSpec.provenance.sources[0]!.peer = ' '; f.originalSpec.provenance.visited_peers[0] = ' ' },
+    (f: CodecEvidence) => { f.originalSpec.name = 'é'.repeat(64) },
+    (f: CodecEvidence) => { f.originalSpec.name = '😀'.repeat(32) },
+  ]
+  for (const mutate of variants) {
+    const fixture = unavailableWideSource(); mutate(fixture)
+    assert.deepEqual(readCodecEvidence(JSON.stringify(fixture), codecBinding, rawIntent), fixture)
+  }
+  for (const name of ['', 'a\n', '\u007f', '\u0085', '\ud800', 'é'.repeat(65), '😀'.repeat(33)]) {
+    const fixture = unavailableWideSource(); fixture.originalSpec.name = name
+    assert.throws(() => readCodecEvidence(fixture, codecBinding, rawIntent))
+  }
+  for (const mutate of [
+    (f: CodecEvidence) => { f.originalSpec.provenance.sources[0]!.groups = ['group', 'group'] },
+    (f: CodecEvidence) => { f.originalSpec.provenance.sources[0]!.peer = 'missing-origin' },
+  ]) {
+    const fixture = unavailableWideSource(); mutate(fixture)
+    assert.throws(() => readCodecEvidence(fixture, codecBinding, rawIntent))
+  }
+})
+
 function pending() { let resolve!: (value: unknown) => void; const promise = new Promise<unknown>(done => { resolve = done }); return { promise, resolve } }
 function workspace() { const s = new CodecWorkspace(); s.setBinding(codecBinding); s.selected.form = formFromConfig(rawIntent); s.bind(); return s }
 

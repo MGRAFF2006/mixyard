@@ -114,6 +114,11 @@ Original Spec metadata retains the canonical transport
 its string-safe stream ID is counted as the original numeric JSON field without
 rounding it through JavaScript Number.
 A claimed available plan exceeding its own reported channel limit is rejected.
+Descriptor names, channels and provenance identifiers follow the canonical
+nonempty, control-free, 128 UTF-8 byte identifier bound. Literal whitespace is
+preserved; it is never trimmed or normalized. Invalid Unicode, duplicate groups
+or an origin absent from the declared provenance path reject. These rules apply
+only to source metadata, independently of management identity/authentication.
 
 Reports qualify only **local worker construction + exact local audio grant +
 active TLS**. `agreementState` separately reports `local-capability-only`,

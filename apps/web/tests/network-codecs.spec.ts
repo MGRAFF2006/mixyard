@@ -105,6 +105,22 @@ test('an unsupported wide original source retains its unavailable reason and all
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })
 
+test('canonical whitespace identifiers preserve the complete unavailable source report without trimming', async ({ page }) => {
+  await open(page, true); const p = panel(page)
+  await fillIds(page); await p.getByRole('button', { name: 'Bind for capability reads' }).click()
+  await page.evaluate(() => window.codecHarness.mode('whitespace-source'))
+  await p.getByRole('button', { name: 'Probe exact intent' }).click()
+  await expect(p.getByText('Exact plan unavailable', { exact: true })).toBeVisible()
+  await expect(p.getByText('Fixture codec worker supports at most 128 source channels; this canonical source has 129.', { exact: true })).toBeVisible()
+  await expect(p.getByRole('alert')).toHaveCount(0)
+  const facts = p.locator('.codec-facts dd')
+  expect(await facts.nth(0).textContent()).toBe('  / raw-f64-le / 48000 Hz')
+  expect(await facts.nth(1).textContent()).toContain('\u00a0, CH-1')
+  await p.getByText('Expert constraints, budgets and provenance', { exact: true }).click()
+  await expect(p.getByText('"\u3000"', { exact: false })).toBeVisible()
+  await expect(p.getByRole('button', { name: 'Apply to live stream' })).toBeDisabled()
+})
+
 test('real workspace retains hidden target drafts and discards stale fixture capability after session revision, switch and revocation', async ({ page }) => {
   await open(page, true); const p = panel(page)
   expect(await page.evaluate(() => window.codecHarness.hasUnsaved())).toBe(false)
