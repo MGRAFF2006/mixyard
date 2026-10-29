@@ -30,11 +30,12 @@ void scrub(Worker* value) {
     for (const auto& input : value->inputs)
         if (input.bytes) std::memset(const_cast<uint8_t*>(input.bytes), 0, input.byte_count);
     for (size_t i = 0; i < value->outputs.size(); ++i)
-        std::memset(value->outputs[i], 0, value->output_sizes[i]);
+        if (value->outputs[i]) std::memset(value->outputs[i], 0, value->output_sizes[i]);
 }
 }
 extern "C" JNIEXPORT jlong JNICALL
 Java_org_mixyard_mobile_host_NativeHostWorker_create(JNIEnv* env, jobject, jbyteArray request) {
+    try {
     if (!request) return 0;
     const auto size = env->GetArrayLength(request);
     if (size <= 0 || size > 1048576) return 0;
@@ -48,9 +49,11 @@ Java_org_mixyard_mobile_host_NativeHostWorker_create(JNIEnv* env, jobject, jbyte
     value->outputs.resize(mx_host_output_count(value->host));
     value->output_sizes.resize(value->outputs.size());
     return reinterpret_cast<jlong>(value.release());
+    } catch (...) { return 0; } // Allocation failure cannot unwind across JNI.
 }
 extern "C" JNIEXPORT jstring JNICALL
 Java_org_mixyard_mobile_host_NativeHostWorker_info(JNIEnv* env, jobject, jlong handle, jboolean output, jint index) {
+    try {
     auto* value = worker(handle);
     if (!value || index < 0) return nullptr;
     const auto get = output ? mx_host_output_info : mx_host_source_info;
@@ -70,6 +73,7 @@ Java_org_mixyard_mobile_host_NativeHostWorker_info(JNIEnv* env, jobject, jlong h
     const auto charset = env->NewStringUTF("UTF-8");
     if (!charset) return nullptr;
     return static_cast<jstring>(env->NewObject(string_class, constructor, array, charset));
+    } catch (...) { return nullptr; }
 }
 extern "C" JNIEXPORT jint JNICALL
 Java_org_mixyard_mobile_host_NativeHostWorker_bindInput(JNIEnv* env, jobject, jlong handle, jint index, jobject buffer, jint encoding, jint rate, jint channels) {
