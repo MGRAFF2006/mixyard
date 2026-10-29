@@ -196,3 +196,18 @@ binding/epoch replay rejection, expiry, terminal overflow and sibling isolation.
 The actual distro SPA probe also exercises the same copy helper after upstream
 reuse. These new SDK and full private-graph paths must still execute on the
 hosted runner; local portable results are not native-graph qualification.
+
+Whole-producer teardown is distinct from the tail-loss lane's single program
+port removal. The normal scenario first closes admission, invokes the actual
+exclusive DataLoop owner to revoke the host and scrub all owned consumer
+copies, and receives that operation's acknowledgment before destroying the
+producer filter. Future producer callbacks stop borrowing ports; the old host
+cannot warm or readmit. The scenario separately requires the actual registry
+node-removal event and quiet native output. Admitted EMPTY buffers elsewhere
+still fail strict validation: they are never accepted as PCM or startup silence.
+`sourceStopBeforeDestroy`, `sourceRemovalObserved` and `sourceStopFrame` record
+this ordered boundary. Already-submitted native buffers remain a separate
+boundary. The linked no-PipeWire oracle verifies nonzero final queued PCM
+survives host-only revocation, then the production owner-stop operation scrubs
+all slots and metadata without callback heap operations. Full native ordering
+still requires the hosted private-graph run; no local SDK execution is claimed.

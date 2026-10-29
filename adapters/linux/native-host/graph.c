@@ -23,6 +23,7 @@
 #include "native_format.h"
 #include "native_diagnostics.h"
 #include "consumer_copy.h"
+#include "generation_stop.h"
 
 #define ROUTES 3
 #define FRAMES 128
@@ -64,7 +65,10 @@ struct app {
     struct mx_consumer_copy consumers[ROUTES]; // exclusive DataLoop, never native pointers
     char bound_outputs[ROUTES][192]; // control-prepared immutable compiled endpoint IDs
     uint64_t native_frame, warming_generation, control_generation;
-    bool ever_admitted;
+    bool ever_admitted, producer_stopped; // exclusive DataLoop owner
+    uint64_t source_stop_frame;
+    uint32_t stopped_source_node;
+    bool source_stop_before_destroy, source_removal_observed; // main-loop owner
     _Atomic bool source_headers_ready;
     _Atomic uint64_t consumer_epochs[ROUTES], consumer_dropped[ROUTES], consumer_closed[ROUTES];
     _Atomic uint64_t consumer_prior_epoch[ROUTES];
@@ -323,6 +327,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
     if (pos->clock.duration != FRAMES || pos->clock.rate.num != 1 || pos->clock.rate.denom != 48000 ||
         pos->clock.id == SPA_ID_INVALID || pos->clock.nsec > INT64_MAX) { fail(a, 20); return; }
     if (e->role == 0) {
+        if (a->producer_stopped) return; // owner acknowledged no further port borrows
         if (atomic_load_explicit(&a->phase, memory_order_relaxed) == 3 && atomic_load(&a->overflow_frame) == UINT64_MAX)
             atomic_store_explicit(&a->overflow_frame, pos->clock.position, memory_order_release);
         for (unsigned s = 0; s < ROUTES; ++s) {
@@ -342,7 +347,8 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
     atomic_store_explicit(&a->clock_id, pos->clock.id, memory_order_release);
     unsigned command = atomic_load_explicit(&a->command, memory_order_acquire);
     if (command != a->last_ack) {
-        if (a->host && (command == 2 || command == 4)) mx_host_revoke(a->host);
+        if (command == 2 || command == 4)
+            mx_native_generation_stop(a->host, a->consumers, ROUTES);
         a->last_ack = command;
         atomic_store_explicit(&a->command_done, command, memory_order_release);
     }
@@ -511,6 +517,7 @@ static void global_removed(void *userdata, uint32_t id) {
     struct app *a = userdata;
     for (size_t i = 0; i < a->global_count; ++i) if (a->globals[i].id == id) {
         if (a->linked && !a->expected_loss && id != a->removed_source_port) fail(a, 45);
+        if (id == a->stopped_source_node) a->source_removal_observed = true;
         a->globals[i].id = SPA_ID_INVALID;
         if (id == a->removed_source_port) atomic_store_explicit(&a->source_removed, true, memory_order_release);
         if (a->linked && id != a->removed_source_port) atomic_store_explicit(&a->command, 4, memory_order_release);
@@ -592,7 +599,7 @@ static int begin_warm(struct spa_loop *loop, bool async, uint32_t seq, const voi
     (void)loop; (void)async; (void)seq; (void)data; (void)size;
     struct warm_request *r = userdata;
     struct app *a = r->a;
-    if (r->generation <= a->generation || atomic_load(&a->error) ||
+    if (a->producer_stopped || r->generation <= a->generation || atomic_load(&a->error) ||
         (a->host && atomic_load_explicit(&a->command, memory_order_acquire) == 1)) return -EINVAL;
     // Explicit control admission of a NEW candidate; the old host stays revoked.
     if (a->warming_generation != r->generation) {
@@ -755,6 +762,42 @@ static bool verify_quiet(struct app *a) {
     a->quiet_started = false;
     return true;
 }
+struct source_stop_request { struct app *a; bool complete; };
+static int stop_whole_producer(struct spa_loop *loop, bool async, uint32_t seq,
+        const void *data, size_t size, void *userdata) {
+    (void)loop; (void)async; (void)seq; (void)data; (void)size;
+    struct source_stop_request *request = userdata;
+    struct app *a = request->a;
+    if (!pw_data_loop_in_thread(a->data_loop) || !a->host || a->producer_stopped ||
+        atomic_load_explicit(&a->command, memory_order_acquire) != 4) return -EINVAL;
+    // New commits were closed before invocation. The actual shared owner now
+    // revokes histories and retires ALL application-owned queued PCM before
+    // control may destroy the native producer. No registry-notification race.
+    callback_owner = a;
+    if (a->last_ack != 4) mx_native_generation_stop(a->host, a->consumers, ROUTES);
+    a->producer_stopped = true; a->warming_generation = 0;
+    a->source_stop_frame = a->native_frame;
+    atomic_store_explicit(&a->source_headers_ready, false, memory_order_release);
+    a->last_ack = 4;
+    atomic_store_explicit(&a->command_done, 4, memory_order_release);
+    callback_owner = NULL;
+    request->complete = true;
+    return 0;
+}
+static bool stop_and_destroy_producer(struct app *a) {
+    struct source_stop_request request = { .a = a };
+    if (!a->nodes[0].filter) return false;
+    uint32_t node = pw_filter_get_node_id(a->nodes[0].filter);
+    if (node == SPA_ID_INVALID) return false;
+    atomic_store_explicit(&a->command, 4, memory_order_release);
+    if (pw_data_loop_invoke(a->data_loop, stop_whole_producer, 0, NULL, 0, true, &request) < 0 ||
+        !request.complete) return false; // retain the actual native producer on failure
+    a->source_stop_before_destroy = true;
+    a->stopped_source_node = node;
+    a->expected_loss = true;
+    pw_filter_destroy(a->nodes[0].filter); a->nodes[0].filter = NULL;
+    return true;
+}
 static int mark_program_lost(struct spa_loop *loop, bool async, uint32_t seq, const void *data, size_t size, void *userdata) {
     (void)loop; (void)async; (void)seq; (void)data; (void)size;
     struct app *a = userdata;
@@ -845,12 +888,12 @@ static void timer(void *userdata, uint64_t expirations) {
         break;
     case 8:
         if (!progressed(a, 0, 64) || !progressed(a, 1, 64)) break;
-        a->expected_loss = true;
-        pw_filter_destroy(a->nodes[0].filter); a->nodes[0].filter = NULL;
+        if (!stop_and_destroy_producer(a)) { fail(a, 94); break; }
         a->stage = 9; a->ticks = 0;
         break;
     case 9:
-        if (atomic_load_explicit(&a->command_done, memory_order_acquire) != 4 || !verify_quiet(a)) break;
+        if (!a->source_stop_before_destroy || !a->source_removal_observed ||
+            atomic_load_explicit(&a->command_done, memory_order_acquire) != 4 || !verify_quiet(a)) break;
         a->stage = 10; pw_main_loop_quit(a->loop);
         break;
     case 11:
@@ -900,6 +943,8 @@ static void print_format_reports(const struct app *a) {
     }
     printf("],\"consumerRejectedPriorEpoch\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "]",
         atomic_load(&a->consumer_prior_epoch[0]), atomic_load(&a->consumer_prior_epoch[1]), atomic_load(&a->consumer_prior_epoch[2]));
+    printf(",\"sourceStopBeforeDestroy\":%s,\"sourceRemovalObserved\":%s,\"sourceStopFrame\":%" PRIu64,
+        a->source_stop_before_destroy ? "true" : "false", a->source_removal_observed ? "true" : "false", a->source_stop_frame);
     mx_native_print_first_failure("firstChunkFailure", &a->chunk_failure);
     mx_native_print_first_failure("firstSampleMismatch", &a->mismatch_failure);
     printf("}\n");
@@ -913,7 +958,8 @@ int main(int argc, char **argv) {
     }
     struct stat info;
     if (lstat(argv[1], &info) || !S_ISDIR(info.st_mode) || info.st_uid != getuid() || (info.st_mode & 077)) return 2;
-    struct app a = { .directory = argv[1], .removed_source_port = SPA_ID_INVALID, .warming_generation = 1 };
+    struct app a = { .directory = argv[1], .removed_source_port = SPA_ID_INVALID,
+        .stopped_source_node = SPA_ID_INVALID, .source_stop_frame = UINT64_MAX, .warming_generation = 1 };
     if (!strcmp(argv[2], "normal")) a.mode = NORMAL;
     else if (!strcmp(argv[2], "output-failure")) a.mode = OUTPUT_FAILURE;
     else if (!strcmp(argv[2], "tail-loss")) a.mode = TAIL_LOSS;

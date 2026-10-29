@@ -212,6 +212,9 @@ def run(binary, env, directory, cancel=False, server_loss=None, mode="normal"):
     if report["error"] or report["sampleMismatches"]:
         raise RuntimeError("native sample oracle/lifecycle failed: " + repr(report))
     if not cancel:
+        if mode == "normal" and (not report["sourceStopBeforeDestroy"] or
+                not report["sourceRemovalObserved"] or report["sourceStopFrame"] == 2**64-1):
+            raise RuntimeError("producer stop/owner retirement/registry removal not proved: " + repr(report))
         if mode == "normal" and (report["consumerTerminalClosures"][2] < 1 or
                 report["consumerDropped"][2] < 1 or
                 report["consumerTerminalClosures"][:2] != [0, 0] or

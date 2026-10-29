@@ -7,6 +7,7 @@
 #include "timeline.h"
 #include "destination.h"
 #include "consumer_copy.h"
+#include "generation_stop.h"
 
 static bool callback;
 static size_t heap_ops;
@@ -70,7 +71,8 @@ int main(int argc, char **argv) {
                 }
                 assert(owned->pcm[2*f+ch] == expected);
             }
-            assert(mx_consumer_pop(&consumers[r], 1));
+            // Leave real final PCM pending to exercise the source-stop boundary.
+            if (seq != 511) assert(mx_consumer_pop(&consumers[r], 1));
         }
         callback = false;
     }
@@ -86,8 +88,25 @@ int main(int argc, char **argv) {
     assert(!mx_graph_stamp(&timeline, 43, timeline.next_native_frame, 3000000000, 128, 1, &ignored));
     assert(!mx_graph_stamp(&timeline, 42, timeline.next_native_frame+128, 3000000000, 128, 1, &ignored));
     callback = true;
-    for (unsigned r = 0; r < 3; ++r) mx_consumer_close(&consumers[r]);
+    // Host revocation cannot recall independently owned destination copies.
+    // Prove that retained PCM exists, then use the same owner-stop operation
+    // as the real graph before acknowledging native producer destruction.
     mx_host_revoke(host);
+    bool retained_pcm = false;
+    for (unsigned r = 0; r < 3; ++r) {
+        assert(consumers[r].active && consumers[r].count == 1);
+        for (size_t f = 0; f < 256; ++f) if (consumers[r].slots[consumers[r].read].pcm[f] != 0.0)
+            retained_pcm = true;
+    }
+    assert(retained_pcm);
+    mx_native_generation_stop(host, consumers, 3);
+    for (unsigned r = 0; r < 3; ++r) {
+        assert(!consumers[r].active && consumers[r].count == 0);
+        const uint8_t *storage = (const uint8_t *)consumers[r].slots;
+        for (size_t i = 0; i < sizeof(consumers[r].slots); ++i) assert(storage[i] == 0);
+        const struct mx_consumer_packet *retired = (void *)1;
+        assert(mx_consumer_front(&consumers[r], 1, 1, 42, 3000000000, &retired) == MX_COPY_CLOSED && retired == NULL);
+    }
     const double *out = (double *)1; size_t count = 1;
     assert(mx_host_output(host, 0, &out, &count) == MX_INACTIVE && out == NULL && count == 0);
     for (size_t r = 0; r < 3; ++r) {
@@ -98,5 +117,5 @@ int main(int argc, char **argv) {
     callback = false;
     assert(heap_ops == 0);
     mx_host_destroy(host);
-    printf("PASS %s: 512 actual host blocks, owned destination copy/GAP, reusable staging, sibling/tail samples, epoch/clock/gap/revoke, zero callback heap operations\n", argv[2]);
+    printf("PASS %s: 512 actual host blocks, owned destination copy/GAP, reusable staging, sibling/tail samples, epoch/clock/gap/revoke, queued PCM stop scrub, zero callback heap operations\n", argv[2]);
 }
