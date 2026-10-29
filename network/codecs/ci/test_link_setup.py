@@ -53,14 +53,16 @@ class LinkSelectionTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temp.cleanup()
 
-    def invoke(self, output, a, b, kind="static", os_name="linux", target_env=""):
+    def invoke(self, output, a, b, kind="static", os_name="linux", target_env="",
+               names=("zstd", "opus")):
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("MIXYARD_", "CARGO_FEATURE_SYSTEM_"))}
         env.update(OUT_DIR=str(output), CARGO_CFG_TARGET_OS=os_name,
                    CARGO_CFG_TARGET_ENV=target_env, CARGO_FEATURE_SYSTEM_ZSTD="1",
                    CARGO_FEATURE_SYSTEM_OPUS="1", MIXYARD_ZSTD_LIB_DIR=str(a),
                    MIXYARD_OPUS_LIB_DIR=str(b), MIXYARD_ZSTD_LINK_KIND=kind,
-                   MIXYARD_OPUS_LINK_KIND=kind)
+                   MIXYARD_OPUS_LINK_KIND=kind, MIXYARD_ZSTD_LIB_NAME=names[0],
+                   MIXYARD_OPUS_LIB_NAME=names[1])
         return subprocess.run([str(self.binary)], env=env, capture_output=True,
                               text=True, timeout=10)
 
@@ -100,6 +102,29 @@ class LinkSelectionTests(unittest.TestCase):
                 missing = self.invoke(out, a, b, kind, os_name, target_env)
                 self.assertNotEqual(missing.returncode, 0)
                 self.assertIn("missing selected library", missing.stderr)
+
+    def test_custom_names_overlapping_platform_prefix_keep_correct_alias_names(self):
+        for name in ["lib", "ib", "b"]:
+            for os_name, target_env, kind, prefix, suffix in [
+                ("linux", "", "static", "lib", ".a"),
+                ("linux", "", "dylib", "lib", ".so"),
+                ("macos", "", "dylib", "lib", ".dylib"),
+                ("windows", "msvc", "dylib", "", ".lib"),
+            ]:
+                with self.subTest(name=name, os=os_name, kind=kind), tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp)
+                    a, b, out = (root / value for value in ["a", "b", "out"])
+                    for directory in [a, b, out]:
+                        directory.mkdir()
+                    (a / f"{prefix}{name}{suffix}").write_bytes(b"zstd")
+                    (b / f"{prefix}{name}{suffix}").write_bytes(b"opus")
+                    result = self.invoke(out, a, b, kind, os_name, target_env, (name, name))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    links = [line.rsplit("=", 1)[1] for line in result.stdout.splitlines()
+                             if line.startswith("cargo:rustc-link-lib=")]
+                    self.assertEqual(len(links), 2)
+                    self.assertEqual([(out / f"{prefix}{link}{suffix}").read_bytes() for link in links],
+                                     [b"zstd", b"opus"])
 
     def test_symlink_target_and_changed_contents_are_tracked(self):
         if os.name == "nt":

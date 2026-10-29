@@ -14,6 +14,16 @@ fn setting(key: &str, default: &str) -> String {
     }
 }
 
+fn library_file(name: &str, os: &str, target_env: &str, kind: &str) -> String {
+    match (os, target_env, kind) {
+        ("windows", "msvc", _) => format!("{name}.lib"),
+        (_, _, "static") => format!("lib{name}.a"),
+        ("windows", _, _) => format!("lib{name}.dll.a"),
+        ("macos", _, _) => format!("lib{name}.dylib"),
+        _ => format!("lib{name}.so"),
+    }
+}
+
 // Link only explicitly selected features. No probing, package installation or
 // fallback to a different codec/library is performed by the build.
 fn main() {
@@ -48,13 +58,7 @@ fn main() {
             );
             let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
             let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-            let file = match (os.as_str(), target_env.as_str(), kind.as_str()) {
-                ("windows", "msvc", _) => format!("{name}.lib"),
-                (_, _, "static") => format!("lib{name}.a"),
-                ("windows", _, _) => format!("lib{name}.dll.a"),
-                ("macos", _, _) => format!("lib{name}.dylib"),
-                _ => format!("lib{name}.so"),
-            };
+            let file = library_file(&name, &os, &target_env, &kind);
             let selected = path.join(&file);
             assert!(
                 selected.is_file(),
@@ -96,7 +100,9 @@ fn main() {
                 codec.to_ascii_lowercase(),
                 hash.finish()
             );
-            let alias = file.replacen(&name, &linked_name, 1);
+            // Construct the platform filename from its parts. A custom name
+            // such as "lib" can also occur in the platform's "lib" prefix.
+            let alias = library_file(&linked_name, &os, &target_env, &kind);
             let output =
                 env::var_os("OUT_DIR").expect("Cargo OUT_DIR required for explicit libraries");
             let output = Path::new(&output);

@@ -57,6 +57,21 @@ def verify_loaded_bytes(output, selected):
     return "".join(evidence)
 
 
+def stage_runtime_decoy(source, owned):
+    original = source.read_bytes()
+    if sys.platform == "darwin":
+        # Preserve the signed Mach-O layout. Appending data before codesign can
+        # violate its signature-at-EOF guard. A fresh, explicitly owned fixture
+        # identifier changes signature bytes while preserving code and ABI.
+        owned.write_bytes(original)
+        run(f"decoy-sign-{owned.name}", ["codesign", "--force", "--sign", "-",
+                                        "--identifier", "mixyard-owned-codec-fixture", str(owned)])
+    else:
+        owned.write_bytes(original + b"\nMIXYARD_OWNED_DECOY\n")
+    if owned.read_bytes() == original:
+        raise RuntimeError("owned decoy bytes did not change")
+
+
 def runtime_shadow_regression(exe, selected):
     """Owned ABI-compatible decoy with unchanged version, changed file bytes."""
     decoy = TARGET / "runtime-decoy"
@@ -75,11 +90,7 @@ def runtime_shadow_regression(exe, selected):
             raise RuntimeError(f"no runtime aliases for {codec}")
         for alias in matches:
             owned = decoy / alias.name
-            owned.write_bytes(source.read_bytes() + b"\nMIXYARD_OWNED_DECOY\n")
-            if sys.platform == "darwin":
-                # Apple Silicon requires a valid ad-hoc signature after changing
-                # owned Mach-O bytes; a loader signature error is not our oracle.
-                run(f"decoy-sign-{alias.name}", ["codesign", "--force", "--sign", "-", str(owned)])
+            stage_runtime_decoy(source, owned)
     env = dict(os.environ)
     loader = ("PATH" if os.name == "nt" else
               "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH")

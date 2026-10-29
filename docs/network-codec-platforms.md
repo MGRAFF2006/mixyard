@@ -109,7 +109,9 @@ of those loaded module files must equal the selected runtime bytes, or the
 executable itself for static linkage. Dynamic jobs additionally run that same
 production example with an owned modified library decoy, retaining the same
 codec version and ABI, and require the byte check to reject it. macOS decoy
-copies are ad-hoc signed after modification; no installed files are changed.
+copies preserve the original signed Mach-O layout and are re-signed ad-hoc with
+an owned fixture identifier to change signature bytes. Data is never appended
+before re-signing. No installed files are changed.
 Missing selected files are also tested after a successful cached Cargo check
 with unchanged settings/source, requiring build-script rejection. CPU observations remain Linux-only; no CPU numbers are
 invented for Windows/macOS.

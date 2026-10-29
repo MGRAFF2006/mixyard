@@ -33,6 +33,15 @@ class RuntimeEvidenceTests(unittest.TestCase):
             decoy.write_bytes(selected["OPUS"].read_bytes() + b"changed bytes")
             with self.assertRaisesRegex(RuntimeError, "runtime bytes differ from selected OPUS"):
                 module.verify_loaded_bytes(output.replace(str(selected["OPUS"]), str(decoy)), selected)
+            # Do not append anything to a signed Mach-O before codesign. The
+            # subprocess mock checks the exact input bytes/layout, then emulates
+            # changed signature bytes. Actual codesign/loader execution is CI.
+            def resign(label, args):
+                self.assertIn("--identifier", args)
+                self.assertEqual(decoy.read_bytes(), selected["OPUS"].read_bytes())
+                decoy.write_bytes(b"owned changed signature, unchanged code")
+            with patch.object(module.sys, "platform", "darwin"), patch.object(module, "run", resign):
+                module.stage_runtime_decoy(selected["OPUS"], decoy)
 
 
 if __name__ == "__main__":
