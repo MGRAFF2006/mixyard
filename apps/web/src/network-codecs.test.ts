@@ -81,6 +81,15 @@ test('unavailable codec reports retain canonical source metadata above the worke
       assert.throws(() => readCodecEvidence(malformed, codecBinding, rawIntent))
     }
   }
+  const boundary = unavailableWideSource()
+  const bytes = () => new TextEncoder().encode(JSON.stringify(boundary.originalSpec)).length - 2
+  while (bytes() < 4096 - 100) boundary.originalSpec.channels.push(`Tail-${boundary.originalSpec.channels.length}`)
+  const last = boundary.originalSpec.channels.length - 1
+  boundary.originalSpec.channels[last] += 'x'.repeat(4096 - bytes())
+  assert.equal(bytes(), 4096)
+  assert.deepEqual(readCodecEvidence(JSON.stringify(boundary), codecBinding, rawIntent), boundary)
+  boundary.originalSpec.channels[last] += 'x'
+  assert.throws(() => readCodecEvidence(boundary, codecBinding, rawIntent), /canonical 4096-byte limit/)
 })
 
 function pending() { let resolve!: (value: unknown) => void; const promise = new Promise<unknown>(done => { resolve = done }); return { promise, resolve } }

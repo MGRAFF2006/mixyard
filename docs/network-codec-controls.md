@@ -109,6 +109,10 @@ Original source metadata is distinct from worker admission: a canonical source
 with more than 128 channels remains visible in an unavailable report, with its
 full ordered labels and reason. The reported worker channel limit stays 128;
 this reader does not expand supported processing or silently convert a source.
+Original Spec metadata retains the canonical transport
+`CONTROL_LIMIT / 2` (4096-byte) bound, independently of codec-worker limits;
+its string-safe stream ID is counted as the original numeric JSON field without
+rounding it through JavaScript Number.
 A claimed available plan exceeding its own reported channel limit is rejected.
 
 Reports qualify only **local worker construction + exact local audio grant +

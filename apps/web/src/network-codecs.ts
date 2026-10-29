@@ -144,6 +144,10 @@ function readSpec(value: unknown): OriginalSpec {
   const p = exact(v.provenance, ['sources', 'visited_peers']), sources = list(p.sources), peers = stringList(p.visited_peers), identities = new Set<string>()
   if (!sources.length || !peers.length || new Set(peers).size !== peers.length) throw Error('Incomplete or repeated source provenance.')
   for (const source of sources) { const s = exact(source, ['peer', 'source', 'groups']); const id = codecSignature([nonempty(s.peer), nonempty(s.source)]); stringList(s.groups); if (identities.has(id)) throw Error('Duplicate source provenance.'); identities.add(id) }
+  // protocol::Spec bounds its serialized metadata to CONTROL_LIMIT / 2 (4096).
+  // This DTO quotes the full-u64 stream; the Rust wire field is a JSON integer.
+  // Exclude only those two quotes, without rounding the identifier through Number.
+  if (new TextEncoder().encode(JSON.stringify(v)).length - 2 > 4096) throw Error('Original source metadata exceeds the canonical 4096-byte limit.')
   return v as OriginalSpec
 }
 const capabilityKeys = ['version', 'request', 'available', 'agreementState', 'availabilityScope', 'unavailableReason', 'constraints', 'zstdVersion', 'opusVersion', 'maxRawBytes', 'maxEncodedBytes', 'maxEnvelopeBytes', 'maxFragmentsPerBlock', 'reservedWindowBytes', 'maxAggregateReassemblyBytes', 'maxWorkWallNanos', 'lookaheadFrames', 'contextBytes', 'measurements', 'measurementUnavailableReason', 'networkDelayNanos', 'physicalDelayNanos', 'delayUnavailableReason']
