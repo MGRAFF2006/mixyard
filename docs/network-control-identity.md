@@ -8,7 +8,7 @@ Control and network do not depend on the bridge; enabling management does not
 open an audio endpoint. This work depends on the production control export in
 [PR #76](https://github.com/MGRAFF2006/mixyard/pull/76), accepted at
 `b3731ce51af02cfbcd0ad6fb7080694f08b6a0bd` and included through a normal merge
-of main `89f25bd488f95e7fc7c21f614718bb04c6353154`. Acceptance of that store
+of main `d25239c8395dfb3e0b915a826a7dec6940ed9f05`. Acceptance of that store
 does not approve this bridge or grant audio authority.
 
 The caller supplies all of:
@@ -74,8 +74,12 @@ being converted into audio permissions. The proof checks:
 Current composition uses the accepted persisted-store implementation, including
 its Windows private-store admission and current validation/completion handling,
 plus the accepted raw network implementation. The bridge's production API and
-fixture are unchanged by the prerequisite refresh. The standalone lock is
-retained unchanged; local offline full metadata resolution reached an uncached
+fixture are unchanged by the prerequisite refresh. Cargo 1.99.0 `cargo update --offline --workspace --manifest-path
+network/control-identity/Cargo.toml` resolved zero package changes against the
+current merged manifests, preserving every locked package and checksum. The
+standalone lock is unchanged (SHA256
+`bc7c0f40c1ce0810a1cff6765dd414f6c04bd67f135979d3575797df46d187da`).
+Local offline full metadata resolution reached an uncached
 registry-source fetch (`atomic-waker`) and could not complete. Local no-dependency
 metadata and formatting checks pass, but do not replace full locked validation.
 
