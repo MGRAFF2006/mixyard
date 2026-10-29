@@ -209,8 +209,8 @@ class StreamSource:
     def _check(self):
         if self._stop.is_set():
             raise PermissionError("stream source closed")
-        self.session.require("live-send", self.endpoint, self.spec)
         self.check_lease()
+        self.session.require("live-send", self.endpoint, self.spec)
 
     def _serve(self, sock):
         pending = None
@@ -219,6 +219,7 @@ class StreamSource:
             self._check()
             if pending is not None:
                 self.validate_block(pending)
+            self.session.require("live-send", self.endpoint, self.spec)
 
         io = _Socket(sock, check)
         first, headers, length = _head(io, io.deadline, check, request_head=True)
@@ -312,26 +313,38 @@ class StreamSource:
 class StreamReceiver:
     """Synchronous owned receive worker; backpressure is the bounded callback.
 
-    write_block must perform RuntimeLease.accept(block, consumer), and must not
-    retain an unbounded queue. check_lease is rechecked during every socket wait.
+    accept_block must be the destination RuntimeLease.accept(block, consumer).
+    write_block is the bounded consumer, without another admission callback.
+    The protocol grant is rechecked inside accept, after owner validation and
+    immediately before the consumer. No unbounded queue may be retained.
     cancel is an optional caller-owned threading.Event. Cancellation/expiry raises
     PermissionError; disconnect/truncation raises ProtocolError or OSError.
     """
     def __init__(self, session):
         self.session = session
+        self._operation = threading.Lock()
 
-    def receive(self, resource, write_block, *, check_lease, block_factory, cancel=None):
+    def receive(self, resource, write_block, *, check_lease, accept_block, block_factory, cancel=None):
+        if not self._operation.acquire(blocking=False):
+            raise RuntimeError("HTTP receive worker busy; no connection or record consumed")
+        try:
+            return self._receive(resource, write_block, check_lease=check_lease,
+                                 accept_block=accept_block, block_factory=block_factory, cancel=cancel)
+        finally:
+            self._operation.release()
+
+    def _receive(self, resource, write_block, *, check_lease, accept_block, block_factory, cancel):
         if resource.wire != "raw":
             raise ProtocolError("leased streams require exact raw PCM")
-        if not all(callable(cb) for cb in (write_block, check_lease, block_factory)):
+        if not all(callable(cb) for cb in (write_block, check_lease, accept_block, block_factory)):
             raise TypeError("explicit runtime lease callbacks required")
         cancel = cancel if cancel is not None else threading.Event()
 
         def check():
             if cancel.is_set():
                 raise PermissionError("stream receive cancelled")
-            self.session.require("live-receive", resource.endpoint, resource.spec)
             check_lease()
+            self.session.require("live-receive", resource.endpoint, resource.spec)
 
         check()
         blocks = frames = pcm_bytes = 0
@@ -356,7 +369,12 @@ class StreamReceiver:
                 block = _decode(resource.spec, record, block_factory)
                 check()
                 callback_deadline = time.monotonic() + IO_TIMEOUT
-                write_block(block)
+                def deliver(admitted):
+                    if cancel.is_set():
+                        raise PermissionError("stream receive cancelled before consumer")
+                    self.session.require("live-receive", resource.endpoint, resource.spec)
+                    return write_block(admitted)
+                accept_block(block, deliver)
                 check()
                 if time.monotonic() >= callback_deadline:
                     raise TimeoutError("consumer callback deadline; delivery may have occurred")

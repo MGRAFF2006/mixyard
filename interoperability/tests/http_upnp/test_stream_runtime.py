@@ -20,6 +20,62 @@ except ModuleNotFoundError as exc:
 
 @unittest.skipIf(RuntimeLease is None, "parent runtime lease prerequisite absent")
 class RuntimeStreamTests(unittest.TestCase):
+    def test_session_revoked_during_actual_runtime_accept_never_invokes_consumer(self):
+        fmt = spec()
+        clock = ClockEvidence(7, "owned-epoch", 0, 1000000000)
+        binding = LeaseBinding("owned-fixture", fmt, 3, 5, "owned-epoch", 7, clock)
+        armed, calls, consumed = [False], [], []
+        with peer(response_head(fmt) + wire_record(fmt) + b"0\r\n\r\n") as ep:
+            incoming = sessions(fmt, ep)[1]
+            def owner():
+                if armed[0]:
+                    calls.append(1)
+                    # One transport check, then the actual lease.accept owner
+                    # callback immediately before consumer admission.
+                    if len(calls) >= 2:
+                        incoming.revoke()
+                return binding
+            lease = self.lease(fmt, owner=owner)
+            def factory(**value):
+                armed[0] = True
+                return LeasedBlock(**value)
+            with self.assertRaises(PermissionError):
+                StreamReceiver(incoming).receive(Resource(ep, "/stream", fmt), consumed.append,
+                    accept_block=lease.accept, check_lease=lease.check, block_factory=factory)
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertEqual(consumed, [])
+
+    def test_owner_revoking_source_grant_prevents_listener_creation(self):
+        fmt, ep = spec(), endpoint()
+        outgoing = sessions(fmt, ep)[0]
+        binding = LeaseBinding("owned-fixture", fmt, 3, 5, "owned-epoch", 7,
+                               ClockEvidence(7, "owned-epoch", 0, 1000000000))
+        armed, reads = [False], []
+        def owner():
+            if armed[0]:
+                outgoing.revoke()
+            return binding
+        lease = self.lease(fmt, owner=owner)
+        armed[0] = True
+        with self.assertRaises(PermissionError):
+            StreamSource(outgoing, fmt, lambda: reads.append(1), check_lease=lease.check,
+                         validate_block=lease.validate, endpoint=ep)
+        self.assertEqual(reads, [])
+
+    def test_receive_reentry_rejects_before_opening_another_connection(self):
+        fmt = spec()
+        with peer(response_head(fmt) + wire_record(fmt) + b"0\r\n\r\n") as ep:
+            lease, consumed = self.lease(fmt), []
+            receiver = StreamReceiver(sessions(fmt, ep)[1])
+            def sink(block):
+                consumed.append(block)
+                with self.assertRaisesRegex(RuntimeError, "worker busy"):
+                    receiver.receive(Resource(ep, "/stream", fmt), sink, accept_block=lease.accept,
+                                     check_lease=lease.check, block_factory=LeasedBlock)
+            result = receiver.receive(Resource(ep, "/stream", fmt), sink, accept_block=lease.accept,
+                                      check_lease=lease.check, block_factory=LeasedBlock)
+            self.assertEqual((result.blocks, len(consumed)), (1, 1))
+
     def lease(self, fmt, *, owner=None, lifetime=60):
         clock = ClockEvidence(7, "owned-epoch", 0, 1000000000)
         binding = LeaseBinding("owned-fixture", fmt, 3, 5, "owned-epoch", 7, clock)
@@ -51,7 +107,7 @@ class RuntimeStreamTests(unittest.TestCase):
                                   check_lease=source_lease.check, validate_block=source_lease.validate,
                                   endpoint=ep) as source:
                     result = StreamReceiver(receive).receive(
-                        source.resource, lambda b: destination_lease.accept(b, delivered.append),
+                        source.resource, delivered.append, accept_block=destination_lease.accept,
                         check_lease=destination_lease.check, block_factory=LeasedBlock)
                 self.assertEqual(result.blocks, 3)
                 self.assertEqual(delivered, original)
@@ -67,7 +123,7 @@ class RuntimeStreamTests(unittest.TestCase):
                 lease, delivered = self.lease(fmt), []
                 with self.assertRaises(PermissionError):
                     StreamReceiver(sessions(fmt, ep)[1]).receive(
-                        Resource(ep, "/stream", fmt), lambda b: lease.accept(b, delivered.append),
+                        Resource(ep, "/stream", fmt), delivered.append, accept_block=lease.accept,
                         check_lease=lease.check, block_factory=LeasedBlock)
                 self.assertEqual(delivered, [])
         for next_frame in (0, 40):
@@ -76,7 +132,7 @@ class RuntimeStreamTests(unittest.TestCase):
                 lease, delivered = self.lease(fmt), []
                 with self.assertRaises(PermissionError):
                     StreamReceiver(sessions(fmt, ep)[1]).receive(
-                        Resource(ep, "/stream", fmt), lambda b: lease.accept(b, delivered.append),
+                        Resource(ep, "/stream", fmt), delivered.append, accept_block=lease.accept,
                         check_lease=lease.check, block_factory=LeasedBlock)
                 self.assertEqual(len(delivered), 1)
 
@@ -102,7 +158,7 @@ class RuntimeStreamTests(unittest.TestCase):
                           endpoint=ep) as source:
             with self.assertRaises((ProtocolError, OSError)):
                 StreamReceiver(sessions(fmt, ep)[1]).receive(
-                    source.resource, lambda b: destination_lease.accept(b, consume),
+                    source.resource, consume, accept_block=destination_lease.accept,
                     check_lease=destination_lease.check, block_factory=LeasedBlock)
         self.assertEqual(len(delivered), 1)
         self.assertEqual(calls, [1])
@@ -125,7 +181,7 @@ class RuntimeStreamTests(unittest.TestCase):
             def run():
                 try:
                     StreamReceiver(sessions(fmt, ep)[1]).receive(
-                        Resource(ep, "/stream", fmt), lambda b: lease.accept(b, delivered.append),
+                        Resource(ep, "/stream", fmt), delivered.append, accept_block=lease.accept,
                         check_lease=lease.check, block_factory=LeasedBlock)
                 except Exception as exc:
                     errors.append(exc)
@@ -158,7 +214,7 @@ class RuntimeStreamTests(unittest.TestCase):
         with peer(response) as ep:
             with self.assertRaises(RuntimeError):
                 StreamReceiver(sessions(fmt, ep)[1]).receive(
-                    Resource(ep, "/stream", fmt), lambda b: lease.accept(b, fail),
+                    Resource(ep, "/stream", fmt), fail, accept_block=lease.accept,
                     check_lease=lease.check, block_factory=LeasedBlock)
         self.assertEqual(len(consumed), 1)
         with self.assertRaises(PermissionError):

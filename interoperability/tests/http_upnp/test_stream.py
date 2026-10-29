@@ -30,6 +30,11 @@ def spec(codec="raw-s24-le", *, rate=1000, frames=20, channels=("FR", "FL", "AUX
                                          "visited_peers": ["origin"]}})
 
 
+def admit(block, consumer):
+    """Transport-only double; actual RuntimeLease tests use lease.accept."""
+    return consumer(block)
+
+
 def sessions(fmt, ep):
     return (Session("origin", [Grant("live-send", ep, "sink", fmt)], consent=True),
             Session("sink", [Grant("live-receive", ep, "origin", fmt)], consent=True))
@@ -123,7 +128,7 @@ class StreamTests(unittest.TestCase):
     def receive(self, fmt, ep, sink, **kwargs):
         _, session = sessions(fmt, ep)
         return StreamReceiver(session).receive(Resource(ep, "/stream", fmt), sink,
-                                               check_lease=checked, block_factory=Block, **kwargs)
+                                               check_lease=checked, accept_block=admit, block_factory=Block, **kwargs)
 
     def test_unbounded_total_stream_preserves_all_raw_profiles_without_accumulation(self):
         for codec in ("raw-s16-le", "raw-s24-le", "raw-s32-le", "raw-f32-le", "raw-f64-le"):
@@ -158,7 +163,7 @@ class StreamTests(unittest.TestCase):
                 with StreamSource(send, fmt, read, check_lease=checked,
                                   validate_block=validated, endpoint=ep) as source:
                     result = StreamReceiver(receive).receive(source.resource, consume,
-                                                            check_lease=checked, block_factory=Block)
+                                                            check_lease=checked, accept_block=admit, block_factory=Block)
                     self.assertEqual(source.errors, 0)
                 self.assertEqual(result.blocks, count)
                 self.assertEqual(result.frames, next_frame)
@@ -184,7 +189,7 @@ class StreamTests(unittest.TestCase):
         with StreamSource(send, fmt, read, check_lease=checked,
                           validate_block=validated, endpoint=ep) as source:
             StreamReceiver(receive).receive(source.resource, lambda b: arrivals.append(time.monotonic()),
-                                            check_lease=checked, block_factory=Block)
+                                            check_lease=checked, accept_block=admit, block_factory=Block)
         self.assertEqual(len(arrivals), 5)
         self.assertGreaterEqual(arrivals[-1] - arrivals[0], 0.15)
         # The block after the delayed block still waits a frame period.
@@ -221,7 +226,7 @@ class StreamTests(unittest.TestCase):
         called = []
         with self.assertRaises(PermissionError):
             StreamReceiver(receive).receive(Resource(ep, "/stream", fmt), called.append,
-                                            check_lease=checked, block_factory=Block)
+                                            check_lease=checked, accept_block=admit, block_factory=Block)
         self.assertEqual(called, [])
 
     def test_source_revoke_during_cadence_stops_without_another_read(self):
@@ -242,7 +247,7 @@ class StreamTests(unittest.TestCase):
                           validate_block=validated, endpoint=ep) as source:
             with self.assertRaises((ProtocolError, OSError)):
                 StreamReceiver(receive).receive(source.resource, consume,
-                                                check_lease=checked, block_factory=Block)
+                                                check_lease=checked, accept_block=admit, block_factory=Block)
         self.assertEqual(len(received), 1)
         self.assertEqual(calls, [1])
 
@@ -369,7 +374,7 @@ class StreamTests(unittest.TestCase):
                 def run():
                     try:
                         StreamReceiver(receive).receive(Resource(ep, "/stream", fmt), delivered.append,
-                                                        check_lease=checked, block_factory=Block, cancel=cancel)
+                                                        check_lease=checked, accept_block=admit, block_factory=Block, cancel=cancel)
                     except Exception as exc:
                         failures.append(exc)
 
@@ -416,7 +421,7 @@ class StreamTests(unittest.TestCase):
                               validate_block=validated, endpoint=ep) as source:
                 started = time.monotonic()
                 result = StreamReceiver(receive).receive(source.resource, lambda b: None,
-                                                        check_lease=checked, block_factory=Block)
+                                                        check_lease=checked, accept_block=admit, block_factory=Block)
                 self.assertGreater(time.monotonic() - started, 0.3)
                 self.assertEqual(result.blocks, 16)
 
