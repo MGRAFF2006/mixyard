@@ -2,6 +2,7 @@
 import os
 import runpy
 import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 import subprocess
@@ -44,7 +45,10 @@ class SourceLinkTests(unittest.TestCase):
             argv = [str(root / 'verify-codec-source.py'), '--cache', str(cache),
                     '--target', str(target), '--features', 'system-zstd', '--test', 'codec_quic',
                     '--lib-test-filter', 'fragment_transport::codecs', '--clippy']
-            with patch.object(sys, 'argv', argv), patch('subprocess.run', side_effect=invoke):
+            # This mocked command proof owns synthetic storage, not the host's
+            # /dev/shm capacity (hosted runners commonly provide only 64 MiB).
+            with patch.object(sys, 'argv', argv), patch('subprocess.run', side_effect=invoke), \
+                    patch('shutil.disk_usage', return_value=SimpleNamespace(free=20 * 2**30)):
                 runpy.run_path(str(root / 'verify-codec-source.py'), run_name='__main__')
             stages = [command for command in calls if any(
                 str(argument).endswith(('codecs/src/lib.rs', 'src/lib.rs', 'tests/codec_quic.rs'))
@@ -53,6 +57,13 @@ class SourceLinkTests(unittest.TestCase):
             for command in stages:
                 self.assertIn('native=/selected path', command)
                 self.assertIn('static=selected_zstd', command)
+            # The production guard still rejects low space before invoking tools.
+            with patch.object(sys, 'argv', argv), patch('subprocess.run') as invoke, \
+                    patch('shutil.disk_usage', side_effect=lambda path: SimpleNamespace(
+                        free=64 * 2**20 if str(path) == '/dev/shm' else 20 * 2**30)):
+                with self.assertRaisesRegex(AssertionError, '/dev/shm below reserve'):
+                    runpy.run_path(str(root / 'verify-codec-source.py'), run_name='__main__')
+                invoke.assert_not_called()
 
     def test_actual_selector_custom_names_kind_feature_scope_and_removal(self):
         root = Path(__file__).resolve().parent
