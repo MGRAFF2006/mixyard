@@ -17,6 +17,7 @@ cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
 # Real plugin pool/alias counterexample; no context, server connection or devices.
 cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
   $(pkg-config --cflags libpipewire-0.3) \
+  -I"$root/adapters/engine/include" \
   "$root/adapters/linux/native-host/native_pool_check.c" \
   $(pkg-config --libs libpipewire-0.3) \
   -o "$MIXYARD_NATIVE_BUILD/native-pool-check"
