@@ -62,7 +62,7 @@ struct Fake {
     bool duplicate = false, missing = false, truncate = false, wrongInputRead = false;
     bool wrongBound = false, wrongMap = false, wrongLimit = false, eventOnStart = false;
     bool corruptClient = false, corruptAfterInitialize = false, wrongPropertySize = false;
-    bool suppressInputSet = false, startError = false;
+    bool suppressInputSet = false, startError = false, canonicalizeClient = false;
     unsigned stopFailures = 0;
     dispatch_semaphore_t entered = nullptr, release = nullptr;
 } g;
@@ -138,6 +138,11 @@ OSStatus set(AudioUnit u, AudioUnitPropertyID p, AudioUnitScope scope, AudioUnit
     } else if (p == kAudioUnitProperty_StreamFormat) {
         assert(scope == kAudioUnitScope_Input && bus == 0 && size == sizeof(g.client));
         g.client = *static_cast<const AudioStreamBasicDescription*>(value);
+        if (g.canonicalizeClient) {
+            g.client.mFormatFlags ^= kAudioFormatFlagIsNonInterleaved;
+            const auto lanes = (g.client.mFormatFlags & kAudioFormatFlagIsNonInterleaved) ? 1u : g.client.mChannelsPerFrame;
+            g.client.mBytesPerPacket = g.client.mBytesPerFrame = lanes * g.client.mBitsPerChannel / 8;
+        }
     } else if (p == kAudioOutputUnitProperty_ChannelMap) {
         assert(scope == kAudioUnitScope_Input && bus == 0 && size == 2 * sizeof(SInt32));
         std::memcpy(g.map.data(), value, size); assert(g.map[0] == 0 && g.map[1] == 1);
@@ -370,6 +375,15 @@ void admission() {
     clean();
 }
 void topologyAndRaces() {
+    reset();
+    {
+        auto q = queue(); auto worker = out::Worker::open("chosen-output", *q);
+        g.client = format(w::Precision::Float64, false); // Frozen client was planar.
+        rejects([&] { worker->start(); });
+        assert(g.starts == 0 && !g.running);
+        assert(worker->close());
+    }
+    clean();
     for (size_t i = 0; i < 9; ++i) {
         reset(); auto q = queue(); auto worker = out::Worker::open("chosen-output", *q);
         event(i); // Queued BEFORE start; serialized event must prevent native start.
@@ -469,8 +483,11 @@ void renderPcm() {
         assert(worker->close());
     }
     clean();
-    for (auto precision : {w::Precision::Float32, w::Precision::Float64}) for (bool planar : {false, true}) {
-        reset(precision, planar); auto q = queue(precision); auto worker = out::Worker::open("chosen-output", *q);
+    for (auto precision : {w::Precision::Float32, w::Precision::Float64})
+      for (bool requestedPlanar : {false, true}) for (bool canonicalized : {false, true}) {
+        reset(precision, requestedPlanar); g.canonicalizeClient = canonicalized;
+        const bool planar = requestedPlanar != canonicalized;
+        auto q = queue(precision); auto worker = out::Worker::open("chosen-output", *q);
         worker->start();
         const double doubles[]{1.0 + 0x1p-40, -1.0 - 0x1p-40, -0.0, 0.0, 0x1p-1074, -0x1p-1074};
         const float floats[]{0.25f, -0.25f, -0.0f, 0.0f, 0x1p-149f, -0x1p-149f};

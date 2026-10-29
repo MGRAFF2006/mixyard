@@ -122,9 +122,14 @@ struct Worker::Impl {
             get<UInt32>(kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0) != 1 ||
             get<AudioDeviceID>(kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0) != device)
             throw std::runtime_error("AudioUnit input-disable/output/device proof failed");
-        for (const auto scope : {kAudioUnitScope_Input, kAudioUnitScope_Output})
-            if (!exactFloat(get<AudioStreamBasicDescription>(kAudioUnitProperty_StreamFormat, scope, 0), queue.format()))
+        for (const auto scope : {kAudioUnitScope_Input, kAudioUnitScope_Output}) {
+            const auto actual = get<AudioStreamBasicDescription>(kAudioUnitProperty_StreamFormat, scope, 0);
+            if (!exactFloat(actual, queue.format()))
                 throw std::runtime_error("AudioUnit conversion would change destination PCM");
+            if (scope == kAudioUnitScope_Input &&
+                bool(actual.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != clientPlanar)
+                throw std::runtime_error("AudioUnit client storage layout changed after admission");
+        }
         if (get<UInt32>(kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0) != limit())
             throw std::runtime_error("AudioUnit callback bound changed");
         std::array<SInt32, maxChannels> map{};
@@ -182,8 +187,13 @@ struct Worker::Impl {
         // AUHAL flattens a single stream. Only storage transposition is allowed.
         auto client = get<AudioStreamBasicDescription>(kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0);
         if (!exactFloat(client, queue.format())) throw std::runtime_error("AUHAL device format differs");
-        clientPlanar = client.mFormatFlags & kAudioFormatFlagIsNonInterleaved;
         set(kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, client);
+        // The AudioUnit may canonicalize storage layout without changing PCM.
+        // Freeze its actual client readback before registering the callback,
+        // then require that same layout at all later admission/start checks.
+        client = get<AudioStreamBasicDescription>(kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0);
+        if (!exactFloat(client, queue.format())) throw std::runtime_error("AUHAL client format differs");
+        clientPlanar = client.mFormatFlags & kAudioFormatFlagIsNonInterleaved;
         std::array<SInt32, maxChannels> map{};
         for (size_t i = 0; i < queue.format().channels.size(); ++i) map[i] = static_cast<SInt32>(i);
         checked(api.set(unit, kAudioOutputUnitProperty_ChannelMap, kAudioUnitScope_Input, 0, map.data(),

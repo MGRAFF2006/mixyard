@@ -19,6 +19,11 @@ explicitly disabled using `EnableIO`, input scope, bus 1, and read back immediat
 Output bus 0 is enabled, the selected device bound, client format and an explicit
 identity map set. Input-disable, output-enable, device, both AU formats, map and
 callback bound are read back **before initialize and again before start**. The
+callback freezes the actual client-layout readback after configuration; later
+client readbacks must preserve that layout. An AudioUnit may canonicalize planar
+storage during configuration without changing numeric PCM. Both forms are
+handled using the admitted readback rather than assuming the requested layout.
+The
 unit is private; this library has no path that enables input, registers an input
 callback or calls `AudioUnitRender` to obtain input. Duplex devices are therefore
 not excluded solely because they expose input streams.
