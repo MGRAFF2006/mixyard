@@ -1,0 +1,31 @@
+name: Public browser SDK contracts
+
+on:
+  pull_request:
+    paths:
+      - 'interoperability/mixyard_interop/public_sdk/**'
+      - 'interoperability/tests/public_sdk/**'
+      - 'docs/protocol-public-sdk.md'
+      - '.github/workflows/public-sdk.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'interoperability/mixyard_interop/public_sdk/**'
+      - 'interoperability/tests/public_sdk/**'
+      - '.github/workflows/public-sdk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Execute bounded mocked SDK contracts and owned loopback signaling
+        run: node --test --test-timeout=10000 interoperability/tests/public_sdk/*.test.mjs
