@@ -10,17 +10,78 @@ use serde_json::{json, Value};
 use std::{
     fs,
     io::Write,
-    os::unix::{fs::PermissionsExt, net::UnixStream},
+    os::unix::{fs::PermissionsExt, net::UnixStream, process::CommandExt},
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
-        Arc,
+        mpsc, Arc,
     },
     thread,
     time::{Duration, Instant},
 };
 static NEXT: AtomicU32 = AtomicU32::new(0);
+
+// comm can contain both whitespace and parentheses; fields start after its last ')'.
+fn process_stat(pid: u32) -> Option<String> {
+    match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => Some(stat),
+        Err(e)
+            if e.kind() == std::io::ErrorKind::NotFound
+                || e.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            None
+        }
+        Err(e) => panic!("read stat for owned PID {pid}: {e}"),
+    }
+}
+fn stat_fields(stat: &str) -> Vec<&str> {
+    stat.rsplit_once(") ")
+        .unwrap()
+        .1
+        .split_whitespace()
+        .collect()
+}
+struct OwnedChild(Child);
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+fn sentinel() -> OwnedChild {
+    OwnedChild(
+        Command::new("/bin/sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .unwrap(),
+    )
+}
+struct OwnedDescendant {
+    pid: u32,
+    start_time: String,
+}
+impl OwnedDescendant {
+    fn terminate(&self) {
+        if let Some(stat) = process_stat(self.pid) {
+            // Never signal a reused PID during failure cleanup.
+            if stat_fields(&stat)[19] == self.start_time {
+                if unsafe { libc::kill(self.pid as i32, libc::SIGKILL) } != 0 {
+                    let error = std::io::Error::last_os_error();
+                    // The same owned task may disappear after stat but before
+                    // signal delivery. Only ESRCH is idempotent absence.
+                    assert_eq!(error.raw_os_error(), Some(libc::ESRCH), "{error}");
+                }
+            }
+        }
+    }
+}
+impl Drop for OwnedDescendant {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
 fn graph(name: &str) -> Value {
     json!([
         {"id":0,"type":"PipeWire:Interface:Core","info":{"cookie":100,"props":{}}},
@@ -135,22 +196,37 @@ impl Runtime {
             thread::sleep(Duration::from_millis(5));
         }
     }
-    fn reaped(&self, pid: u32) {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while PathBuf::from(format!("/proc/{pid}")).exists() {
-            assert!(Instant::now() < deadline, "helper not reaped");
-            thread::sleep(Duration::from_millis(10));
-        }
-        let descendant: u32 = fs::read_to_string(self.directory.join("descendant"))
+    fn descendant(&self) -> u32 {
+        fs::read_to_string(self.directory.join("descendant"))
             .unwrap()
             .parse()
-            .unwrap();
-        // Orphan grandchildren can briefly be zombies until the host reaper runs.
-        if let Ok(stat) = fs::read_to_string(format!("/proc/{descendant}/stat")) {
+            .unwrap()
+    }
+    fn assert_owned_group(&self, pid: u32) {
+        assert_eq!(
+            unsafe { libc::getpgid(self.descendant() as i32) },
+            pid as i32
+        );
+    }
+    fn reaped(&self, pid: u32) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let descendant = self.descendant();
+        loop {
+            let leader = process_stat(pid);
+            let child = process_stat(descendant);
+            // Group SIGKILL and leader wait do not synchronize descendant exit.
+            // Only a zombie or absence proves it stopped; pending SIGKILL does not.
+            let stopped = child
+                .as_deref()
+                .is_none_or(|stat| stat_fields(stat)[0] == "Z");
+            if leader.is_none() && stopped {
+                return;
+            }
             assert!(
-                stat.split_whitespace().nth(2) == Some("Z"),
-                "descendant still running"
+                Instant::now() < deadline,
+                "owned discovery cleanup incomplete: leader={leader:?}, descendant={child:?}"
             );
+            thread::sleep(Duration::from_millis(10));
         }
     }
 }
@@ -239,6 +315,7 @@ fn malformed_partial_oversize_permission_and_timeout_never_become_empty_success(
 }
 #[test]
 fn disconnect_cancel_busy_and_shutdown_kill_only_owned_discovery_process_group() {
+    let mut unrelated = sentinel();
     let mut r = Runtime::new();
     r.mode("hang");
     r.start();
@@ -247,30 +324,144 @@ fn disconnect_cancel_busy_and_shutdown_kill_only_owned_discovery_process_group()
         .write_all(b"{\"ipcVersion\":1,\"requestId\":\"held\",\"command\":\"inventory\"}\n")
         .unwrap();
     let pid = r.wait_pid();
+    r.assert_owned_group(pid);
     assert_eq!(r.error().code, "busy");
     assert!(ReadOnlyClient::connect(&r.instance).is_ok());
     drop(stream);
     r.reaped(pid);
+    assert!(unrelated.0.try_wait().unwrap().is_none());
     fs::remove_file(r.directory.join("pid")).unwrap();
     let cancelled = Arc::new(AtomicBool::new(false));
     let signal = cancelled.clone();
     let instance = r.instance.clone();
     let client = thread::spawn(move || ReadOnlyClient::inventory(&instance, &signal));
     let pid = r.wait_pid();
+    r.assert_owned_group(pid);
     cancelled.store(true, Ordering::Release);
     assert_eq!(
         client.join().unwrap().unwrap_err().kind(),
         std::io::ErrorKind::Interrupted
     );
     r.reaped(pid);
+    assert!(unrelated.0.try_wait().unwrap().is_none());
     fs::remove_file(r.directory.join("pid")).unwrap();
     let mut stream = UnixStream::connect(runtime::endpoint(&r.instance).unwrap()).unwrap();
     stream
         .write_all(b"{\"ipcVersion\":1,\"requestId\":\"stop\",\"command\":\"inventory\"}\n")
         .unwrap();
     let pid = r.wait_pid();
+    r.assert_owned_group(pid);
     r.stop();
     r.reaped(pid);
+    assert!(unrelated.0.try_wait().unwrap().is_none());
+}
+
+#[test]
+fn process_stat_accepts_concurrent_owned_reaping_as_absence() {
+    // /proc can report ESRCH as well as ENOENT while a task exits. Exercise the
+    // actual reader against owned kill/wait races, never an unrelated process.
+    for _ in 0..128 {
+        let mut child = sentinel();
+        let pid = child.0.id();
+        let (tx, rx) = mpsc::channel();
+        thread::scope(|scope| {
+            let killer = scope.spawn(move || {
+                rx.recv().unwrap();
+                child.0.kill().unwrap();
+                child.0.wait().unwrap();
+            });
+            tx.send(()).unwrap();
+            for _ in 0..10_000 {
+                if process_stat(pid).is_none() {
+                    break;
+                }
+            }
+            killer.join().unwrap();
+        });
+        assert!(process_stat(pid).is_none());
+    }
+}
+
+#[test]
+fn descendant_cleanup_is_idempotent_during_concurrent_owned_reaping() {
+    for _ in 0..128 {
+        let mut child = sentinel();
+        let pid = child.0.id();
+        let stat = process_stat(pid).unwrap();
+        let descendant = OwnedDescendant {
+            pid,
+            start_time: stat_fields(&stat)[19].to_owned(),
+        };
+        let (tx, rx) = mpsc::channel();
+        thread::scope(|scope| {
+            let killer = scope.spawn(move || {
+                rx.recv().unwrap();
+                let _ = child.0.kill();
+                child.0.wait().unwrap();
+            });
+            tx.send(()).unwrap();
+            for _ in 0..10_000 {
+                descendant.terminate();
+                if process_stat(pid).is_none() {
+                    break;
+                }
+            }
+            killer.join().unwrap();
+        });
+        descendant.terminate();
+        assert!(process_stat(pid).is_none());
+    }
+}
+
+#[test]
+fn cleanup_observer_waits_for_live_descendant_after_leader_is_reaped() {
+    let r = Runtime::new();
+    r.mode("orphan");
+    let mut unrelated = sentinel();
+    let mut helper = OwnedChild(
+        // Execute the stable interpreter; the newly written owned script is
+        // input data, not a text executable subject to concurrent ETXTBSY.
+        Command::new("/usr/bin/python3")
+            .arg(r.directory.join("helper"))
+            .process_group(0)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let pid = r.wait_pid();
+    r.assert_owned_group(pid);
+    let descendant = r.descendant();
+    let stat = process_stat(descendant).unwrap();
+    let descendant = OwnedDescendant {
+        pid: descendant,
+        start_time: stat_fields(&stat)[19].to_owned(),
+    };
+    assert!(stat.contains("(owned (child))"), "{stat}");
+    assert!(helper.0.wait().unwrap().success());
+    assert!(process_stat(pid).is_none());
+
+    let (waited, completed) = thread::scope(|scope| {
+        let (tx, rx) = mpsc::channel();
+        let runtime = &r;
+        let observer = scope.spawn(move || {
+            runtime.reaped(pid);
+            tx.send(()).unwrap();
+        });
+        // A live descendant must hold the observer even though the leader is gone.
+        let waited = matches!(
+            rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        descendant.terminate();
+        (waited, observer.join().is_ok())
+    });
+    assert!(
+        waited,
+        "observer finished before the live owned descendant stopped"
+    );
+    assert!(completed, "observer failed after descendant termination");
+    assert!(unrelated.0.try_wait().unwrap().is_none());
 }
 #[test]
 fn insecure_corrupt_and_symlink_revision_state_fail_closed_across_restart() {
