@@ -11,6 +11,17 @@ Run focused core checks without installing anything or generating bytecode:
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=interoperability python3 -m unittest discover -s interoperability/tests -v
 ```
 
+The optional `test_descriptor_oracle.py` also compares a 50-case positive/negative
+corpus with an independently built executable using production Rust
+`Spec::validate_descriptor`. Set `MIXYARD_DESCRIPTOR_ORACLE` to that executable;
+without it the conformance test explicitly skips. The executable consumes one
+bounded JSON `{sender,receiver,spec}` per process and returns `{accepted:bool}`.
+The corpus passed against the network lead's production oracle on 2026-10-29,
+including 160 channels above the QUIC MTU, integer extrema, JSON bool/float type
+rejection, unknown fields and provenance failures. It tests descriptor semantics,
+not Python consent/resource policy or duplicate wire keys (a JSON Value oracle
+has already normalized object keys). This package never builds Rust itself.
+
 The exact raw descriptor is the existing `network/src/protocol.rs::Spec` JSON.
 `Spec.from_json` accepts at most 4096 UTF-8 bytes, rejects duplicate/unknown keys,
 and freezes the descriptor/provenance. `from_dict` is the local-object boundary.
