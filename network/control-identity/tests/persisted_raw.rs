@@ -28,7 +28,11 @@ struct Stores {
 impl Stores {
     fn new() -> Result<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
+        // Resolve only the existing OS-provided fixture base: macOS commonly
+        // exposes it through /var -> /private/var. Production store paths must
+        // still reject symlink ancestors; no caller state path is normalized.
+        let temporary_base = std::env::temp_dir().canonicalize()?;
+        let root = temporary_base.join(format!(
             "mixyard-control-audio-fixture-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
