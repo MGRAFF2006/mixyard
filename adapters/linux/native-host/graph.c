@@ -47,7 +47,7 @@ struct app {
     struct mx_host *host; // exclusively accessed by graph data-loop owner
     _Atomic uint32_t clock_id;
     _Atomic unsigned command, command_done, phase, error;
-    _Atomic uint64_t delivered[ROUTES], silence[ROUTES], mismatches, rendered, dropped;
+    _Atomic uint64_t delivered[ROUTES], silence[ROUTES], mismatches, rendered, dropped, heap_ops;
     uint64_t sequence, generation, quiet_rendered;
     uint64_t quiet_silence[ROUTES];
     _Atomic uint32_t role_clock[3];
@@ -58,6 +58,22 @@ struct app {
     const char *directory;
 };
 
+// Linker wrapping measures heap operations in this client and the static Rust host.
+// The distro libpipewire shared object's internals are outside this measurement.
+static _Thread_local struct app *callback_owner;
+void *__real_malloc(size_t); void *__real_calloc(size_t, size_t);
+void *__real_realloc(void *, size_t); void __real_free(void *);
+int __real_posix_memalign(void **, size_t, size_t);
+void *__real_aligned_alloc(size_t, size_t);
+static void heap_operation(void) {
+    if (callback_owner) atomic_fetch_add_explicit(&callback_owner->heap_ops, 1, memory_order_relaxed);
+}
+void *__wrap_malloc(size_t n) { heap_operation(); return __real_malloc(n); }
+void *__wrap_calloc(size_t n, size_t size) { heap_operation(); return __real_calloc(n, size); }
+void *__wrap_realloc(void *p, size_t n) { heap_operation(); return __real_realloc(p, n); }
+void __wrap_free(void *p) { heap_operation(); __real_free(p); }
+int __wrap_posix_memalign(void **p, size_t alignment, size_t n) { heap_operation(); return __real_posix_memalign(p, alignment, n); }
+void *__wrap_aligned_alloc(size_t alignment, size_t n) { heap_operation(); return __real_aligned_alloc(alignment, n); }
 static double source_value(unsigned source, uint64_t frame, unsigned channel) {
     // Distinct channels, Float64 low bits and signed zero exercise native bytes.
     if (source == 0) {
@@ -103,7 +119,7 @@ static void submit(void *port, struct pw_buffer *b, uint32_t frames,
     b->size = frames;
     pw_filter_queue_buffer(port, b);
 }
-static void process(void *userdata, struct spa_io_position *pos) {
+static void process_inner(void *userdata, struct spa_io_position *pos) {
     struct endpoint *e = userdata;
     struct app *a = e->app;
     uint32_t n = pos->clock.duration;
@@ -118,6 +134,7 @@ static void process(void *userdata, struct spa_io_position *pos) {
             if (!p) { pw_filter_queue_buffer(e->out[s], b); continue; }
             if (p) for (unsigned f = 0; f < n; ++f)
                 for (unsigned ch = 0; ch < 2; ++ch) p[2*f+ch] = s == 0 && atomic_load_explicit(&a->phase, memory_order_relaxed) == 2 ? NAN : source_value(s, pos->clock.position+f, ch);
+            if (!header(b)) fail(a, 21);
             submit(e->out[s], b, n, pos, !p);
         }
         return;
@@ -156,12 +173,17 @@ static void process(void *userdata, struct spa_io_position *pos) {
     struct pw_buffer *input[ROUTES] = {0};
     mx_input inputs[ROUTES] = {0};
     bool fresh = atomic_load_explicit(&a->role_clock[0], memory_order_acquire) == pos->clock.id;
+    for (unsigned r = 0; r < ROUTES; ++r) {
+        struct port *in_port = e->in[r], *out_port = e->out[r];
+        if (!atomic_load_explicit(&in_port->format_ok, memory_order_acquire) ||
+            !atomic_load_explicit(&out_port->format_ok, memory_order_acquire)) fresh = false;
+    }
     mx_stamp stamp = { .generation = a->generation, .revision = 1,
         .clock_id = pos->clock.id, .sequence = a->sequence++,
         .first_frame = pos->clock.position, .captured_ns = pos->clock.nsec,
         .deadline_ns = pos->clock.nsec + 100000000 };
     for (unsigned s = 0; s < ROUTES; ++s) {
-        inputs[s] = (mx_input){ .encoding = 2, .sample_rate_hz = 48000, .channels = 2, .stamp = stamp };
+        inputs[s] = (mx_input){ .encoding = MX_F64LE, .sample_rate_hz = 48000, .channels = 2, .stamp = stamp };
         input[s] = pw_filter_dequeue_buffer(e->in[s]);
         if (!input[s]) { fresh = false; continue; }
         double *p = samples(a, input[s], true, n);
@@ -172,6 +194,10 @@ static void process(void *userdata, struct spa_io_position *pos) {
         inputs[s].bytes = (const uint8_t *)p; inputs[s].byte_count = n * STRIDE;
     }
     bool rendered = false;
+    if (a->host && command == 1 && !fresh) {
+        mx_host_revoke(a->host);
+        atomic_store_explicit(&a->command, 4, memory_order_release);
+    }
     if (a->host && command == 1 && fresh && !atomic_load_explicit(&a->error, memory_order_relaxed)) {
         if (mx_host_process(a->host, pos->clock.nsec, stamp, n, inputs, ROUTES) == 0) {
             rendered = true; atomic_fetch_add_explicit(&a->rendered, 1, memory_order_relaxed);
@@ -190,9 +216,16 @@ static void process(void *userdata, struct spa_io_position *pos) {
             if (rendered && out && count == 2*n) memcpy(p, out, n * STRIDE);
             else memset(p, 0, n * STRIDE);
         }
+        if (!header(b)) fail(a, 21);
         submit(e->out[r], b, n, pos, !rendered);
     }
     for (unsigned s = 0; s < ROUTES; ++s) if (input[s]) pw_filter_queue_buffer(e->in[s], input[s]);
+}
+static void process(void *userdata, struct spa_io_position *pos) {
+    struct endpoint *e = userdata;
+    callback_owner = e->app;
+    process_inner(userdata, pos);
+    callback_owner = NULL;
 }
 static void param_changed(void *userdata, void *port, uint32_t id, const struct spa_pod *param) {
     struct endpoint *e = userdata;
@@ -431,6 +464,7 @@ static bool verify_quiet(struct app *a) {
 static void timer(void *userdata, uint64_t expirations) {
     (void)expirations;
     struct app *a = userdata;
+    if (atomic_load(&a->heap_ops)) fail(a, 76);
     if (atomic_load_explicit(&a->error, memory_order_acquire) || atomic_load(&a->mismatches)) {
         pw_main_loop_quit(a->loop); return;
     }
@@ -441,11 +475,18 @@ static void timer(void *userdata, uint64_t expirations) {
         break;
     case 1:
         if (!atomic_load_explicit(&a->clock_id, memory_order_acquire)) break;
+        for (unsigned node = 0; node < 3; ++node)
+            if (atomic_load_explicit(&a->role_clock[node], memory_order_acquire) != atomic_load_explicit(&a->clock_id, memory_order_acquire)) return;
         if (!a->topology_written) write_topology(a);
-        if (install_host(a, 1)) { a->stage = 2; baseline(a); }
+        if (install_host(a, 1)) { a->stage = 2; baseline(a);
+            char admitted[512]; snprintf(admitted, sizeof(admitted), "%s/admitted", a->directory);
+            FILE *f = fopen(admitted, "wx"); if (!f || fputs("true\n", f) < 0 || fclose(f)) fail(a, 57); }
         break;
     case 2:
         if (progressed(a, 0, 64) && progressed(a, 1, 64) && progressed(a, 2, 64)) {
+            char flowing[512]; snprintf(flowing, sizeof(flowing), "%s/flowing", a->directory);
+            FILE *f = fopen(flowing, "wx");
+            if (!f || fputs("true\n", f) < 0 || fclose(f)) { fail(a, 58); break; }
             baseline(a); atomic_store(&a->phase, 1); a->stage = 3;
         }
         break;
@@ -535,9 +576,9 @@ int main(int argc, char **argv) {
     pw_proxy_destroy((struct pw_proxy *)a.registry);
     pw_core_disconnect(a.core); pw_context_destroy(a.context); pw_main_loop_destroy(a.loop); pw_deinit();
     printf("{\"stage\":%u,\"error\":%u,\"sampleMismatches\":%" PRIu64 ",\"rendered\":%" PRIu64
-        ",\"delivered\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"dropped\":%" PRIu64 ",\"cancelled\":%s}\n",
+        ",\"delivered\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"dropped\":%" PRIu64 ",\"cancelled\":%s,\"callbackHeapOperations\":%" PRIu64 "}\n",
         a.stage, atomic_load(&a.error), atomic_load(&a.mismatches), atomic_load(&a.rendered),
         atomic_load(&a.delivered[0]), atomic_load(&a.delivered[1]), atomic_load(&a.delivered[2]),
-        atomic_load(&a.dropped), a.cancelled ? "true" : "false");
+        atomic_load(&a.dropped), a.cancelled ? "true" : "false", atomic_load(&a.heap_ops));
     return (a.stage == 10 || a.cancelled) && !atomic_load(&a.error) && !atomic_load(&a.mismatches) ? 0 : 1;
 }

@@ -18,6 +18,8 @@ jobs:
       MIXYARD_NATIVE_BUILD: ${{ runner.temp }}/mixyard-native-build
     steps:
       - uses: actions/checkout@v4
+      - name: Check control-plane isolation guards
+        run: python3 -B -m unittest discover -s adapters/linux/native-host -p test_control.py -v
       - name: Install SDK only on this disposable hosted runner
         run: |
           sudo apt-get update

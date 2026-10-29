@@ -43,7 +43,9 @@ Monitor = 0.5 program. The private source has no sends; return is excluded from
 Call. Low Float64 bits and ordered channels are observable in the oracle.
 Lifecycle stages withhold one consumer port to exercise native backpressure
 while siblings progress, revoke, create fresh generations, inject a NaN,
-remove the source endpoint and cancel an owned client. Late native buffers are
+remove the source endpoint and cancel an actively delivering owned client. The
+whole test repeats after an actual owned server restart and requires a clean
+client failure after server loss. Late native buffers are
 bounded by the admitted eight-buffer maximum. Native registry readback checks
 exactly one link per destination and no engine-output recapture. These checks
 must execute successfully before claiming scoped private-graph qualification.
@@ -60,7 +62,9 @@ python3 -B adapters/linux/native-host/qualify.py \
 ```
 
 The evidence artifact records observed topology, isolation and sample/lifecycle
-counters. A passing SDK compile alone is not native delivery evidence. The test
+counters. Linker allocation hooks require zero callback heap operations in the
+client and static Rust host; the distro libpipewire shared object is outside
+that instrumentation. A passing SDK compile alone is not native delivery evidence. The test
 refuses local execution. No native graph has been executed on the implementation
 host, and no SDK was installed there.
 

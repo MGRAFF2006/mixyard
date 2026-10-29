@@ -108,7 +108,7 @@ def atomic_json(path, value):
     staging.rename(path)
 
 
-def run(binary, env, directory, cancel=False):
+def run(binary, env, directory, cancel=False, server_loss=None):
     directory.mkdir(mode=0o700)
     stderr = directory / "stderr.log"
     stdout = directory / "stdout.log"
@@ -117,13 +117,21 @@ def run(binary, env, directory, cancel=False):
         try:
             topology = await_file(directory / "topology.json", process)
             active = isolation(snapshot(env), active=True)
-            if cancel:
-                process.send_signal(signal.SIGTERM)
-            else:
-                atomic_json(directory / "request.json", request(topology))
+            atomic_json(directory / "request.json", request(topology))
+            if cancel or server_loss:
+                await_file(directory / "flowing", process)
+                if cancel:
+                    process.send_signal(signal.SIGTERM)
+                else:
+                    stop_owned(server_loss)
             process.wait(timeout=35)
         finally:
             stop_owned(process)
+    if server_loss:
+        report = json.loads(stdout.read_text())
+        if process.returncode != 1 or report["error"] != 46 or report["sampleMismatches"]:
+            raise RuntimeError("server loss failed closed-exit check: " + repr(report))
+        return {"topology": topology, "activeIsolation": active, "result": report}
     if process.returncode:
         raise RuntimeError(f"native client exit {process.returncode}: {stderr.read_text()} {stdout.read_text()}")
     report = json.loads(stdout.read_text())
@@ -159,26 +167,31 @@ context.modules = [
                "PIPEWIRE_CONFIG_DIR": str(config), "PIPEWIRE_CONFIG_NAME": "client.conf",
                "XDG_CONFIG_HOME": str(config), "XDG_STATE_HOME": str(home),
                "MIXYARD_PRIVATE_GRAPH": "hosted-owned-only"}
-        with (root / "server.log").open("xb") as log:
-            server = subprocess.Popen(["pipewire", "-c", str(config / "private.conf")], env=env, stdout=log, stderr=log)
-            try:
-                deadline = time.monotonic() + 5
-                while not (runtime / "mixyard-private").exists():
-                    if server.poll() is not None or time.monotonic() >= deadline:
-                        raise RuntimeError("private server startup: " + (root / "server.log").read_text())
-                    time.sleep(0.02)
-                socket = (runtime / "mixyard-private").stat()
-                if not stat.S_ISSOCK(socket.st_mode) or socket.st_uid != os.getuid():
-                    raise RuntimeError("private socket ownership mismatch")
-                initial = isolation(snapshot(env))  # Required before connecting any PCM nodes.
-                report = {"initialIsolation": initial,
-                          "integrated": run(binary, env, root / "integrated"),
-                          "cancelled": run(binary, env, root / "cancelled", cancel=True),
-                          "claims": {"physicalDevices": False, "nativeApps": False,
-                                     "physicalClocks": False, "backendAvailable": False}}
-                evidence.write_text(json.dumps(report, indent=2) + "\n")
-            finally:
-                stop_owned(server)
+        report = {"serverEpochs": [],
+                  "claims": {"physicalDevices": False, "nativeApps": False,
+                             "physicalClocks": False, "backendAvailable": False}}
+        for epoch in range(2):
+            with (root / f"server-{epoch}.log").open("xb") as log:
+                server = subprocess.Popen(["pipewire", "-c", str(config / "private.conf")], env=env, stdout=log, stderr=log)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not (runtime / "mixyard-private").exists():
+                        if server.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError("private server startup: " + (root / f"server-{epoch}.log").read_text())
+                        time.sleep(0.02)
+                    socket = (runtime / "mixyard-private").stat()
+                    if not stat.S_ISSOCK(socket.st_mode) or socket.st_uid != os.getuid():
+                        raise RuntimeError("private socket ownership mismatch")
+                    initial = isolation(snapshot(env))  # Required before connecting any PCM nodes.
+                    result = {"ownedServerPid": server.pid, "initialIsolation": initial,
+                              "integrated": run(binary, env, root / f"integrated-{epoch}"),
+                              "cancelled": run(binary, env, root / f"cancelled-{epoch}", cancel=True)}
+                    if epoch == 1:
+                        result["serverLoss"] = run(binary, env, root / "server-loss", server_loss=server)
+                    report["serverEpochs"].append(result)
+                finally:
+                    stop_owned(server)
+        evidence.write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps(report, indent=2))
 
 
