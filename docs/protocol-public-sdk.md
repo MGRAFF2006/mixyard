@@ -98,6 +98,8 @@ cannot be cancelled or recall an operation already admitted; on timeout/revoke,
 cleanup runs immediately and again after a late completion where necessary.
 No subsequent setup/play/signal/track handoff may revive that session.
 
+Authorization rechecks closure after invoking the host callback: a synchronous
+host revocation overrides even an explicit `true` result before any SDK effect.
 The **host grant-revocation/expiry notification must call `adapter.revoke()`**
 synchronously to stop an active passive stream/player, even when no next API call
 occurs. An authorize callback alone cannot observe revocation between operations
@@ -148,14 +150,18 @@ bound its own bytes, requests, authentication and time. No transport credentials
 are placed in this metadata.
 
 Signaling is at most 32 KiB per message, SDP 24 KiB/256 lines/2048 characters per
-line, candidate text 1024 characters, 64 candidates per direction and 68 total
+line, candidate text 1024 characters, 64 candidates per direction across embedded
+SDP entries and trickle together, and 68 total
 inbound messages per session. Candidates before remote SDP reject; no candidate
 queue exists. Async SDK operations admit one in-flight operation and no queued
 operations; their default timeout is 5000 ms, configurable 1..10000 ms. WebRTC
 session lifetime defaults to 30000 ms, configurable 1..60000 ms; expiry closes
 and stops owned tracks. Malformed authenticated signaling closes the session.
 Spotify permits one pending token request with the same bounded deadline and
-at most eight requests per instance; credentials are callback-only and not saved.
+at most eight requests per instance. Each delivery is bound to its own pending
+request and settles once; a stale/duplicate delivery closes the session without
+forwarding credentials or consuming a newer request. Credentials are callback-only
+and not saved.
 
 Browser ICE APIs cannot bind a socket to a chosen local address/port. A normal
 browser can therefore produce candidates this restricted profile rejects. Do not

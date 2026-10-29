@@ -39,11 +39,15 @@ export function validateDescription(description, { remoteFingerprint, ports, cod
   const fp = fingerprint(fps[0].slice('a=fingerprint:sha-256 '.length));
   if (remoteFingerprint && fp !== remoteFingerprint) throw new Error('Peer DTLS fingerprint mismatch');
   if (!lines.some(line => /^a=ice-ufrag:[A-Za-z0-9+/]{4,256}$/.test(line)) || !lines.some(line => /^a=ice-pwd:[A-Za-z0-9+/]{22,256}$/.test(line))) throw new Error('ICE credentials required');
+  let candidates = 0;
   for (const line of lines) {
     if (line.startsWith('c=') && !['c=IN IP4 0.0.0.0', 'c=IN IP4 127.0.0.1'].includes(line)) throw new Error('Non-loopback SDP connection');
     if (line.startsWith('o=') && !/^o=\S+ \d+ \d+ IN IP4 (?:127\.0\.0\.1|0\.0\.0\.0)$/.test(line)) throw new Error('Non-loopback SDP origin');
     if (line.startsWith('a=rtcp:') && !/^a=rtcp:(?:9|\d{1,5}) IN IP4 (?:127\.0\.0\.1|0\.0\.0\.0)$/.test(line)) throw new Error('Non-loopback RTCP');
-    if (line.startsWith('a=candidate:')) validateCandidate({ candidate: line.slice(2), sdpMid: '0', sdpMLineIndex: 0 }, ports);
+    if (line.startsWith('a=candidate:')) {
+      if (++candidates > MAX_CANDIDATES) throw new Error('Description candidate budget exceeded');
+      validateCandidate({ candidate: line.slice(2), sdpMid: '0', sdpMLineIndex: 0 }, ports);
+    }
     if (line.startsWith('a=remote-candidates:')) throw new Error('Remote-candidates extension unavailable');
   }
   return { type: description.type, sdp: description.sdp };
@@ -121,6 +125,19 @@ export class WebRTCAudio {
   #check(role, action) {
     return this.#policy.check(role, action, { sessionId: this.#config.sessionId, trackId: this.#selectedTrackId ?? this.#remoteTrackId ?? null, wireTrackId: this.#local?.id ?? this.#remoteTrackId ?? null, conversion: this.#config.codec });
   }
+  #description(value, incoming) {
+    const description = validateDescription(value, { ...this.#config,
+      remoteFingerprint: incoming ? this.#config.remoteFingerprint : null });
+    const count = description.sdp.split('\r\n').filter(line => line.startsWith('a=candidate:')).length;
+    if (incoming) {
+      if (this.#incoming + count > MAX_CANDIDATES) throw new Error('Incoming candidate budget exceeded');
+      this.#incoming += count;
+    } else {
+      if (this.#outgoing + count > MAX_CANDIDATES) throw new Error('Outgoing candidate budget exceeded');
+      this.#outgoing += count;
+    }
+    return description;
+  }
   selectTrack(track) {
     if (this.#role !== 'live-send' || this.#local || track?.kind !== 'audio' || track.readyState !== 'live' || typeof track.clone !== 'function') throw new Error('Select one live audio track');
     this.#selectedTrackId = text(track.id);
@@ -156,7 +173,7 @@ export class WebRTCAudio {
     if (!this.#local && !this.#remoteTrackId) throw new Error('Selected-track consent required');
     return this.#policy.run(async () => {
       this.#check(this.#role, 'webrtc-offer');
-      const offer = validateDescription(await this.#pc.createOffer(), { ...this.#config, remoteFingerprint: null });
+      const offer = this.#description(await this.#pc.createOffer(), false);
       this.#check(this.#role, 'webrtc-set-local');
       await this.#pc.setLocalDescription(offer);
       this.#emit({ description: offer });
@@ -176,13 +193,13 @@ export class WebRTCAudio {
       this.#check(this.#role, 'webrtc-signal-receive');
       if (message.description) {
         if (this.#remoteSet) throw new Error('Renegotiation requires a new consented session');
-        const description = validateDescription(message.description, this.#config);
+        const description = this.#description(message.description, true);
         this.#check(this.#role, 'webrtc-set-remote');
         await this.#pc.setRemoteDescription(description);
         this.#remoteSet = true;
         if (description.type === 'offer') {
           this.#check(this.#role, 'webrtc-answer');
-          const answer = validateDescription(await this.#pc.createAnswer(), { ...this.#config, remoteFingerprint: null });
+          const answer = this.#description(await this.#pc.createAnswer(), false);
           this.#check(this.#role, 'webrtc-set-local');
           await this.#pc.setLocalDescription(answer);
           this.#emit({ description: answer });

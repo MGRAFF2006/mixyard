@@ -219,3 +219,60 @@ test('oversized signal and unsupported runtime/codec reject without native signa
   assert.throws(() => fixture({ conversionAccepted: false }), /conversion/);
   assert.throws(() => fixture({ codec: { ...codec, channels: 1 } }), /conversion/);
 });
+
+test('revocation during selected-track admission prevents cloning or native track effects', () => {
+  let adapter;
+  let cloned = 0;
+  const f = fixture({ authorize: (role, context) => {
+    if (context.action === 'webrtc-select-track') adapter.revoke();
+    return true;
+  } });
+  adapter = f.adapter;
+  const original = track();
+  original.clone = () => { cloned++; return track('owned'); };
+  assert.throws(() => adapter.selectTrack(original), /closed/);
+  assert.equal(cloned, 0);
+  assert.equal(original.stopped, false);
+  assert(!f.calls.some(item => item[0] === 'transceiver'));
+  assert(f.calls.includes('close'));
+});
+
+function embedded(description, count) {
+  return { ...description, sdp: description.sdp + Array.from({ length: count }, (_, i) =>
+    `a=candidate:${i + 1} 1 udp 2122260223 127.0.0.1 45679 typ host\r\n`).join('') };
+}
+
+test('oversized embedded remote or local candidates reject before native SDP handoff', async () => {
+  const incoming = fixture({ role: 'live-receive' });
+  incoming.adapter.selectRemoteTrack('approved');
+  await assert.rejects(incoming.adapter.accept(envelope({ description: embedded(sdp(remoteFP, 'answer'), 65) })), /candidate budget/);
+  assert(!incoming.calls.some(item => item[0] === 'remote'));
+  const outgoing = fixture();
+  outgoing.adapter.selectTrack(track());
+  outgoing.pc.createOffer = async () => embedded(sdp(), 65);
+  await assert.rejects(outgoing.adapter.offer(), /candidate budget/);
+  assert(!outgoing.calls.some(item => item[0] === 'local'));
+  assert.equal(outgoing.sent.length, 0);
+});
+
+test('remote SDP and trickle consume one combined incoming candidate budget', async () => {
+  const f = fixture({ role: 'live-receive' });
+  f.adapter.selectRemoteTrack('approved');
+  await f.adapter.accept(envelope({ description: embedded(sdp(remoteFP, 'answer'), 63) }));
+  await f.adapter.accept(envelope({ candidate }));
+  await assert.rejects(f.adapter.accept(envelope({ candidate })), /budget/);
+  assert.equal(f.calls.filter(item => item[0] === 'candidate').length, 1);
+  assert(f.calls.includes('close'));
+});
+
+test('local SDP and trickle consume one combined outgoing candidate budget', async () => {
+  const f = fixture();
+  f.adapter.selectTrack(track());
+  f.pc.createOffer = async () => embedded(sdp(), 63);
+  await f.adapter.offer();
+  const dispatch = f.pc.onicecandidate;
+  dispatch({ candidate });
+  dispatch({ candidate });
+  assert.equal(f.sent.filter(item => item.candidate).length, 1);
+  assert(f.calls.includes('close'));
+});

@@ -26,3 +26,12 @@ test('missing or asynchronous authorization is never a grant', () => {
     assert(cleaned);
   }
 });
+
+test('synchronous host revocation overrides a true authorization result', () => {
+  let policy;
+  let cleaned = 0;
+  policy = new Boundary({ endpoint: { host: '127.0.0.1', port: 1234 }, identity: 'peer',
+    authorize: () => { policy.close(); return true; } }, () => { cleaned++; });
+  assert.throws(() => policy.check('control', 'effect'), /closed/);
+  assert.equal(cleaned, 1);
+});

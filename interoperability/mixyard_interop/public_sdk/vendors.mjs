@@ -1,4 +1,4 @@
-import { Boundary, mediaURL, runtimeState, text, volume } from './boundary.mjs';
+import { Boundary, endpoint, mediaURL, runtimeState, text, volume } from './boundary.mjs';
 
 export function capabilities({ cast, chrome, Spotify, media, RTCPeerConnection, secureContext = false } = {}) {
   const result = (available, role, gate) => Object.freeze({ available: Boolean(available), role, gate, evidence: 'mocked-sdk-contracts-only', vendorNetworkExecuted: false, ...runtimeState });
@@ -87,7 +87,7 @@ export class SafariAirPlay {
   constructor({ media, ...options }) {
     if (typeof media?.webkitShowPlaybackTargetPicker !== 'function') throw new Error('Safari AirPlay API unavailable');
     this.#element = media;
-    this.#source = mediaURL(media.currentSrc || media.src, options.endpoint);
+    this.#source = mediaURL(media.currentSrc || media.src, endpoint(options.endpoint));
     this.#policy = new Boundary(options, () => {
       media.pause();
       media.removeEventListener('webkitplaybacktargetavailabilitychanged', this.#availability);
@@ -129,7 +129,7 @@ export class SpotifyPlayer {
   #device = null;
   #listeners = [];
   #connected = false;
-  #tokenPending = false;
+  #tokenPending = null;
   #tokenTimer;
   #tokenRequests = 0;
   constructor({ Spotify, getOAuthToken, name = 'Mixyard service player', ...options }) {
@@ -137,7 +137,7 @@ export class SpotifyPlayer {
     text(name, 100);
     this.#policy = new Boundary(options, () => {
       clearTimeout(this.#tokenTimer);
-      this.#tokenPending = false;
+      this.#tokenPending = null;
       if (!this.#player) return;
       this.#player.disconnect();
       for (const [event, callback] of this.#listeners) this.#player.removeListener(event, callback);
@@ -153,14 +153,21 @@ export class SpotifyPlayer {
           this.revoke();
           throw new Error('Spotify token request budget exceeded');
         }
-        this.#tokenPending = true;
-        this.#tokenTimer = setTimeout(() => this.revoke(), this.#policy.timeoutMs);
+        const request = { settled: false };
+        this.#tokenPending = request;
+        this.#tokenTimer = setTimeout(() => {
+          if (this.#tokenPending === request && !request.settled) this.revoke();
+        }, this.#policy.timeoutMs);
         try {
           getOAuthToken(token => {
             try {
               this.#policy.check('service-control', 'spotify-token-delivery');
-              if (!this.#tokenPending) { this.revoke(); throw new Error('Duplicate token delivery'); }
-              this.#tokenPending = false;
+              if (request.settled || this.#tokenPending !== request) {
+                this.revoke();
+                throw new Error('Duplicate or stale token delivery');
+              }
+              request.settled = true;
+              this.#tokenPending = null;
               clearTimeout(this.#tokenTimer);
               callback(text(token, 4096));
             } catch (error) { this.revoke(); throw error; }

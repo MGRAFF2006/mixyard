@@ -74,6 +74,8 @@ export class Boundary {
     const context = Object.freeze({ ...this.context, ...details, action });
     try {
       if (this.#authorize(role, context) !== true) throw new Error('Grant denied or revoked');
+      // Host authorization may synchronously dispatch revocation itself.
+      if (this.#closed) throw new Error('Session closed during authorization');
     } catch (error) {
       this.close();
       throw error;

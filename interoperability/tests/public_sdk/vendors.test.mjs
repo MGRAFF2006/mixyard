@@ -249,3 +249,53 @@ test('Cast management control cannot start media without an independent fetch gr
   await assert.rejects(f.sender.command('play'), /explicitly loaded/);
   assert(!f.calls.includes('play'));
 });
+
+test('synchronous authorization revocation cannot invoke Safari picker or play after cleanup', async () => {
+  for (const action of ['airplay-picker', 'airplay-play']) {
+    let adapter;
+    const f = safari((role, context) => {
+      if (role === 'media-fetch' && context.action === action) adapter.revoke();
+      return true;
+    });
+    adapter = f.adapter;
+    f.callbacks.get('webkitplaybacktargetavailabilitychanged')({ availability: 'available' });
+    if (action === 'airplay-picker') assert.throws(() => adapter.pick(), /closed/);
+    else await assert.rejects(adapter.play(), /closed/);
+    assert(f.calls.every(call => call === 'pause'));
+    assert.equal(f.callbacks.size, 0);
+  }
+});
+
+test('Safari accepts the same default-http endpoint shape as the shared boundary', () => {
+  const media = { src: resource.url, webkitShowPlaybackTargetPicker() {}, pause() {},
+    addEventListener() {}, removeEventListener() {} };
+  const adapter = new SafariAirPlay({ ...options, endpoint: { host: endpoint.host, port: endpoint.port },
+    authorize: () => true, media });
+  adapter.revoke();
+});
+
+test('stale Spotify OAuth completion cannot consume a newer request or deliver twice', () => {
+  const providers = [];
+  const deliveries = [];
+  const f = spotify(() => true, { getOAuthToken: deliver => providers.push(deliver) });
+  f.config.getOAuthToken(token => deliveries.push(['A', token]));
+  providers[0]('first-token');
+  f.config.getOAuthToken(token => deliveries.push(['B', token]));
+  assert.throws(() => providers[0]('stale-token'), /stale|Duplicate/);
+  assert.deepEqual(deliveries, [['A', 'first-token']]);
+  assert.throws(() => providers[1]('second-token'), /closed/);
+  assert.deepEqual(deliveries, [['A', 'first-token']]);
+  assert(f.calls.includes('disconnect'));
+});
+
+test('successive Spotify OAuth generations each deliver once to the correct SDK callback', () => {
+  const providers = [];
+  const deliveries = [];
+  const f = spotify(() => true, { getOAuthToken: deliver => providers.push(deliver) });
+  for (let i = 0; i < 3; i++) {
+    f.config.getOAuthToken(token => deliveries.push([i, token]));
+    providers[i](`token-${i}`);
+  }
+  assert.deepEqual(deliveries, [[0, 'token-0'], [1, 'token-1'], [2, 'token-2']]);
+  f.adapter.revoke();
+});
