@@ -397,6 +397,7 @@ class SnapcastTests(unittest.TestCase):
             b'{"jsonrpc":"2.0","id":1,"id":1,"result":{}}\n',
             b'{"jsonrpc":"2.0","id":1,"error":{"code":-1}}\n',
             b'{"jsonrpc":"2.0","id":1,"result":1e999}\n',
+            '{"jsonrpc":"2.0","id":1,"result":{}}'.encode("utf-16-le") + b"\n",
             b'{"jsonrpc":"2.0","id":1,"result":' + b"[" * 17 + b"0" + b"]" * 17 + b"}\n",
             b"x" * 16384 + b"\n",
             b'{"jsonrpc":"2.0","method":"Client.OnConnect"}\n' * 9,

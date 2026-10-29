@@ -92,6 +92,8 @@ class TcpControl:
 
     def finish(self) -> None:
         self.session.require(self.role, self.endpoint)
+        if time.monotonic() >= self._deadline:
+            raise TimeoutError("control operation deadline exceeded before release")
 
     def close(self) -> None:
         if self._socket is not None:

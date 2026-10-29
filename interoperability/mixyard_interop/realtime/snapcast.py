@@ -24,6 +24,10 @@ def _object(pairs):
 
 
 def _json(raw: bytes):
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeError as exc:
+        raise ControlError("UTF-8 JSON response required") from exc
     depth = 0
     quoted = escaped = False
     for octet in raw:
@@ -56,7 +60,7 @@ def _json(raw: bytes):
             raise ControlError("non-finite JSON fraction")
         return result
     try:
-        return json.loads(raw, object_pairs_hook=_object, parse_int=number,
+        return json.loads(text, object_pairs_hook=_object, parse_int=number,
                           parse_float=fraction, parse_constant=constant)
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise ControlError("invalid bounded JSON response") from exc
