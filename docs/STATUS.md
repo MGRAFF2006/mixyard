@@ -164,3 +164,12 @@ Host: verified `homelab-dev`, headless Linux. Named tmux session: `mixyard-contr
 The [qualification workflow](../.github/workflows/qualification.yml) runs core/store/CLI tests on three OSes plus unchanged adapter builds/models and the independent policy oracle. [Runtime CI](../.github/workflows/runtime.yml) runs real three-OS lifecycle/endpoint checks, including Windows kernel DACL behavior. [Frontend CI](../.github/workflows/desktop.yml) runs the nine model tests, types and static build. [Native desktop CI](../.github/workflows/desktop-native.yml) compiles isolated release shells on three OSes and runs Linux webview checks in an owned hosted display.
 
 These workflows must pass for the integration PR; historical source checks and local passes do not predeclare its CI. Compiler/SDK failures fail the build and never count as audio passes. CI owns fresh three-OS native/IPC/storage execution; local cross-target checks only establish compilation. No source PR or consolidation PR is merged by this owner.
+
+## Planned network interoperability (2026-10-29)
+
+Broad bidirectional casting/streaming is now part of the product roadmap, including
+Mixyard advertising itself as a receiver where the ecosystem permits it. The
+[role/platform matrix and acceptance](network-interoperability.md) distinguish
+live audio, URL playback, service control and browser APIs. These external casting
+adapters are planned; the existing paired raw QUIC implementation does not prove
+UPnP/DLNA, Cast, AirPlay, Spotify or arbitrary speaker compatibility.

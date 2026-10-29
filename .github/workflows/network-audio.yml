@@ -2,10 +2,10 @@ name: Network audio foundation
 
 on:
   pull_request:
-    paths: ['network/**', 'docs/network-audio.md', '.github/workflows/network-audio.yml']
+    paths: ['network/**', 'docs/network-audio.md', 'docs/network-playout.md', '.github/workflows/network-audio.yml']
   push:
     branches: [main]
-    paths: ['network/**', 'docs/network-audio.md', '.github/workflows/network-audio.yml']
+    paths: ['network/**', 'docs/network-audio.md', 'docs/network-playout.md', '.github/workflows/network-audio.yml']
   workflow_dispatch:
 
 permissions:
@@ -13,16 +13,26 @@ permissions:
 
 jobs:
   secure-loopback:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - name: Set isolated Cargo target directory
-        run: echo "CARGO_TARGET_DIR=${RUNNER_TEMP}/mixyard-network-target" >> "$GITHUB_ENV"
+        shell: python
+        run: |
+          import os
+          target = os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-network-target')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'CARGO_TARGET_DIR={target}\n')
       - name: Require 10 GiB free
         shell: python
         run: |
@@ -40,3 +50,5 @@ jobs:
       - run: cargo run --locked --manifest-path network/Cargo.toml --example loopback
       - name: Measured application RTT and sample-domain queues (loopback only)
         run: cargo run --locked --manifest-path network/Cargo.toml --example telemetry
+      - name: Encrypted network to sample-aligned blocks (local schedule fixture)
+        run: cargo run --locked --manifest-path network/Cargo.toml --example playout

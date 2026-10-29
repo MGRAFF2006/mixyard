@@ -1,5 +1,9 @@
 # macOS Core Audio probe
 
+For the separate read-only schema 2 runtime inventory executable, see
+[native inventory helpers](../../docs/platform-native-inventory.md). The capture
+probe below retains its existing v1 envelope and explicit capture commands.
+
 This independent MIT probe implements device discovery, Core Audio process
 inventory, and explicitly selected-process capture to stereo Float32 WAV. It does
 not implement virtual microphone transport, independent bus sends, microphone
