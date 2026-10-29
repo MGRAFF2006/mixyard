@@ -64,7 +64,8 @@ def _send(sock: socket.socket, data: bytes, deadline: float, check: Callable[[],
         view = view[sent:]
 
 
-def _head(sock: socket.socket, deadline: float, check: Callable[[], None], *, request_head=False):
+def _head(sock: socket.socket, deadline: float, check: Callable[[], None], *, request_head=False,
+          chunked=False):
     # One-byte header reads avoid consuming unadmitted body bytes. Work <=8 KiB.
     data = bytearray()
     while not data.endswith(b"\r\n\r\n"):
@@ -90,7 +91,10 @@ def _head(sock: socket.socket, deadline: float, check: Callable[[], None], *, re
         if any(ord(c) < 32 or ord(c) == 127 for c in value):
             raise ProtocolError("HTTP control character")
         headers[key] = value
-    if "transfer-encoding" in headers or "content-encoding" in headers:
+    if (chunked and headers.get("transfer-encoding") == "chunked"
+            and "content-length" not in headers and "content-encoding" not in headers):
+        return lines[0], headers, None
+    if chunked or "transfer-encoding" in headers or "content-encoding" in headers:
         raise ProtocolError("encoded/chunked HTTP unsupported")
     length = headers.get("content-length", "0" if request_head else "")
     if not re.fullmatch(r"[0-9]{1,7}", length):

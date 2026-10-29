@@ -59,3 +59,9 @@ This runs encrypted loopback into preallocated blocks and prints per-stream
 playout snapshots. Its local block times are injected schedule fixtures; it opens
 no native device. See [the playout API, exact timing rules, lifecycle receipts and
 remaining qualification gates](../docs/network-playout.md).
+
+Optional authenticated raw/Zstd/explicit Opus delivery now reuses FragmentSession,
+its exact grants, bounded variable-envelope reassembly and Playout. See the
+[frozen request DTO, API, budgets and actual paired-socket evidence](../docs/network-codec-transport.md).
+Feature `codecs` needs no native codec library; `system-zstd`/`system-opus` are explicit.
+Native runtime/device delivery remains unqualified.
