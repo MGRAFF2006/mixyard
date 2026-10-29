@@ -17,6 +17,12 @@ vendor and account constraints must be recorded rather than invented as excuses
 for missing implementations. Hands-on native testing currently focuses on Linux;
 Windows/macOS hardware qualification remains a separate gap.
 
+[The shared device/mobile roadmap](ROADMAP.md) adds Android/iOS/iPadOS endpoints
+and controllers, plus a device selector across web and native desktop clients.
+Evaluate each interoperability role on mobile where its public APIs and ecosystem
+permit it; keep Apple route-extension work and vendor constraints explicit.
+Managing a remote Mixyard host is a separate capability from casting audio to it.
+
 Keep three behaviors distinct in the interface and capability model:
 
 - **Live audio:** transport selected application/input/mix samples to a receiver.

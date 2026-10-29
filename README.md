@@ -4,6 +4,10 @@ Free, open-source audio routing with custom mixes, multiple output devices, and 
 
 ## Status
 
+See the [current roadmap](docs/ROADMAP.md) for priorities, paired-device management,
+native desktop/tray work and Android/iOS roles. Planned features are distinct from
+implemented foundations and physical-device qualification.
+
 The development baseline now assembles the original seven reviewed components from [#9](https://github.com/MGRAFF2006/mixyard/pull/9) with reviewed headless runtime, routing diagnostics, local profiles and native desktop build/lifecycle slices. **The first complete source → mix → consumer/physical-output workflow remains blocked.**
 
 The Rust CLI validates and plans, explains configured routing, stores desired profiles/drafts, and connects to an explicitly started lifecycle runtime. Runtime status reports `backendAvailable: false` with null desired/audio/applied revisions; audio mutation and native media dispatch are unavailable. Diagnostics describe projected intent/planning with unknown native state; profiles never apply audio and report `confirmedWorkingSetup: null`.

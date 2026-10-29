@@ -1,5 +1,39 @@
 # Integrated development status
 
+## Current checkpoint and roadmap (2026-10-29)
+
+Current baseline: main `cd0fc6f515d4528d7becf98b1b0ef5059b2214e3`.
+[The current roadmap](ROADMAP.md) separates implemented foundations, priority
+work and platform-dependent research. The supplied [mobile assessment](mobile-feasibility.md)
+is now included in the repository; it is research, not a mobile build/test result.
+
+Merged foundations include the local web/profile/DSP/channel/delay/situations
+workflows; raw authenticated network transport and bounded playout (#53);
+Windows/macOS SDK inventory helpers (#54); runtime discovery (#55) and secure
+cross-platform helper/IPC/revision integration (#58); the silent metadata harness
+(#52); and the interoperability plan (#57). #52/#54/#55/#58 passed independent
+exact-HEAD final reviews and their recorded checks. Fixture and hosted read-only
+OS/IPC results do not establish successful physical-device audio delivery.
+
+A desktop/tray shell already exists, but is a local read-only/prototype client;
+finishing its native UI, sharing current web workflows, and paired remote-device
+management remain planned. The web service is loopback-only: its session token
+is not remote authentication. There is no implemented mobile app, paired remote
+management interface or native live source-to-consumer audio workflow.
+`backendAvailable`/`audioApplied` remain false for native audio. Compression,
+hardware-clock adaptation, native callbacks and measured physical latency/endurance
+remain open. Windows app identities and other platform observation gaps remain
+explicit. Trays are qualified per desktop host, not assumed universally available.
+
+New accepted roadmap scope: manage other paired Mixyard devices from **all**
+clients; finish native apps and Windows/macOS/Linux quick controls; full mobile
+controllers, receivers, consented sources and standalone mixing; conditional
+capture/routing/call features with version/permission gates. The laptop is offline:
+no laptop access or SSH; Linux physical-session and mobile-device tests are pending.
+
+The following sections retain historical evidence/checkpoints. Their pending
+merge statements describe those earlier revisions, not today's merge status.
+
 ## Channel controls and measured signal delay (2026-10-28)
 
 The merged channel DSP core (#37) supports explicit per-effect channel selection
