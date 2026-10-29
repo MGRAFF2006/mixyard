@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import signal
 import socket
 import ssl
@@ -18,6 +19,19 @@ import sys
 import tempfile
 import threading
 import time
+
+
+def cli_failure(stderr, private_root):
+    """Bounded local-owner diagnostic, never stdout/arguments/secret values."""
+    text = stderr[:8192]
+    for value in [str(private_root), str(private_root).replace('\\', '/'), str(Path.home()), tempfile.gettempdir()]:
+        if value:
+            text = text.replace(value, '<owned-path>')
+    text = re.sub(r'-----BEGIN.*?-----END[^-]*-----', '<pem>', text, flags=re.S)
+    text = re.sub(r"[\"'][^\"']*[\"']", '<quoted>', text)
+    text = re.sub(r'(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\|/)[^\s]+', '<path>', text)
+    text = re.sub(r'[A-Za-z0-9_-]{32,}', '<opaque>', text)
+    return ' '.join(text.split())[:1024] or '<no stderr>'
 
 
 def receive(stream, timeout=20):
@@ -65,9 +79,20 @@ class Service:
         self.start()
 
     def cli(self, *args):
-        result = subprocess.run([self.binary, '--state', str(self.state), *args], capture_output=True,
-                                text=True, timeout=20, check=True)
-        return json.loads(result.stdout)
+        operation = args[0] if args and args[0] in ('init', 'invite', 'trust', 'revoke') else 'unknown'
+        try:
+            result = subprocess.run([self.binary, '--state', str(self.state), *args], capture_output=True,
+                                    text=True, timeout=20)
+        except subprocess.TimeoutExpired:
+            raise AssertionError(f'Owned control CLI {operation} exceeded its 20s deadline') from None
+        except OSError as error:
+            raise AssertionError(f'Owned control CLI {operation} could not start (errno {error.errno})') from None
+        if result.returncode != 0:
+            raise AssertionError(f'Owned control CLI {operation} exit {result.returncode}: {cli_failure(result.stderr, self.root)}')
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            raise AssertionError(f'Owned control CLI {operation} returned invalid JSON') from None
 
     def start(self):
         flags = {}

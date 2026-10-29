@@ -66,6 +66,8 @@ jobs:
           cp apps/desktop/native-control/Cargo.lock evidence/native-control-Cargo.lock
           cp apps/desktop/src-tauri/Cargo.lock evidence/desktop-Cargo.lock
           cp verification/desktop-paired/Cargo.lock evidence/qualification-Cargo.lock
+      - name: Qualifier failure diagnostics stay bounded and secret-free
+        run: python -B -m unittest discover -s verification/desktop-paired -p test_cli_diagnostics.py
       - name: Build production native module and its vault-only API double
         run: |
           set -euo pipefail
