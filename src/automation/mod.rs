@@ -3,6 +3,7 @@
 mod controller;
 mod evaluate;
 mod model;
+pub mod observers;
 mod proposal;
 pub mod settings;
 mod validate;

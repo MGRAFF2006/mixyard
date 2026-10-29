@@ -9,6 +9,7 @@
 #endif
 
 #include "capture_writer.hpp"
+#include "native_worker.hpp"
 #include <algorithm>
 #include <chrono>
 #include <csignal>
@@ -159,40 +160,51 @@ static void inventory(NSMutableDictionary* result) {
     result[@"processes"] = list; // PIDs are transient runtime selectors, never persisted identities.
 }
 
-struct CaptureState {
-    mixyard::CaptureQueue queue;
-    std::atomic<uint32_t> clockFault{0};
-    bool haveTimestamp = false;
-    double nextSample = 0;
+// The legacy WAV command explicitly requests a stereo Float32 mixdown. The
+// generic native transport itself accepts exact Float32/Float64 ordered channels.
+class TapWavQueue {
+    mixyard::worker::Queue& transport;
+    mixyard::worker::HostClock clock;
+    mixyard::Chunk current;
+public:
+    std::atomic<uint32_t> dropped{0}, invalid{0};
+    explicit TapWavQueue(mixyard::worker::Queue& queue) : transport(queue) {}
+    const mixyard::Chunk* front() {
+        const auto* block = transport.front(clock.now());
+        if (transport.fault() != mixyard::worker::Fault::None)
+            throw std::runtime_error("Tap worker revoked or expired; queued capture is unqualified");
+        if (!block) return nullptr;
+        current.frames = block->frames;
+        std::memcpy(current.samples.data(), block->pcm.data(), current.frames * 8);
+        if (transport.fault() != mixyard::worker::Fault::None)
+            throw std::runtime_error("Tap worker revoked during drain");
+        return &current;
+    }
+    void pop() noexcept { transport.release(); }
 };
 
-static OSStatus receive(AudioObjectID, const AudioTimeStamp*, const AudioBufferList* input,
+struct CaptureState {
+    mixyard::worker::Queue transport;
+    TapWavQueue queue;
+    mixyard::worker::CaptureIngress ingress;
+    std::atomic<uint32_t> clockFault{0};
+    CaptureState(uint32_t rate, const AudioStreamBasicDescription& actual, std::string tapUid)
+        : transport({rate, {"FL", "FR"}, mixyard::worker::Precision::Float32}, {1, 1}, 1,
+                    {mixyard::worker::Origin::ProcessTap, std::move(tapUid)}),
+          queue(transport), ingress(transport, actual, 2000000000) {}
+};
+
+static OSStatus receive(AudioObjectID, const AudioTimeStamp* now, const AudioBufferList* input,
                         const AudioTimeStamp* inputTime, AudioBufferList*, const AudioTimeStamp*, void* context) noexcept {
     auto& s = *static_cast<CaptureState*>(context);
-    if (!input || !inputTime || (input->mNumberBuffers != 1 && input->mNumberBuffers != 2)) {
-        s.queue.invalid.fetch_add(1, std::memory_order_relaxed); return noErr;
-    }
-    const auto& left = input->mBuffers[0];
-    const bool planar = input->mNumberBuffers == 2;
-    const uint32_t bytesPerFrame = planar ? 4 : 8;
-    if (!left.mData || left.mNumberChannels != (planar ? 1u : 2u) || left.mDataByteSize % bytesPerFrame) {
-        s.queue.invalid.fetch_add(1, std::memory_order_relaxed); return noErr;
-    }
-    const uint32_t frames = left.mDataByteSize / bytesPerFrame;
-    if (frames == 0) return noErr;
-    if (frames > mixyard::maxFrames || (planar && (!input->mBuffers[1].mData ||
-        input->mBuffers[1].mNumberChannels != 1 || input->mBuffers[1].mDataByteSize != left.mDataByteSize))) {
-        s.queue.invalid.fetch_add(1, std::memory_order_relaxed); return noErr;
-    }
-    if (!(inputTime->mFlags & kAudioTimeStampSampleTimeValid) || !std::isfinite(inputTime->mSampleTime)) {
-        s.clockFault.store(1, std::memory_order_relaxed); return noErr;
-    }
-    if (s.haveTimestamp && std::fabs(inputTime->mSampleTime - s.nextSample) > 0.5)
+    if (s.ingress.receive(now, input, inputTime)) return noErr;
+    const auto fault = s.transport.fault();
+    if (fault == mixyard::worker::Fault::Overflow)
+        s.queue.dropped.fetch_add(1, std::memory_order_relaxed);
+    else if (fault == mixyard::worker::Fault::Shape || fault == mixyard::worker::Fault::Nonfinite)
+        s.queue.invalid.fetch_add(1, std::memory_order_relaxed);
+    else
         s.clockFault.store(1, std::memory_order_relaxed);
-    s.haveTimestamp = true;
-    s.nextSample = inputTime->mSampleTime + frames;
-    s.queue.push(static_cast<const float*>(left.mData),
-                 planar ? static_cast<const float*>(input->mBuffers[1].mData) : nullptr, frames);
     return noErr;
 }
 
@@ -280,7 +292,7 @@ static void capture(int argc, const char* argv[], NSMutableDictionary* result) {
             [selected addObject:@{@"pid": @(it->pid), @"bundleId": str(it->bundle)}];
         }
         OwnedCapture owned;
-        auto state = std::make_unique<CaptureState>();
+        std::unique_ptr<CaptureState> state;
         std::unique_ptr<mixyard::CaptureWriter> writer;
         std::exception_ptr failure;
         uint32_t rate = 0;
@@ -293,6 +305,7 @@ static void capture(int argc, const char* argv[], NSMutableDictionary* result) {
             const auto format = property<AudioStreamBasicDescription>(owned.tap, kAudioTapPropertyFormat);
             rate = validateFormat(format);
             NSString* tapUID = stringProperty(owned.tap, kAudioTapPropertyUID);
+            state = std::make_unique<CaptureState>(rate, format, std::string(tapUID.UTF8String));
             NSDictionary* aggregate = @{
                 @(kAudioAggregateDeviceNameKey): @"Mixyard private capture",
                 @(kAudioAggregateDeviceUIDKey): [@"org.mixyard.capture." stringByAppendingString:NSUUID.UUID.UUIDString],
@@ -356,6 +369,9 @@ static void capture(int argc, const char* argv[], NSMutableDictionary* result) {
         if (writer && writer->opened) {
             result[@"capture"] = @{@"path": str(path), @"sampleRate": @(rate), @"channels": @2,
                 @"encoding": @"float32-le", @"frames": @(writer->frames), @"hasNonzeroSamples": @(writer->hasSignal),
+                @"transport": @"bounded-tap-worker", @"engineIntegrated": @NO,
+                @"clockDomain": @"tap-session-local",
+                @"sourceClockId": @(state->transport.clockId()), @"backendAvailable": @NO, @"audioApplied": @NO,
                 @"droppedBuffers": @(state->queue.dropped.load()), @"invalidBuffers": @(state->queue.invalid.load()),
                 @"clockGap": @(state->clockFault.load() != 0), @"interrupted": @(interrupted != 0), @"selectedProcesses": selected};
         }

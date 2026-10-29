@@ -336,3 +336,71 @@ busy, missing inventory, draft preservation and 390 px keyboard operation.
 These fixtures do not prove the Rust service, runtime IPC, persistence or actual
 native observations. Combined backend integration belongs to the parent task;
 this frontend leaf does not apply audio or include backend/runtime changes.
+
+## Device-scoped shared console
+
+`App.vue` keeps the complete console in `ConsoleWorkspace.vue`. A host may pass
+`api?: Api` for one local service, or a mount-time trusted `targets` list of
+`{id, displayName, api}`. IDs must be stable and unique; transports must stay
+bound to their original endpoint. The selector remembers only its opaque target
+ID in localStorage. Routing, DSP, situation, settings and invalid form drafts
+remain in their own retained workspace memory until the window closes. No draft
+or credential is copied to another target or persisted by target selection.
+
+Switching/deactivating a workspace disconnects its API epoch. Returning explicitly
+reconnects and reads current authority before writes; it never replays a write.
+Pending old completions cannot restore snapshots, DSP/delay results, inspection,
+live context, saved-settings authority, reviews or arm approvals. Settings and
+builder drafts remain local, including invalid numeric form text. Offline or
+uncertain writes need a fresh read and review before a new explicit save.
+
+The shared native seam emits `session-state` with
+`{deviceId, authorityId, revision, displayName, connected, epoch}`. Legacy local
+CSRF services have null identity fields and grant no remote-login claim.
+`navigate(page)` opens an existing workspace page; `hasUnsavedDrafts()` is a
+synchronous close guard covering every retained target, including hidden editors.
+A native close/quit action must ask before discarding drafts when this returns
+true. Hiding a retained window does not discard them.
+
+`new Api(fetcher)` retains the protected local `/api/session` + CSRF behavior.
+`Api.forControl(fetcher, {deviceId, credential})` is the authenticated control
+adapter. Its injected fetcher must bind the relative `/control/session` and
+`/control/request` paths to one explicitly configured, trusted TLS endpoint and
+verify the service certificate/pin. The ordinary browser does not implement
+pairing, certificate trust or an arbitrary remote-origin fetcher. The fixed local
+HTTP/native CSRF bridge cannot authenticate remote control.
+
+The control adapter sends the frozen `{deviceId, authorityId, revision, path, body}`
+envelope and checks every matching response identity, exact safe-integer revision,
+HTTP/canonical status and JSON body. The bearer stays in ephemeral client memory;
+it is never added to drafts, profile exports or localStorage. View, control and
+settings rights remain independent; missing view access does not revoke granted
+settings access. Revoked credentials, process restart and revision conflicts stop
+the session and require explicit reconciliation. Remote automatic-selection
+live/review/arm are currently unsupported and rejected before dispatch. Neither
+connection nor imported inventory establishes native backend/audio availability.
+
+`src/device.test.ts` exercises the production API/session boundary with two owned
+loopback HTTP services, delayed operations, independent stores, competing clients,
+revocation and restart. These are protocol fixtures, not TLS or native evidence.
+`tests/devices.spec.ts` drives the actual mounted Vue console with trusted fixture
+transports: A/B in-flight writes, complete host-local drafts/invalid settings,
+close guard, stale native summaries/reviews/results, rights/revocation, secret-free
+exports and a 390 px layout. The fixture entry is never imported by production.
+Real TLS service/client and native-shell qualification belong to their owning
+integration layers.
+
+For bounded verification with reusable read-only dependencies, set
+`MIXYARD_WEB_CACHE_DIR` to an owned artifact directory to keep Vite metadata out
+of the dependency cache. The existing Playwright executable override remains
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`.
+
+## Network codec intent
+
+**Network codecs** edits exact per-stream raw, bit-preserving Zstd, or explicitly
+consented Opus intent without an audio connection. Import/export valid v1 config
+or preserve unfinished numeric/text fields with a portable draft backup. Drafts
+remain with their existing management-target workspace and close guard. Optional
+host capability probes are read-only and bound to the exact management session,
+stream and generation; live apply is unavailable. See the
+[codec UI contract and verification](../../docs/network-codec-controls.md).

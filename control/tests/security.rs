@@ -4,12 +4,21 @@ use hyper_util::rt::TokioIo;
 use mixyard_control::{Control, IdentityStore, Options, Permission};
 use rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
 use serde_json::{json, Value};
-use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    fs,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 use tokio_rustls::TlsConnector;
 
 struct Fixture {
     path: PathBuf,
 }
+static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 impl Fixture {
     fn new() -> Self {
         // Resolve only the pre-existing OS fixture base: macOS /var aliases
@@ -17,8 +26,9 @@ impl Fixture {
         let path = fs::canonicalize(std::env::temp_dir())
             .unwrap()
             .join(format!(
-                "mixyard-control-security-{}-{}",
+                "mixyard-control-security-{}-{}-{}",
                 std::process::id(),
+                FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -55,6 +65,35 @@ impl Fixture {
     }
     fn reopen(&self) -> IdentityStore {
         IdentityStore::open(&self.path.join("identity"), None).unwrap()
+    }
+}
+
+#[test]
+fn rapid_parallel_fixtures_create_distinct_exclusive_private_leaves() {
+    let workers: Vec<_> = (0..8)
+        .map(|_| std::thread::spawn(|| (0..8).map(|_| Fixture::new()).collect::<Vec<_>>()))
+        .collect();
+    let fixtures: Vec<_> = workers
+        .into_iter()
+        .flat_map(|worker| worker.join().unwrap())
+        .collect();
+    let paths: std::collections::BTreeSet<_> =
+        fixtures.iter().map(|fixture| &fixture.path).collect();
+    assert_eq!(paths.len(), 64);
+    for fixture in &fixtures {
+        assert!(fixture.path.join("assets/index.html").is_file());
+        assert_eq!(
+            fs::create_dir(&fixture.path).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&fixture.path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
     }
 }
 impl Drop for Fixture {
@@ -180,6 +219,40 @@ async fn raw_canonical_validation_and_remote_private_errors() {
     )
     .await;
     let settings_json = settings["body"]["settings"].to_string();
+    let inspection_config = json!({"schemaVersion":2,"revision":1,"sources":[{"id":"owned-mic","selector":{"kind":"mic","deviceUid":"owned-missing-mic"}}],"mixes":[],"sends":[],"outputs":[],"mediaControls":[]});
+    let inspection_inventory = json!({"schemaVersion":2,"revision":1,"platform":"linux","evidence":"simulated","sources":[],"outputs":[],"mediaSessions":[],"limits":{"maxExportedMixes":0,"maxOutputRoutes":0,"maxVirtualInputs":0}});
+    let config: mixyard::Config = serde_json::from_value(inspection_config.clone()).unwrap();
+    let inventory: mixyard::Inventory =
+        serde_json::from_value(inspection_inventory.clone()).unwrap();
+    let expected_inspection =
+        serde_json::to_value(mixyard::diagnostics::inspect(&config, &inventory)).unwrap();
+    let (status, inspection) = request(
+        &tls,
+        address,
+        "/control/request",
+        Some(credential),
+        envelope(
+            &session,
+            "/api/inspect",
+            json!({"config":inspection_config,"inventory":inspection_inventory}),
+        ),
+        &[],
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        inspection["body"], expected_inspection,
+        "pure inspection must retain its entire canonical projection"
+    );
+    assert_eq!(
+        inspection["body"]["plan"]["diagnostics"][0]["code"],
+        "missing-target"
+    );
+    assert!(inspection["body"]["plan"]["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("no fallback"));
+    assert_eq!(inspection["revision"], session["revision"]);
     let nodes: Vec<_> = (0..257)
         .map(|i| json!({"id":format!("terminal-{i}"),"kind":"terminal","action":{"kind":"no-change"}}))
         .collect();

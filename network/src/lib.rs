@@ -1,6 +1,8 @@
 //! Paired-peer transport and a PCM timeline boundary; deliberately no audio devices or mixer.
 #[cfg(test)]
 extern crate self as mixyard_network;
+pub mod fragment_transport;
+pub mod fragmentation;
 pub mod pcm;
 pub mod playout;
 pub mod protocol;
@@ -15,3 +17,5 @@ pub use playout::{
     Playout, PlayoutConfig, PlayoutCounters, PlayoutError, PlayoutReport, PlayoutSnapshot,
     Revocation, RevocationStatus,
 };
+
+pub mod worker;
