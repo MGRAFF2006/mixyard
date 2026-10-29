@@ -4,8 +4,9 @@ For the separate read-only schema 2 runtime inventory executable, see
 [native inventory helpers](../../docs/platform-native-inventory.md). The capture
 probe below retains its existing v1 envelope and explicit capture commands.
 
-This independent C++17 probe implements MMDevice discovery and explicit shared-mode
-WASAPI capture. It does not implement virtual microphones, per-bus mixing, media
+This independent C++17 probe implements MMDevice discovery, explicit shared-mode
+WASAPI capture and an [exact-format capture/render worker bridge](WORKER.md).
+It does not implement selectable virtual microphones, per-bus mixing, media
 controls, or recovery. Its snapshot always reports `virtualInputs`,
 `independentMixes`, and `routeRecovery` as **false**. Read
 [the virtual transport audit](TRANSPORT.md) for the separate driver milestone.
