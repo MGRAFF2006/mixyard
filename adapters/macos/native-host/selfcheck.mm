@@ -110,12 +110,14 @@ void push(w::Queue& q, uint64_t ticks, uint64_t sequence, uint64_t first, const 
     const void* lanes[]{pcm}; const uint32_t sizes[]{32};
     assert(q.push(now, {{7, 1}, 11, sequence, first, now, now + 1000000000}, 2, lanes, sizes, 1, false));
 }
-void receive(uint64_t ticks, uint64_t first, void* pcm, w::Precision precision, bool malformed = false) {
+void receive(uint64_t ticks, uint64_t first, void* pcm, w::Precision precision, bool malformed = false, bool expired = false) {
     AudioTimeStamp time{}; time.mFlags = kAudioTimeStampSampleTimeValid | kAudioTimeStampHostTimeValid;
     time.mHostTime = ticks; time.mSampleTime = static_cast<double>(first);
     AudioBufferList buffers{1, {{2, static_cast<UInt32>(precision) * 4 - (malformed ? 1u : 0u), pcm}}};
+    auto inputTime = time;
+    if (expired) inputTime.mHostTime = 1; // Deliberately stale injected capture time.
     sdk::callback = true;
-    assert(sdk::capture.proc(103, &time, &buffers, &time, nullptr, nullptr, sdk::capture.context) == noErr);
+    assert(sdk::capture.proc(103, &time, &buffers, &inputTime, nullptr, nullptr, sdk::capture.context) == noErr);
     sdk::callback = false;
 }
 void render(uint64_t ticks, uint64_t first, const double* expected, w::Precision precision, bool silence = false) {
@@ -136,7 +138,13 @@ void render(uint64_t ticks, uint64_t first, const double* expected, w::Precision
         }
     }
 }
-void linkedGraph(const char* path, w::Precision sourcePrecision, w::Precision sinkPrecision) {
+bool step(m::HostLink& link, uint64_t now, mx_stamp stamp) {
+    sdk::callback = true;
+    const auto result = link.step(now, stamp, 2);
+    sdk::callback = false;
+    return result;
+}
+void linkedGraph(const char* path, w::Precision sourcePrecision, w::Precision sinkPrecision, bool staleSource) {
     sdk::reset(sourcePrecision);
     auto capture = m::Capture::open(selection(), {7, 1}, timeline());
     auto privateQ = queue("owned-source-private", w::Origin::Synthetic, w::Precision::Float64);
@@ -165,7 +173,7 @@ void linkedGraph(const char* path, w::Precision sourcePrecision, w::Precision si
     const auto ticks = mach_absolute_time(); w::HostClock clock; const auto now = clock.nanos(ticks);
     push(*privateQ, ticks, 0, 0, privatePcm); push(*returnQ, ticks, 0, 0, returned);
     receive(ticks, 0, sourcePrecision == w::Precision::Float64 ? static_cast<void*>(const_cast<double*>(precise)) : narrowed, sourcePrecision);
-    assert(link->step(now, {7, 1, 11, 0, 0, now, now + 1000000000}, 2));
+    assert(step(*link, now, {7, 1, 11, 0, 0, now, now + 1000000000}));
     render(ticks, 0, shared, w::Precision::Float64);
     assert(call->close()); call.reset(); // Closing one consumer preserves sibling PCM.
     sdk::output.uid = "injected-output-b"; sdk::output.pcm = sdk::format(sinkPrecision);
@@ -173,12 +181,19 @@ void linkedGraph(const char* path, w::Precision sourcePrecision, w::Precision si
     render(ticks, 0, recorded, sinkPrecision);
     const auto later = mach_absolute_time(); const auto laterNs = clock.nanos(later);
     push(*privateQ, later, 1, 2, privatePcm); push(*returnQ, later, 1, 2, returned);
-    receive(later, 2, narrowed, w::Precision::Float32, true); // Terminal malformed source, no stale replay.
+    receive(later, 2, sourcePrecision == w::Precision::Float64 ? static_cast<void*>(const_cast<double*>(precise)) : narrowed,
+            sourcePrecision, !staleSource, staleSource);
     assert(capture->queue().fault() != w::Fault::None);
-    assert(link->step(laterNs, {7, 1, 11, 1, 2, laterNs, laterNs + 1000000000}, 2));
+    assert(capture->queue().fault() == (staleSource ? w::Fault::Expired : w::Fault::Shape));
+    assert(step(*link, laterNs, {7, 1, 11, 1, 2, laterNs, laterNs + 1000000000}));
     for (unsigned i = 0; i < 4; ++i) recorded[i] = 0.125 * returned[i];
     render(later, 2, recorded, sinkPrecision);
-    link->cancel(); assert(!link->step(laterNs, {7, 1, 11, 2, 4, laterNs, laterNs + 1000000000}, 2));
+    // Native output loss stops that owned unit and preserves source siblings.
+    const auto notice = sdk::outputNotices[0];
+    dispatch_sync(notice.queue, ^{ notice.block(0, nullptr); });
+    assert(recordQ->fault() == w::Fault::Revoked && !sdk::output.running);
+    assert(privateQ->fault() == w::Fault::None && returnQ->fault() == w::Fault::None);
+    link->cancel(); assert(!step(*link, laterNs, {7, 1, 11, 2, 4, laterNs, laterNs + 1000000000}));
     render(later, 4, recorded, sinkPrecision, true);
     rejects([&] { capture->start(); });
     assert(capture->close()); assert(record->close());
@@ -190,7 +205,8 @@ int main(int argc, char** argv) {
     @autoreleasepool {
         sourceLifecycle();
         for (auto source : {w::Precision::Float32, w::Precision::Float64})
-            for (auto sink : {w::Precision::Float32, w::Precision::Float64}) linkedGraph(argv[1], source, sink);
+            for (auto sink : {w::Precision::Float32, w::Precision::Float64})
+                for (bool stale : {false, true}) linkedGraph(argv[1], source, sink, stale);
     }
     std::cout << "Actual Rust host + production tap ingress/output-only callback: scoped mixing, output DSP, exact source precision, explicit sink conversion, failure cleanup and isolation passed. Injected SDK clocks/identities only; no native audio.\n";
 }
