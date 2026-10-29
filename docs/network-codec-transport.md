@@ -143,6 +143,12 @@ affected generation; its old buffered samples then render silence. Reordered
 fragments/blocks wait for source-order consumption. Missing raw/Zstd blocks are
 explicit local-schedule silence; Opus requires contiguous predictor order, so a
 consumer skip/loss requires an explicit new generation. There is no hidden PLC.
+The receive worker scans the bounded raw/Zstd window past missing, consumed or
+expired fragment slots so later complete blocks can prebuffer on their original
+sample positions. Lossless expiry retains replay tombstones and does not revoke
+the generation. Playout counts missing silence and schedule skips. Opus has a
+separate decode cursor: already-buffered blocks do not stall later arrivals, but
+an undecoded source slot passed by the renderer still requires a new generation.
 
 `codec_timeline_observation(&playout)` carries the original Spec/provenance,
 exact request, original sample-frame cursor as a decimal string, explicit

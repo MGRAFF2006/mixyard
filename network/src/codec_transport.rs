@@ -405,6 +405,9 @@ pub(super) struct ReceivingCodec {
     pub decoder: codec::Decoder<Spec>,
     pub life: Arc<Lifecycle>,
     pub claimed: bool,
+    // Stateful predictor progress is independent of how much buffered audio the
+    // consumer has rendered. Raw/Zstd can fill any complete slot in the window.
+    pub next_decode: u64,
     pub measurements: Measurements,
 }
 
@@ -513,6 +516,7 @@ impl FragmentSession {
                 decoder,
                 life: Arc::new(Lifecycle::new()),
                 claimed: false,
+                next_decode: 0,
                 measurements: Measurements::default(),
             },
             d,
@@ -727,14 +731,28 @@ impl FragmentSession {
         );
         let next = playout.next / u64::from(playout.spec().frames_per_packet);
         reassembler.advance(id, generation, next)?;
+        let stateful = matches!(state.request.encoding, Encoding::Opus { .. });
+        if stateful && state.next_decode < next {
+            state.life.invalidate();
+            state.decoder.revocation().revoke();
+            anyhow::bail!("Opus source slot lost; fresh codec generation required");
+        }
+        let first = if stateful { state.next_decode } else { next };
         let mut inserted = 0;
-        for sequence in next..next
-            .checked_add(self.config.window as u64)
-            .context("codec window exhausted")?
+        for sequence in first
+            ..next
+                .checked_add(self.config.window as u64)
+                .context("codec window exhausted")?
         {
             let block = match reassembler.take(id, generation, sequence, Instant::now()) {
                 Ok(Some(block)) => block,
-                Ok(None) => break,
+                Ok(None) if stateful => break,
+                // Missing, pending and already-transferred stateless slots do
+                // not prevent later complete envelopes from prebuffering.
+                Ok(None) => continue,
+                // Expired raw/Zstd fragments are packet loss, not a failed
+                // predictor. Keep the tombstone; render counts scheduled silence.
+                Err(fragmentation::Error::Expired) if !stateful => continue,
                 Err(e) => {
                     state.life.invalidate();
                     state.decoder.revocation().revoke();
@@ -770,6 +788,11 @@ impl FragmentSession {
             );
             playout.insert(sequence, &raw);
             raw.fill(0);
+            if stateful {
+                state.next_decode = sequence
+                    .checked_add(1)
+                    .context("codec sequence exhausted")?;
+            }
             inserted += 1;
         }
         Ok(inserted)
