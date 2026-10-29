@@ -437,9 +437,10 @@ void topologyAndRaces() {
         auto q = queue(); auto worker = out::Worker::open("chosen-output", *q);
         // Model an event retained by HAL until AFTER successful listener removal.
         const auto late = Block_copy(g.notices[0].callback);
+        const auto lateAddress = g.notices[0].address;
         const auto control = g.notices[0].queue; dispatch_retain(control);
         assert(worker->close()); worker.reset();
-        dispatch_sync(control, ^{ late(0, nullptr); });
+        dispatch_sync(control, ^{ late(1, &lateAddress); });
         Block_release(late); dispatch_release(control);
     }
     clean();

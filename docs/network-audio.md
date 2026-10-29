@@ -128,8 +128,11 @@ Packets contain a negotiated fixed positive number of whole sample frames.
 `sample_bytes * channel_count * frames_per_packet + 40` must fit the configured
 application datagram budget (at most 1200 bytes) **and** Quinn's current path
 limit. Reduce frames per packet explicitly if needed; if even one sample frame
-cannot fit, admission fails with a limit error. Fragmenting one sample frame
-across datagrams is unimplemented. The bounded `enqueue_pcm` packetizer accepts sample-aligned source blocks,
+cannot fit, v1 admission fails with a limit error. The separate opt-in
+[authenticated fragmented-block endpoint](network-fragment-transport.md) lifts
+that framing limit with exact reliable version-2 agreement and its own block,
+fragment-header rate and reassembly admission. It does not narrow this v1
+descriptor or silently switch modes. The bounded `enqueue_pcm` packetizer accepts sample-aligned source blocks,
 retains at most one incomplete packet per stream and never pads/truncates it.
 Each worker submission is limited to that stream's configured queue payload budget;
 split larger source blocks into smaller sample-aligned submissions. Disconnect or

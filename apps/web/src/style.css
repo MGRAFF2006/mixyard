@@ -276,3 +276,9 @@ footer { display: flex; justify-content: space-between; color: #50657a; font-siz
   .situation-activation .actions { align-items: stretch; }
   .situation-activation button { white-space: normal; overflow-wrap: anywhere; }
 }
+
+.device-target { max-width: 1440px; margin: 1rem auto; padding: 1rem 1.5rem; background: #fff; border: 1px solid #c6d3df; border-radius: 8px; overflow-wrap: anywhere; }
+.device-target label { font-weight: 700; margin-right: .75rem; }
+.device-target select { max-width: 100%; margin-right: 1rem; }
+.device-target p { margin: .5rem 0 0; }
+@media (max-width: 600px) { .device-target { margin: .5rem; padding: 1rem; } .device-target select { display: block; margin: .5rem 0; width: 100%; } }
