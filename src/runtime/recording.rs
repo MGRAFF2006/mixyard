@@ -304,7 +304,7 @@ impl Recorder {
             return Err(Error::Gap);
         }
         let limits = self.consent.limits;
-        if payload.is_empty() || payload.len() % format.frame_bytes() != 0 {
+        if payload.is_empty() || !payload.len().is_multiple_of(format.frame_bytes()) {
             return Err(Error::Invalid(
                 "require complete nonempty interleaved frames",
             ));
@@ -429,7 +429,7 @@ fn scan(source: &mut File, limits: Limits, mut output: Option<&mut File>) -> Res
         if &raw[..4] != b"DATA"
             || first != report.frames
             || len == 0
-            || len % report.metadata.format.frame_bytes() != 0
+            || !len.is_multiple_of(report.metadata.format.frame_bytes())
         {
             report.ending = Ending::Corrupt;
             break;
