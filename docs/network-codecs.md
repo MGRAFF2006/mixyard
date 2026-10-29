@@ -246,9 +246,12 @@ Throughput, CPU, latency and memory will change with inputs, libraries and host 
 Authentication, production reliable-control plan serialization, exact Spec adapter
 validation, Session integration, datagram fragmentation/MTU, packet loss recovery,
 pacing, native endpoints, two-host/LAN tests, physical latency, sustained heavy
-load and Windows/macOS system-library execution remain separate qualification
-gates. Existing network CI does not execute this nested workspace yet; the parent
-owns adding its authenticated integration and hosted checks.
+load remain separate qualification gates. The dedicated
+[platform workflow](network-codec-platforms.md) now requests actual system-library
+worker tests and synthetic TCP loopback on Linux, Windows and macOS, separately
+from raw-only checks. A requested job is not passing platform evidence: inspect
+the exact revision's run and uploaded logs before making a qualification claim.
+Authenticated integration remains independently owned by the parent.
 
 ## Dependency sources and distribution
 
@@ -266,3 +269,8 @@ its BSD-style terms and additional patent-license references;
 associated royalty-free patent grants. Retain applicable notices and review
 those terms for each distribution. This implementation makes no certification,
 trademark, third-party patent clearance or shipped-binary licensing claim.
+
+The [authenticated codec adapter](network-codec-transport.md) integrates these
+workers with exact Session grants, TLS-exporter bindings, separately admitted
+MXAFv3 variable envelopes, source pacing and the existing revoked raw Playout.
+Its paired QUIC tests are separate from this library's standalone TCP fixture.
