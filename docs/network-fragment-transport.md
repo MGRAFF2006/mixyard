@@ -112,3 +112,7 @@ cached dependencies; hosted Cargo and three-OS results are separate gates.
 Unqualified: native consumer delivery, hardware clocks, cross-host transport,
 physical latency, endurance/high-rate capacity, codec integration and production
 pairing storage. This work never sets `backendAvailable` or `audioApplied`.
+
+Optional [authenticated codec delivery](network-codec-transport.md) uses a
+separately admitted variable-envelope MXAFv3 mode with reserved maximum windows.
+The v2 raw block contract remains exact; encoded bytes never become a raw Spec.

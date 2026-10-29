@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 pub const HEADER: usize = 48;
 pub const VERSION: u16 = 2;
+/// Separately admitted variable-length codec envelopes; never canonical raw PCM.
+pub const VARIABLE_VERSION: u16 = 3;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -100,6 +102,7 @@ impl Config {
 pub struct Fragmenter {
     config: Config,
     descriptor: Descriptor,
+    variable: bool,
 }
 
 impl Fragmenter {
@@ -108,11 +111,25 @@ impl Fragmenter {
         if config.reservation(descriptor)? > config.max_buffered_bytes {
             return Err(Error::Budget);
         }
-        Ok(Self { config, descriptor })
+        Ok(Self {
+            config,
+            descriptor,
+            variable: false,
+        })
+    }
+
+    /// The descriptor's block_bytes is a reserved maximum, not a raw PCM size.
+    pub fn variable(config: Config, descriptor: Descriptor) -> Result<Self> {
+        let mut sender = Self::new(config, descriptor)?;
+        sender.variable = true;
+        Ok(sender)
     }
 
     pub fn fragments<'a>(&'a self, sequence: u64, block: &'a [u8]) -> Result<Fragments<'a>> {
-        if block.len() != self.descriptor.block_bytes {
+        if block.is_empty()
+            || block.len() > self.descriptor.block_bytes
+            || (!self.variable && block.len() != self.descriptor.block_bytes)
+        {
             return Err(Error::InvalidDescriptor);
         }
         let timestamp = sequence
@@ -150,7 +167,14 @@ impl Iterator for Fragments<'_> {
         let payload = &self.block[self.offset..end];
         let mut bytes = Vec::with_capacity(HEADER + payload.len());
         bytes.extend_from_slice(b"MXAF");
-        bytes.extend_from_slice(&VERSION.to_be_bytes());
+        bytes.extend_from_slice(
+            &(if self.sender.variable {
+                VARIABLE_VERSION
+            } else {
+                VERSION
+            })
+            .to_be_bytes(),
+        );
         bytes.extend_from_slice(&(payload.len() as u16).to_be_bytes());
         for value in [
             self.sender.descriptor.stream,
@@ -203,6 +227,7 @@ enum Slot {
 
 struct Stream {
     descriptor: Descriptor,
+    variable: bool,
     next: u64,
     reservation: usize,
     revoked: bool,
@@ -234,6 +259,16 @@ impl Reassembler {
     /// Trusted control path only, after exact format/provenance/consent checks.
     /// Restart needs a strictly newer generation; revocation needs a new session.
     pub fn admit(&mut self, descriptor: Descriptor) -> Result<()> {
+        self.admit_inner(descriptor, false)
+    }
+
+    /// Reliable authenticated caller must agree the envelope maximum and codec plan.
+    /// Reserve the entire maximum window before a first fragment can allocate.
+    pub fn admit_variable(&mut self, maximum: Descriptor) -> Result<()> {
+        self.admit_inner(maximum, true)
+    }
+
+    fn admit_inner(&mut self, descriptor: Descriptor, variable: bool) -> Result<()> {
         self.ensure_connected()?;
         let reservation = self.config.reservation(descriptor)?;
         let previous = self.streams.get(&descriptor.stream);
@@ -256,6 +291,7 @@ impl Reassembler {
             descriptor.stream,
             Stream {
                 descriptor,
+                variable,
                 next: 0,
                 reservation,
                 revoked: false,
@@ -298,7 +334,8 @@ impl Reassembler {
         if bytes.len() <= HEADER
             || bytes.len() > self.config.max_datagram
             || &bytes[..4] != b"MXAF"
-            || u16::from_be_bytes(bytes[4..6].try_into().unwrap()) != VERSION
+            || ![VERSION, VARIABLE_VERSION]
+                .contains(&u16::from_be_bytes(bytes[4..6].try_into().unwrap()))
             || usize::from(u16::from_be_bytes(bytes[6..8].try_into().unwrap()))
                 != bytes.len() - HEADER
         {
@@ -315,7 +352,16 @@ impl Reassembler {
         if sequence < stream.next || sequence - stream.next >= self.config.window as u64 {
             return Err(Error::Window);
         }
-        if block_bytes != stream.descriptor.block_bytes
+        let version = u16::from_be_bytes(bytes[4..6].try_into().unwrap());
+        if version
+            != if stream.variable {
+                VARIABLE_VERSION
+            } else {
+                VERSION
+            }
+            || block_bytes == 0
+            || block_bytes > stream.descriptor.block_bytes
+            || (!stream.variable && block_bytes != stream.descriptor.block_bytes)
             || sequence.checked_mul(stream.descriptor.frames_per_block) != Some(timestamp)
             || offset >= block_bytes
             || !offset.is_multiple_of(capacity)
@@ -342,6 +388,10 @@ impl Reassembler {
             Slot::Consumed => return Ok(Outcome::Duplicate),
             Slot::Data(pending) => pending,
         };
+        if pending.payload.len() != block_bytes {
+            *slot = Slot::Failed(Error::Conflict);
+            return Err(Error::Conflict);
+        }
         let end = offset + bytes.len() - HEADER;
         if pending.present[index] != 0 {
             if pending.payload[offset..end] == bytes[HEADER..] {

@@ -266,3 +266,8 @@ its BSD-style terms and additional patent-license references;
 associated royalty-free patent grants. Retain applicable notices and review
 those terms for each distribution. This implementation makes no certification,
 trademark, third-party patent clearance or shipped-binary licensing claim.
+
+The [authenticated codec adapter](network-codec-transport.md) integrates these
+workers with exact Session grants, TLS-exporter bindings, separately admitted
+MXAFv3 variable envelopes, source pacing and the existing revoked raw Playout.
+Its paired QUIC tests are separate from this library's standalone TCP fixture.
