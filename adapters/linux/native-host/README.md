@@ -225,3 +225,37 @@ missing reports fail. The two server epochs exercise SIGTERM and SIGINT.
 PipeWire context: late masking leaves the worker unmasked and terminates it;
 early masking inherits correctly and lets the owner acknowledge and join.
 This kernel-mechanism regression does not replace actual SDK cancellation proof.
+
+Runtime diagnostics are part of qualification, including successful PCM cases.
+`process_capture.py` drains each owned child's stdout/stderr through bounded
+pipes on a control-only reader thread: client stdout 64 KiB, all stderr 16 KiB,
+daemon stdout 16 KiB, at most eleven children. One byte beyond a bound proves
+overflow and stops that owned child. No unbounded log file can fill the runner.
+Readers are joined and UTF-8 is decoded strictly before validation. Nonempty
+normal/cancel client stderr, any daemon output (including shutdown), malformed
+or missing reports, unknown capture state, invalid encoding and overflow fail.
+The pre-PCM `pw-dump` any-stderr gate is unchanged.
+
+The deliberate server-loss case alone accepts exactly one full line
+`native core error -32: connection error` plus newline, only after the supervisor
+actually stopped/reaped its owned daemon with SIGTERM without escalation and
+the native report records one complete core-ID-0 EPIPE event with that exact
+message. The native binary is explicitly launched in its server-loss scenario;
+additional diagnostics, different causes, partial messages or warnings reject.
+This is not a prefix waiver and does not apply to the separate build-time SPA
+pool-exhaustion counterexample.
+
+Before publishing success, qualification inspects the complete daemon lifetime
+and all clients. `native-evidence.json` is written outside the deleted graph
+directory on success AND failure. It retains partial completed cases, each
+capture's validation/stop/EOF state, bounded raw bytes as Base64 (including
+undecodable bytes), and useful text prefixes. The artifact is exclusive mode
+0600 and capped at 4 MiB; oversized evidence is a failure, never truncated into
+a success. Workflow upload runs even when qualification fails. New real-child
+control tests reproduce the old passing-report-plus-warning false-green and
+require warning rejection, clean controls, late daemon diagnostic rejection,
+byte/encoding bounds and exact intentional-disconnect validation. Old 3b98
+native observations did not enforce this diagnostic gate; a new fully gated
+hosted run is required before qualification. Accepted main 4e45fb295e5c1dfa7aa1a0f30604ef56084a4fe5
+has been normally merged, so that next run builds the accepted #103 host, not
+only the previously source-compared b719 implementation.

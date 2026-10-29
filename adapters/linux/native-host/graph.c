@@ -96,6 +96,8 @@ struct app {
     bool quiet_started;
     bool topology_written, linked, expected_loss, cancelled, stop_signals_ready;
     int stop_signal;
+    struct { uint32_t count, id; int sequence, result; bool complete; char message[256]; } core_failure;
+    bool expected_server_loss;
     const char *directory;
 };
 
@@ -529,9 +531,21 @@ static const struct pw_registry_events registry_events = {
     PW_VERSION_REGISTRY_EVENTS, .global = global_added, .global_remove = global_removed
 };
 static void core_error(void *userdata, uint32_t id, int seq, int res, const char *message) {
-    (void)id; (void)seq;
-    fprintf(stderr, "native core error %d: %s\n", res, message);
-    fail(userdata, 46);
+    struct app *a = userdata;
+    if (a->core_failure.count != UINT32_MAX) ++a->core_failure.count;
+    size_t n = message ? strnlen(message, sizeof(a->core_failure.message)) : 0;
+    bool complete = message && n < sizeof(a->core_failure.message);
+    if (a->core_failure.count == 1) {
+        a->core_failure.id = id; a->core_failure.sequence = seq; a->core_failure.result = res;
+        a->core_failure.complete = complete;
+        size_t kept = n < sizeof(a->core_failure.message)-1 ? n : sizeof(a->core_failure.message)-1;
+        if (message) memcpy(a->core_failure.message, message, kept);
+        a->core_failure.message[kept] = 0;
+    }
+    // Preserve the diagnostic; a capped/incomplete message can never qualify.
+    fprintf(stderr, "native core error %d: %.*s%s\n", res, (int)n,
+        message ? message : "", complete ? "" : " [message-limit-or-null]");
+    fail(a, 46);
 }
 static const struct pw_core_events core_events = { PW_VERSION_CORE_EVENTS, .error = core_error };
 static struct global *find_port(struct app *a, unsigned node, const char *direction, unsigned index) {
@@ -953,6 +967,18 @@ static void print_format_reports(const struct app *a) {
         atomic_load(&a->consumer_prior_epoch[0]), atomic_load(&a->consumer_prior_epoch[1]), atomic_load(&a->consumer_prior_epoch[2]));
     printf(",\"sourceStopBeforeDestroy\":%s,\"sourceRemovalObserved\":%s,\"sourceStopFrame\":%" PRIu64,
         a->source_stop_before_destroy ? "true" : "false", a->source_removal_observed ? "true" : "false", a->source_stop_frame);
+    printf(",\"expectedServerLoss\":%s,\"coreErrorCount\":%u,\"coreError\":",
+        a->expected_server_loss ? "true" : "false", a->core_failure.count);
+    if (a->core_failure.count) {
+        json_object *event = json_object_new_object();
+        json_object_object_add(event, "id", json_object_new_int64(a->core_failure.id));
+        json_object_object_add(event, "sequence", json_object_new_int(a->core_failure.sequence));
+        json_object_object_add(event, "result", json_object_new_int(a->core_failure.result));
+        json_object_object_add(event, "messageComplete", json_object_new_boolean(a->core_failure.complete));
+        json_object_object_add(event, "message", json_object_new_string(a->core_failure.message));
+        printf("%s", json_object_to_json_string_ext(event, JSON_C_TO_STRING_PLAIN));
+        json_object_put(event);
+    } else printf("null");
     mx_native_print_first_failure("firstChunkFailure", &a->chunk_failure);
     mx_native_print_first_failure("firstSampleMismatch", &a->mismatch_failure);
     printf("}\n");
@@ -975,6 +1001,7 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[2], "normal")) a.mode = NORMAL;
     else if (!strcmp(argv[2], "output-failure")) a.mode = OUTPUT_FAILURE;
     else if (!strcmp(argv[2], "tail-loss")) a.mode = TAIL_LOSS;
+    else if (!strcmp(argv[2], "server-loss")) { a.mode = NORMAL; a.expected_server_loss = true; }
     else return 2;
     // Block before pw_init can create workers: signalfd registration alone
     // cannot retroactively mask a thread that already inherited an open mask.
