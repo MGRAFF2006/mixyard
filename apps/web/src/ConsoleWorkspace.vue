@@ -3,6 +3,8 @@ import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive,
 import LevelControl from './LevelControl.vue'
 import ProcessingPanel from './ProcessingPanel.vue'
 import SituationsPanel from './SituationsPanel.vue'
+import NetworkCodecs from './NetworkCodecs.vue'
+import type { CodecProbe } from './network-codecs.ts'
 import type { ApiClient } from './api.ts'
 import { ConsoleSession } from './session.ts'
 import { copy, MAX_INPUT_BYTES, object, parseImport, readConfig, readInventory, setLevel } from './model.ts'
@@ -10,12 +12,13 @@ import type { Config, Level, Mix, Source } from './model.ts'
 import exampleConfig from './example-config.json?raw'
 import exampleInventory from './example-inventory.json?raw'
 
-const props = defineProps<{ api: ApiClient }>()
+const props = defineProps<{ api: ApiClient; targetId?: string; codecHost?: CodecProbe }>()
 const s = reactive(new ConsoleSession(props.api))
 watch(() => s.api.epoch, () => s.invalidate(), { flush: 'sync' })
-const page = ref<'Routing' | 'Profiles' | 'Inspect' | 'Processing' | 'Situations'>('Routing')
+const page = ref<'Routing' | 'Profiles' | 'Inspect' | 'Processing' | 'Situations' | 'Network codecs'>('Routing')
 const processingPanel = ref<InstanceType<typeof ProcessingPanel> | null>(null)
 const situationsPanel = ref<InstanceType<typeof SituationsPanel> | null>(null)
+const networkCodecs = ref<InstanceType<typeof NetworkCodecs> | null>(null)
 const configText = ref(''), inventoryText = ref('')
 const profileId = ref(''), profileName = ref(''), newMixName = ref('')
 const selected = computed(() => s.snapshot?.profiles.find(p => p.id === profileId.value))
@@ -88,7 +91,7 @@ async function undo() { if (canReplace('Restore the previous stored draft')) awa
 function saveDraft() { if (s.local) void s.edit({ kind: 'draft', config: copy(s.local) }) }
 function saveProfile(id: string | null) { if (s.local && profileName.value.trim()) void s.edit({ kind: 'save', id, name: profileName.value.trim(), config: copy(s.local) }) }
 function selectProfile() { profileName.value = selected.value?.name ?? '' }
-function hasUnsavedDrafts() { return s.dirty || !!s.inventory || !!configText.value || !!inventoryText.value || !!newMixName.value || !!profileName.value || !!processingPanel.value?.hasUnsavedDrafts() || !!situationsPanel.value?.hasUnsavedDrafts() }
+function hasUnsavedDrafts() { return s.dirty || !!s.inventory || !!configText.value || !!inventoryText.value || !!newMixName.value || !!profileName.value || !!processingPanel.value?.hasUnsavedDrafts() || !!situationsPanel.value?.hasUnsavedDrafts() || !!networkCodecs.value?.hasUnsavedDrafts() }
 function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsavedDrafts()) { event.preventDefault(); event.returnValue = '' } }
 onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onActivated(() => { void s.refresh() })
@@ -107,14 +110,15 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
     </header>
     <p class="scope-note">Configure and inspect routing intent. This console does not apply audio, capture sound, or control the runtime.</p>
     <nav aria-label="Workspace">
-      <button v-for="tab in (['Routing', 'Profiles', 'Inspect', 'Processing', 'Situations'] as const)" :key="tab" :aria-current="page === tab ? 'page' : undefined" @click="page = tab">{{ tab }}</button>
+      <button v-for="tab in (['Routing', 'Profiles', 'Inspect', 'Processing', 'Situations', 'Network codecs'] as const)" :key="tab" :aria-current="page === tab ? 'page' : undefined" @click="page = tab">{{ tab }}</button>
     </nav>
     <main id="workspace" tabindex="-1">
+      <NetworkCodecs v-show="page === 'Network codecs'" ref="networkCodecs" :api="s.api" :target-id="targetId ?? 'local'" :host="codecHost" />
       <div v-if="s.error" class="message error" role="alert"><strong>Action failed.</strong> {{ s.error }} <span v-if="s.needsRefresh">Refresh before another store write.</span></div>
       <div v-if="s.statusError || s.status?.error" class="message warning"><p>Runtime is not connected. Draft editing is still available.</p><details><summary>Connection details</summary>{{ s.statusError || s.status?.error }}</details></div>
       <div v-if="s.needsRefresh && !s.busy && s.canRead" class="message warning">Store writes paused. Start the local service if needed, then <button @click="s.refresh()">Refresh and review</button>. Local edits are kept; no write is retried automatically.</div>
-      <p v-if="s.notice && page !== 'Processing' && page !== 'Situations'" class="message success" role="status">{{ s.notice }}</p>
-      <div v-show="page !== 'Processing' && page !== 'Situations'" class="draft-bar">
+      <p v-if="s.notice && page !== 'Processing' && page !== 'Situations' && page !== 'Network codecs'" class="message success" role="status">{{ s.notice }}</p>
+      <div v-show="page !== 'Processing' && page !== 'Situations' && page !== 'Network codecs'" class="draft-bar">
         <div><strong>{{ s.dirty ? 'Unsaved draft edits' : s.local ? 'Draft matches stored copy' : 'No draft loaded' }}</strong>
           <span v-if="s.snapshot" class="secondary">Store revision {{ s.snapshot.storeRevision }}<template v-if="s.local"> / Config revision {{ s.local.revision }}</template></span>
         </div>
@@ -125,8 +129,8 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
           <button :disabled="!s.local" @click="exportJson(s.local, 'mixyard-config.json')">Export config</button>
         </div>
       </div>
-      <p v-if="simulated && page !== 'Processing' && page !== 'Situations'" class="simulated">Simulated example / inventory. These identities and observations do not establish real devices or audio.</p>
-      <p v-if="s.validated && page !== 'Processing' && page !== 'Situations'" class="validation">Core validation passed for the current config. Audio remains unapplied.</p>
+      <p v-if="simulated && page !== 'Processing' && page !== 'Situations' && page !== 'Network codecs'" class="simulated">Simulated example / inventory. These identities and observations do not establish real devices or audio.</p>
+      <p v-if="s.validated && page !== 'Processing' && page !== 'Situations' && page !== 'Network codecs'" class="validation">Core validation passed for the current config. Audio remains unapplied.</p>
 
       <section v-show="page === 'Routing'" aria-labelledby="routing-title">
         <div class="section-heading"><div><h2 id="routing-title">Routing matrix</h2><p>Each cell owns one source-to-mix send. Gain and mute are independent.</p></div><button :disabled="s.busy" @click="example">Load simulated example</button></div>
@@ -195,7 +199,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
 
       <ProcessingPanel ref="processingPanel" v-show="page === 'Processing'" :api="s.api" :epoch="s.api.epoch" :ready="s.api.connected && !s.busy" />
 
-      <details v-show="page !== 'Processing' && page !== 'Situations'" class="imports"><summary>Import / export JSON <span>Config and inventory, schema 2</span></summary>
+      <details v-show="page !== 'Processing' && page !== 'Situations' && page !== 'Network codecs'" class="imports"><summary>Import / export JSON <span>Config and inventory, schema 2</span></summary>
         <div class="import-grid"><div><h3>Configuration</h3><p>Imports are shape-checked and validated by the core before replacing local edits. Full JSON fields are kept.</p><label for="config-file">Import config file (up to 128 KiB)</label><input id="config-file" type="file" accept=".json,application/json" :disabled="s.busy" @change="importFile('config', $event)" /><label for="config-json">Or paste config JSON</label><textarea id="config-json" v-model="configText" rows="5" spellcheck="false" :disabled="s.busy"></textarea><button :disabled="s.busy || !configText.trim()" @click="importText('config', configText)">Import pasted config</button></div>
           <div><h3>Inventory</h3><p>Imported observations do not prove live state. Inventory is separate from the persisted config.</p><label for="inventory-file">Import inventory file (up to 128 KiB)</label><input id="inventory-file" type="file" accept=".json,application/json" :disabled="s.busy" @change="importFile('inventory', $event)" /><label for="inventory-json">Or paste inventory JSON</label><textarea id="inventory-json" v-model="inventoryText" rows="5" spellcheck="false" :disabled="s.busy"></textarea><div class="actions"><button :disabled="s.busy || !inventoryText.trim()" @click="importText('inventory', inventoryText)">Import pasted inventory</button><button :disabled="!s.inventory" @click="exportJson(s.inventory, 'mixyard-inventory.json')">Export inventory</button></div></div>
         </div>
