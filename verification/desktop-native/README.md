@@ -1,3 +1,41 @@
+# Current shared-console qualification
+
+The desktop now consumes `apps/web/src/App.vue`, replacing the former prototype
+fixture mixer. The current hosted harness starts both an independent real runtime
+and an independent `mixyard-web` process, using disposable storage and a numeric
+loopback port. It exercises the actual native `console_request` transport, explicit
+simulated example edits (stored intent only), native keyboard rendering, compact
+resize/profile navigation, real service-backed draft/profile writes, cancelled
+unsaved-draft close, and confirmed close.
+The same-runtime kernel peer PID/CLI survival, late-generation subscription checks
+and explicit CLI shutdown remain required. `MIXYARD_DESKTOP_NO_TRAY=1` exercises the
+full-window fallback without a tray host. No extension is installed or assumed.
+
+The wrapper now takes **five arguments**:
+
+```sh
+bash verification/desktop-native/run-linux.sh DESKTOP_BINARY RUNTIME_BINARY CLI_BINARY WEB_BINARY EVIDENCE_DIRECTORY
+```
+
+`WEB_BINARY` must be the separately built production `mixyard-web`, with the
+current checkout's built `apps/desktop/dist` assets. The runtime connection form
+is explicitly separate local lifecycle diagnostics and never changes the console's
+management target. Editable console ranges are stored intent; the live audio mute
+remains disabled even while lifecycle IPC is connected.
+
+The workflow also runs std-only native HTTP boundary tests on all three OSes and
+generates unsigned deb/AppImage, MSI/NSIS and app/DMG bundles with hosted SDKs.
+`packages.py` fails if any declared format is absent, and fingerprints actual
+artifacts. Installation, upgrades, rollback, autostart, signing/notarization,
+physical desktop hosts, Windows/macOS GUI behavior and audio are unqualified.
+The [desktop matrix](../../apps/desktop/README.md) records these boundaries.
+
+**The 2026-10-14 results below are historical prototype evidence. They do not
+qualify the shared console or the changed harness. Only a passing current-HEAD
+`linux-webview.json` and current per-runner artifacts establish current checks.**
+
+---
+
 # Desktop native qualification
 
 This component builds and executes the Tauri shell with an explicitly
@@ -47,7 +85,7 @@ cd ../..
 cargo install tauri-driver --locked --jobs 2
 bash verification/desktop-native/run-linux.sh \
   apps/desktop/src-tauri/target/release/mixyard-desktop \
-  target/headless-runtime/release/mixyard-runtime target/headless-runtime/release/mixyard \
+  target/headless-runtime/release/mixyard-runtime target/headless-runtime/release/mixyard target/headless-runtime/release/mixyard-web \
   /tmp/desktop-native-evidence
 ```
 

@@ -10,6 +10,7 @@ on:
       - 'tests/runtime*.rs'
       - '.github/workflows/runtime.yml'
       - 'apps/desktop/**'
+      - 'apps/web/**'
       - 'verification/desktop-native/**'
       - '.github/workflows/desktop-native.yml'
   pull_request:
@@ -20,6 +21,7 @@ on:
       - 'tests/runtime*.rs'
       - '.github/workflows/runtime.yml'
       - 'apps/desktop/**'
+      - 'apps/web/**'
       - 'verification/desktop-native/**'
       - '.github/workflows/desktop-native.yml'
 
@@ -39,14 +41,22 @@ jobs:
         include:
           - os: ubuntu-24.04
             binary: mixyard-desktop
+            bundles: deb,appimage
+            test_suffix: ""
           - os: windows-2022
             binary: mixyard-desktop.exe
+            bundles: msi,nsis
+            test_suffix: .exe
           - os: macos-14
             binary: mixyard-desktop
+            bundles: app,dmg
+            test_suffix: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_TARGET_DIR: ${{ github.workspace }}/apps/desktop/src-tauri/target
     defaults:
       run:
@@ -77,7 +87,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libwebkit2gtk-4.1-dev librsvg2-dev \
             libayatana-appindicator3-dev webkit2gtk-driver \
-            xvfb xauth xdotool openbox dbus-x11 fonts-dejavu-core
+            xvfb xauth xdotool openbox dbus-x11 fonts-dejavu-core patchelf libfuse2t64
       - name: Locked independent desktop dependencies
         working-directory: apps/desktop
         run: |
@@ -87,6 +97,11 @@ jobs:
           pnpm check 2>&1 | tee ../../evidence/frontend-check.log
           pnpm tauri info 2>&1 | tee ../../evidence/tauri-info.txt
           cargo fmt --check --manifest-path src-tauri/Cargo.toml
+      - name: Native console privilege and HTTP boundary tests (no GUI SDK needed)
+        run: |
+          set -euo pipefail
+          rustc --edition 2021 --test -C debuginfo=0 apps/desktop/src-tauri/src/control_http.rs -o "${{ runner.temp }}/desktop-control-tests${{ matrix.test_suffix }}"
+          "${{ runner.temp }}/desktop-control-tests${{ matrix.test_suffix }}" 2>&1 | tee evidence/control-http-tests.log
       - name: Build root lifecycle binaries separately, headless and locked
         if: runner.os == 'Linux'
         run: |
@@ -125,11 +140,19 @@ jobs:
           set -euo pipefail
           python3 -B verification/desktop-native/test_process_exit.py
           python3 -B verification/desktop-native/test_native_input.py
-          echo 'bash verification/desktop-native/run-linux.sh apps/desktop/src-tauri/target/release/mixyard-desktop target/headless-runtime/release/mixyard-runtime target/headless-runtime/release/mixyard evidence' > evidence/lifecycle-command.txt
+          echo 'bash verification/desktop-native/run-linux.sh apps/desktop/src-tauri/target/release/mixyard-desktop target/headless-runtime/release/mixyard-runtime target/headless-runtime/release/mixyard target/headless-runtime/release/mixyard-web evidence' > evidence/lifecycle-command.txt
           bash verification/desktop-native/run-linux.sh \
             apps/desktop/src-tauri/target/release/mixyard-desktop \
             target/headless-runtime/release/mixyard-runtime \
-            target/headless-runtime/release/mixyard evidence 2>&1 | tee evidence/linux-lifecycle.log
+            target/headless-runtime/release/mixyard target/headless-runtime/release/mixyard-web evidence 2>&1 | tee evidence/linux-lifecycle.log
+      - name: Build unsigned installer artifacts with hosted SDKs (no release publishing)
+        id: bundle
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          python ../../verification/desktop-native/evidence.py --guard
+          pnpm tauri bundle --bundles "${{ matrix.bundles }}" --no-sign --no-binary-patching 2>&1 | tee ../../evidence/installer-build.log
+          python ../../verification/desktop-native/packages.py "${{ runner.os }}" src-tauri/target/release/bundle ../../evidence/package-manifest.json
       - name: Record final disk state and evidence boundary
         if: always()
         run: |
@@ -142,6 +165,7 @@ jobs:
             echo 'Windows/macOS UI lifecycle, keyboard, accessibility and native p95: BLOCKED (not exercised).'
             echo 'Linux private lifecycle survival counts only when real CLI status and kernel peer PID identify the same harness-started runtime after every UI exit.'
             echo 'Physical tray/menu, macOS Dock, screen readers, hardware presentation and audio engine survival: BLOCKED.'
+            echo 'Unsigned installer generation is not installation, upgrade, rollback, signing or notarization qualification.'
             echo 'Headless lifecycle IPC does not establish working audio, live meters, device latency, signing or installer qualification.'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Labelled release binary
@@ -150,6 +174,14 @@ jobs:
         with:
           name: desktop-release-${{ matrix.os }}-${{ runner.arch }}-${{ github.sha }}
           path: apps/desktop/src-tauri/target/release/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 7
+      - name: Unsigned installers for manual qualification
+        if: steps.bundle.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-unsigned-installers-${{ matrix.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: apps/desktop/src-tauri/target/release/bundle/
           if-no-files-found: error
           retention-days: 7
       - name: Exact host/SDK, executed steps and native evidence (including failures)

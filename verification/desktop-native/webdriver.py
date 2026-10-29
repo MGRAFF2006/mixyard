@@ -234,7 +234,7 @@ def connected_status(driver, instance):
              'connected UI honestly reports unavailable audio backend')
     assert driver.script("return ['IPC v1', 'snapshot sequence 1', 'backendAvailable: false', 'audioRevision: null', 'appliedRevision: null', 'desiredRevision: null'].every(text => document.querySelector('#runtime-detail').textContent.includes(text))"), 'Versioned snapshot and null revisions must be visible'
     assert driver.script("return !document.querySelector('#runtime-status').matches('input, select, textarea, [contenteditable=true]')"), 'Connection status is read-only'
-    assert driver.script("return [...document.querySelectorAll('input[type=range]')].every(e => e.disabled)"), 'Connected IPC cannot unlock audio controls'
+    assert driver.script("return [...document.querySelectorAll('.desktop-toolbar button')].some(e => e.disabled && e.textContent.includes('Audio mute unavailable'))"), 'Connected IPC cannot unlock live audio mute'
     return status
 
 
@@ -342,12 +342,23 @@ def late_results(driver, ui_pid, child, instance, availability):
     return evidence
 
 
-def main(binary, runtime, cli, output):
+def close_confirmation(driver, accept):
+    def dialog():
+        try:
+            text = driver.call('GET', '/alert/text')
+            return text if 'Unsaved drafts' in text else None
+        except RuntimeError:
+            return None
+    wait_for(dialog, 'shared unsaved draft close confirmation')
+    driver.call('POST', '/alert/accept' if accept else '/alert/dismiss', {})
+
+
+def main(binary, runtime, cli, web, output):
     if os.environ.get('MIXYARD_NATIVE_ISOLATED') != '1':
         raise SystemExit('Use run-linux.sh: only an owned Xvfb/session bus is allowed.')
     disk_guard()
     report = inventory(binary)
-    report['runtime_binaries'] = {'runtime': binary_info(runtime), 'cli': binary_info(cli)}
+    report['runtime_binaries'] = {'runtime': binary_info(runtime), 'cli': binary_info(cli), 'web': binary_info(web)}
     report['boundary'] = 'Actual private headless lifecycle IPC and native Linux webview only; backend unavailable, no audio engine, physical tray/Dock, assistive or other-platform GUI proof.'
     report.update(status='failed', display='owned Xvfb 1280x960, Openbox, software rendering, no tray host',
                   steps=[], timing={})
@@ -385,6 +396,30 @@ def main(binary, runtime, cli, output):
             env=headless_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, start_new_session=True)
         processes.append(events_child)
+        # Launch a separate production console service with disposable storage.
+        # The desktop bridge remains fixed to a numeric loopback port inherited at launch.
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1', 0))
+            port = reservation.getsockname()[1]
+        os.environ['MIXYARD_WEB_PORT'] = str(port)
+        store = output / 'owned-profile-store'
+        assert not store.exists(), 'Never reuse another run/store'
+        with (output / 'web-service.log').open('w') as log:
+            web_child = subprocess.Popen([str(web), '--port', str(port), '--instance', instance,
+                '--store', str(store), '--assets', str(Path(__file__).resolve().parents[2] / 'apps/desktop/dist')],
+                env=headless_env(), stdout=log, stderr=log, start_new_session=True)
+        processes.append(web_child)
+        def web_ready():
+            assert web_child.poll() is None, 'Production console service exited'
+            try:
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/session', timeout=2) as reply:
+                    session = json.load(reply)
+                    return session['apiVersion'] == 1 and session['audioAvailable'] is False
+            except (urllib.error.URLError, ConnectionError):
+                return False
+        wait_for(web_ready, 'production console service ready')
+        report['console-service'] = {'pid': web_child.pid, 'port': port, 'store': str(store),
+            'owner': 'harness; independent of UI', 'audio_available': False}
         with (output / 'wm.log').open('w') as log:
             processes.append(subprocess.Popen(['openbox'], stdout=log, stderr=log, start_new_session=True))
         with (output / 'tauri-driver.log').open('w') as log:
@@ -414,23 +449,24 @@ def main(binary, runtime, cli, output):
             report['steps'].append({'action': 'launch/relaunch', 'case': action, 'pid': pid,
                                     'url': driver.call('GET', '/url'),
                                     'controls_locked': driver.script(
-                                        "return [...document.querySelectorAll('input[type=range]')].every(e => e.disabled)")})
-            assert report['steps'][-1]['controls_locked'], 'Disconnected controls must stay locked'
+                                        "return [...document.querySelectorAll('.desktop-toolbar button')].some(e => e.disabled && e.textContent.includes('Audio mute unavailable'))")})
+            assert report['steps'][-1]['controls_locked'], 'Live mute must remain unavailable'
             assert driver.script("return '__TAURI_INTERNALS__' in window"), 'Must execute the Tauri webview'
             status = shell_status(driver)
             assert status['connected'] is False and status['platform'] == 'linux'
+            assert status['trayCreated'] is False, 'No-tray fallback must be explicit in this harness'
             assert status['runtime']['phase'] == 'disconnected' and status['runtime']['event'] is None
             assert driver.script("return document.querySelector('#runtime-instance').value") == 'default'
             report['steps'][-1]['shell_status'] = status
 
             if action == 'native-close':
-                driver.script("document.querySelector('.header-actions .quiet-button').focus();")
-                xdotool('key', 'Tab')
-                assert driver.script("return document.activeElement.textContent") == 'Show demo'
+                # The actual shared console, not the removed prototype fixture mixer.
+                wait_for(lambda: driver.script("return [...document.querySelectorAll('.console .secondary')].some(e => e.textContent.includes('Store revision')) && [...document.querySelectorAll('.console .message')].every(e => !e.textContent.includes('Action failed')) && [...document.querySelectorAll('.console button')].some(e => e.textContent === 'Load simulated example' && !e.disabled)"), 'shared console ready')
+                driver.script("document.querySelector('.console button').blur(); [...document.querySelectorAll('.console button')].find(e => e.textContent === 'Load simulated example').focus();")
                 xdotool('key', 'Return')
-                wait_for(lambda: driver.script("return document.querySelector('.demo-tag') !== null"), 'labelled demo')
+                wait_for(lambda: driver.script("return document.querySelector('.simulated') !== null && document.querySelector('.matrix input[type=range]') !== null"), 'explicit shared example')
                 driver.script("""
-                    const range = document.querySelector('.master-gain input');
+                    const range = document.querySelector('.matrix input[type=range]');
                     range.scrollIntoView({block: 'center'}); range.focus();
                     window.nativeSamples = [];
                     range.addEventListener('keydown', event => {
@@ -458,7 +494,7 @@ def main(binary, runtime, cli, output):
                                      'trusted key rendered')
                         samples = driver.script('return window.nativeSamples')
                         assert all(s['trusted'] and s['before'] != s['after'] for s in samples)
-                        assert all(s['output'] == f"{20 * math.log10(float(s['after']) / 100):.1f} dB"
+                        assert all(s['output'] == f"{float(s['after']) * 100:.0f}%"
                                    for s in samples), 'Vue output must reflect each real input'
                         assert all(float(s['focus'].removesuffix('px')) >= 2 for s in samples)
                         p95 = sorted(s['ms'] for s in samples)[math.ceil(len(samples) * .95) - 1]
@@ -469,14 +505,43 @@ def main(binary, runtime, cli, output):
                     finally:
                         if worker:
                             stop(worker)
-                (output / 'demo-webview.png').write_bytes(base64.b64decode(driver.call('GET', '/screenshot')))
-                xdotool('windowsize', wid, 640, 850)
-                wait_for(lambda: driver.script('return innerWidth') <= 640, 'compact native window')
+                (output / 'shared-console-webview.png').write_bytes(base64.b64decode(driver.call('GET', '/screenshot')))
+                native_button(driver, '#compact-window')
+                wait_for(lambda: driver.script('return innerWidth') <= 480, 'compact native command resizes same window')
                 assert driver.script('return document.documentElement.scrollWidth <= innerWidth'), 'Compact overflow'
                 (output / 'compact-webview.png').write_bytes(base64.b64decode(driver.call('GET', '/screenshot')))
-                driver.script("[...document.querySelectorAll('.header-actions button')].find(e => e.textContent === 'Exit demo').focus();")
-                xdotool('key', 'Return')
-                wait_for(lambda: driver.script("return document.querySelector('.demo-tag') === null"), 'demo closed before real runtime connection')
+                # Native titlebar close must allow cancelling draft loss before exiting.
+                xdotool('key', 'Alt+F4')
+                close_confirmation(driver, accept=False)
+                assert not exited(pid), 'Cancel must retain the same UI and unsaved draft'
+                report['steps'].append({'action': 'unsaved-titlebar-close-cancelled', 'pid': pid})
+                # Both native profile shortcuts and the full UI use the same console session.
+                native_button(driver, '#open-profiles')
+                wait_for(lambda: driver.script("return document.querySelector('.console nav button[aria-current=page]').textContent === 'Profiles'"), 'shared profiles navigation')
+                native_button(driver, '#compact-window')
+                wait_for(lambda: driver.script('return innerWidth') >= 1000, 'restore full window')
+                native_button(driver, '.console .draft-bar button.primary')
+                wait_for(lambda: driver.script("return document.querySelector('.draft-bar strong').textContent === 'Draft matches stored copy'"), 'native bridge persists shared draft')
+                native_focus(driver, '#profile-name', click=True)
+                xdotool('type', '--clearmodifiers', '--delay', 10, 'Native shared profile')
+                wait_for(lambda: driver.script("return document.querySelector('#profile-name').value") == 'Native shared profile', 'native profile name input')
+                native_button(driver, '.console .profile-editor button.primary')
+                wait_for(lambda: driver.script("return [...document.querySelectorAll('#profile-select option')].some(e => e.textContent.includes('Native shared profile'))"), 'profile persisted by shared console')
+                # A separately read production-store acknowledgment proves this was not
+                # an in-webview fixture/model edit. Do not write or publish the CSRF token.
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/session', timeout=2) as response:
+                    token = json.load(response)['csrfToken']
+                request = urllib.request.Request(f'http://127.0.0.1:{port}/api/profiles/read',
+                    data=b'{}', headers={'Content-Type': 'application/json', 'X-Mixyard-Token': token})
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    stored = json.load(response)
+                assert stored['storeRevision'] == 2 and len(stored['profiles']) == 1
+                assert stored['profiles'][0]['name'] == 'Native shared profile'
+                assert stored['draft']['sources'][0]['selector']['deviceUid'].startswith('example:')
+                report['steps'].append({'action': 'shared-console-native-store-writes',
+                    'storeRevision': stored['storeRevision'], 'profiles': len(stored['profiles']),
+                    'evidence': 'real separate production service/store; explicit simulated routing intent, no audio'})
+
 
             if action == 'native-close':
                 report['steps'].extend(late_results(driver, pid, runtime_child, instance,
@@ -491,6 +556,7 @@ def main(binary, runtime, cli, output):
                     **runtime_alive(runtime_child, endpoint, cli, instance)})
                 report['steps'].append({'action': 'native-keyboard-reconnect', 'shell_status': connect(driver, instance)})
                 xdotool('key', 'Alt+F4')
+                close_confirmation(driver, accept=True)
             else:
                 if action == 'runtime-shutdown':
                     shutdown = cli_request(cli, instance, 'shutdown')
@@ -509,7 +575,7 @@ def main(binary, runtime, cli, output):
                                        'attached UI observes shutdown')
                     assert stopped['connected'] is False
                     wait_for(lambda: driver.script("return /stopping|stopped|disconnected|not connected/i.test(document.querySelector('#runtime-status').textContent)"), 'stopped/disconnected UI label')
-                    assert driver.script("return [...document.querySelectorAll('input[type=range]')].every(e => e.disabled)")
+                    assert driver.script("return [...document.querySelectorAll('.desktop-toolbar button')].some(e => e.disabled && e.textContent.includes('Audio mute unavailable'))")
                     report['steps'].append({'action': 'explicit-cli-shutdown-and-reap', 'reply': shutdown,
                         'runtime_pid_reaped': runtime_child.pid, 'exit_code': runtime_child.returncode,
                         'cli_events': events, 'shell_status': stopped})
@@ -520,8 +586,7 @@ def main(binary, runtime, cli, output):
                     assert runtime_child.poll() == 0 and not endpoint.exists()
                     report['steps'].append({'action': 'connect-stopped-no-autospawn', 'shell_status': failed})
                 try:
-                    driver.click('.app-footer button:nth-child(1)' if action == 'close-window'
-                                 else '.app-footer button:nth-child(2)')
+                    driver.click('#close-window' if action == 'close-window' else '#quit-ui')
                 except (urllib.error.URLError, http.client.HTTPException, RuntimeError) as error:
                     # An exiting webview can drop the click response. PID exit
                     # below is mandatory; a transport error alone never passes.
@@ -584,4 +649,4 @@ def main(binary, runtime, cli, output):
 
 
 if __name__ == '__main__':
-    main(*(Path(arg).resolve() for arg in sys.argv[1:5]))
+    main(*(Path(arg).resolve() for arg in sys.argv[1:6]))

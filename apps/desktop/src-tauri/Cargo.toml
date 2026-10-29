@@ -3,7 +3,7 @@ name = "mixyard-desktop"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Mixyard read-only local runtime desktop client"
+description = "Mixyard shared console and independent runtime desktop client"
 
 # Keep the desktop workspace separate; dependencies point desktop → headless core only.
 [workspace]
