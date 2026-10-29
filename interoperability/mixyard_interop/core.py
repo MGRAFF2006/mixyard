@@ -53,6 +53,8 @@ class Source:
         groups = _tuple(self.groups, "source groups")
         for group in groups:
             _identifier(group)
+        if sum(len(g.encode("utf-8")) + 3 for g in groups) > 4096:
+            raise ValueError("source metadata too large")
         if len(set(groups)) != len(groups):
             raise ValueError("duplicate source group")
         object.__setattr__(self, "groups", groups)
@@ -76,6 +78,12 @@ class Provenance:
             raise ValueError("duplicate source path")
         if any(s.peer not in peers for s in sources):
             raise ValueError("source origin missing from path")
+        metadata = sum(len(p.encode("utf-8")) + 3 for p in peers)
+        for source in sources:
+            metadata += len(source.peer.encode("utf-8")) + len(source.source.encode("utf-8"))
+            metadata += sum(len(g.encode("utf-8")) + 3 for g in source.groups) + 40
+        if metadata > 4096:
+            raise ValueError("provenance metadata too large")
         object.__setattr__(self, "sources", sources)
         object.__setattr__(self, "visited_peers", peers)
 
@@ -149,9 +157,15 @@ class Spec:
         p = value["provenance"]
         _fields(p, ("sources", "visited_peers"))
         sources = []
+        source_bytes = 0
         for source in _tuple(p["sources"], "sources"):
             _fields(source, ("peer", "source", "groups"))
-            sources.append(Source(**source))
+            parsed = Source(**source)
+            source_bytes += len(parsed.peer.encode("utf-8")) + len(parsed.source.encode("utf-8"))
+            source_bytes += sum(len(g.encode("utf-8")) + 3 for g in parsed.groups) + 40
+            if source_bytes > 4096:
+                raise ValueError("source metadata too large")
+            sources.append(parsed)
         return cls(value["stream"], value["name"], value["codec"], value["sample_rate"],
                    value["channels"], value["frames_per_packet"],
                    Provenance(tuple(sources), p["visited_peers"]))
