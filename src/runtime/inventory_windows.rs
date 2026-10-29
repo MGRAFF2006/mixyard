@@ -17,7 +17,10 @@ use windows_sys::Win32::{
     Security::{Authorization::*, *},
     Storage::FileSystem::*,
     System::{
-        Com::CoTaskMemFree, JobObjects::*, Pipes::*, SystemServices::ACCESS_ALLOWED_ACE_TYPE,
+        Com::CoTaskMemFree,
+        JobObjects::*,
+        Pipes::*,
+        SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE},
         Threading::*,
     },
     UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
@@ -170,6 +173,103 @@ fn private_acl(file: HANDLE) -> Result<()> {
     }
     Ok(())
 }
+
+// These principals already control the current account or Windows itself.
+// TrustedInstaller's fixed service SID is documented in Microsoft's Windows
+// file-permission reference; no account-name/domain lookup is needed here.
+struct TrustedAncestorSids(Vec<Local>);
+impl TrustedAncestorSids {
+    fn new() -> Result<Self> {
+        let mut sids = Vec::new();
+        for text in [
+            sid()?,
+            "S-1-5-18".into(),     // LocalSystem
+            "S-1-5-32-544".into(), // Builtin Administrators
+            "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464".into(),
+        ] {
+            let mut raw = ptr::null_mut();
+            if unsafe { ConvertStringSidToSidW(wide(text).as_ptr(), &mut raw) } == 0 {
+                return Err("inventory-ancestor-trust-unavailable");
+            }
+            sids.push(Local(raw));
+        }
+        Ok(Self(sids))
+    }
+    fn contains(&self, sid: PSID) -> bool {
+        unsafe { IsValidSid(sid) != 0 && self.0.iter().any(|s| EqualSid(sid, s.0) != 0) }
+    }
+}
+
+fn ancestor_acl(file: HANDLE, trusted: &TrustedAncestorSids) -> Result<()> {
+    unsafe {
+        let mut owner = ptr::null_mut();
+        let mut acl = ptr::null_mut();
+        let mut descriptor = ptr::null_mut();
+        if GetSecurityInfo(
+            file,
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
+            ptr::null_mut(),
+            &mut acl,
+            ptr::null_mut(),
+            &mut descriptor,
+        ) != ERROR_SUCCESS
+        {
+            return Err("inventory-ancestor-acl-unavailable");
+        }
+        let _allocation = Local(descriptor);
+        if !trusted.contains(owner) {
+            return Err("inventory-state-insecure-ancestor-owner");
+        }
+        if acl.is_null() || IsValidAcl(acl) == 0 {
+            return Err("inventory-state-insecure-ancestor-acl");
+        }
+        let mapping = GENERIC_MAPPING {
+            GenericRead: FILE_GENERIC_READ,
+            GenericWrite: FILE_GENERIC_WRITE,
+            GenericExecute: FILE_GENERIC_EXECUTE,
+            GenericAll: FILE_ALL_ACCESS,
+        };
+        for index in 0..u32::from((*acl).AceCount) {
+            let mut raw = ptr::null_mut();
+            if GetAce(acl, index, &mut raw) == 0 {
+                return Err("inventory-state-insecure-ancestor-acl");
+            }
+            let header = &*raw.cast::<ACE_HEADER>();
+            // Inherit-only entries do not grant rights on this directory.
+            // Every actual descendant on the selected path is checked itself.
+            if u32::from(header.AceFlags) & INHERIT_ONLY_ACE != 0 {
+                continue;
+            }
+            if u32::from(header.AceType) == ACCESS_DENIED_ACE_TYPE {
+                continue;
+            }
+            if u32::from(header.AceType) != ACCESS_ALLOWED_ACE_TYPE
+                || usize::from(header.AceSize) < mem::size_of::<ACCESS_ALLOWED_ACE>() + 4
+            {
+                return Err("inventory-state-unsupported-ancestor-acl");
+            }
+            let ace = &*raw.cast::<ACCESS_ALLOWED_ACE>();
+            let trustee = (&ace.SidStart as *const u32).cast_mut().cast();
+            if IsValidSid(trustee) == 0
+                || GetLengthSid(trustee) as usize + 8 > usize::from(header.AceSize)
+            {
+                return Err("inventory-state-insecure-ancestor-acl");
+            }
+            let mut mask = ace.Mask;
+            MapGenericMask(&mut mask, &mapping);
+            // Creating an unrelated child or reading a parent cannot replace
+            // the protected leaf. Delete, delete-child and owner/ACL changes can.
+            if mask & (DELETE | FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER) != 0
+                && !trusted.contains(trustee)
+            {
+                return Err("inventory-state-insecure-ancestor-acl");
+            }
+        }
+    }
+    Ok(())
+}
 fn information(file: HANDLE, directory: bool) -> Result<BY_HANDLE_FILE_INFORMATION> {
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { mem::zeroed() };
     if unsafe { GetFileInformationByHandle(file, &mut info) } == 0
@@ -207,6 +307,7 @@ fn open(
 fn pin_ancestors(path: &Path) -> Result<Vec<Handle>> {
     let mut current = PathBuf::new();
     let mut pins = Vec::new();
+    let trusted = TrustedAncestorSids::new()?;
     for part in path.components() {
         match part {
             Component::Prefix(prefix)
@@ -231,6 +332,7 @@ fn pin_ancestors(path: &Path) -> Result<Vec<Handle>> {
             ptr::null(),
         )?;
         information(directory.0, true)?;
+        ancestor_acl(directory.0, &trusted)?;
         pins.push(directory);
     }
     if pins.is_empty() {
@@ -250,12 +352,16 @@ pub(super) fn state_directory(instance: &str) -> Result<PathBuf> {
             len += 1;
         }
     }
-    let mut path = PathBuf::from(std::ffi::OsString::from_wide(unsafe {
+    let path = PathBuf::from(std::ffi::OsString::from_wide(unsafe {
         std::slice::from_raw_parts(raw, len)
     }));
     unsafe {
         CoTaskMemFree(raw.cast());
     }
+    state_directory_below(path, instance)
+}
+
+fn state_directory_below(mut path: PathBuf, instance: &str) -> Result<PathBuf> {
     let mut pins = pin_ancestors(&path)?;
     let security = Security::new()?;
     let leaf = format!("instance-{instance}");
@@ -630,6 +736,127 @@ fn read_available(pipe: HANDLE) -> Result<Option<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn set_directory_dacl(path: &Path, entries: &str) {
+        let file = open(
+            path,
+            WRITE_DAC | READ_CONTROL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            OPEN_EXISTING,
+            ptr::null(),
+        )
+        .unwrap();
+        let text = wide(format!("D:P(A;;FA;;;{}){entries}", sid().unwrap()));
+        let mut raw = ptr::null_mut();
+        assert_ne!(
+            unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    text.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut raw,
+                    ptr::null_mut(),
+                )
+            },
+            0
+        );
+        let allocation = Local(raw);
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut acl = ptr::null_mut();
+        assert_ne!(
+            unsafe {
+                GetSecurityDescriptorDacl(allocation.0, &mut present, &mut acl, &mut defaulted)
+            },
+            0
+        );
+        assert_eq!(
+            unsafe {
+                SetSecurityInfo(
+                    file.0,
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    acl,
+                    ptr::null_mut(),
+                )
+            },
+            ERROR_SUCCESS
+        );
+    }
+
+    fn create_private_directory(path: &Path) {
+        let security = Security::new().unwrap();
+        assert_ne!(
+            unsafe { CreateDirectoryW(wide(path).as_ptr(), &security.attributes()) },
+            0
+        );
+    }
+
+    #[test]
+    fn kernel_shared_ancestor_cannot_initialize_or_reopen_private_state() {
+        let root = state_directory(&format!("ancestor-test-{}", std::process::id())).unwrap();
+        let parent = root.join("parent");
+        let leaf = parent.join("leaf");
+        create_private_directory(&parent);
+        create_private_directory(&leaf);
+        {
+            let mut inventory: crate::Inventory = serde_json::from_value(serde_json::json!({
+                "schemaVersion":2,"revision":0,"platform":"windows",
+                "evidence":"simulated","sources":[],"outputs":[]
+            }))
+            .unwrap();
+            super::super::inventory_state::revision(&mut inventory, &leaf).unwrap();
+            assert_eq!(inventory.revision, 1);
+            inventory.limits.max_output_routes = Some(1);
+            super::super::inventory_state::revision(&mut inventory, &leaf).unwrap();
+            assert_eq!(inventory.revision, 2);
+        }
+        let state_path = leaf.join("inventory-revision-v1");
+        let saved = std::fs::read(&state_path).unwrap();
+        // Reading or creating unrelated children does not grant replacement.
+        // Inherit-only entries do not apply to this ancestor; the existing
+        // selected child has its own protected DACL and is checked separately.
+        for entries in [
+            "(A;;GRGX;;;WD)",
+            "(A;;0x00000006;;;WD)",
+            "(A;OICIIO;GA;;;WD)",
+        ] {
+            set_directory_dacl(&parent, entries);
+            assert_eq!(Store::open(&leaf).unwrap().read().unwrap().unwrap(), saved);
+        }
+        // Exact deletion, delete-child, ACL/owner mutation and generic-all
+        // grants to an untrusted principal must all block even a private leaf.
+        for rights in ["0x00010000", "0x00000040", "0x00040000", "0x00080000", "GA"] {
+            set_directory_dacl(&parent, &format!("(A;;{rights};;;WD)"));
+            assert_eq!(
+                Store::open(&leaf).err(),
+                Some("inventory-state-insecure-ancestor-acl")
+            );
+            assert_eq!(
+                state_directory_below(parent.clone(), "new").err(),
+                Some("inventory-state-insecure-ancestor-acl")
+            );
+            assert!(!parent.join("MixyardInventory").exists());
+            assert_eq!(std::fs::read(&state_path).unwrap(), saved);
+        }
+        // Pins are gone between requests. Moving the tree must not turn a new
+        // private-looking child under this unsafe parent into fresh authority.
+        let moved = root.join("moved");
+        std::fs::rename(&parent, &moved).unwrap();
+        create_private_directory(&parent);
+        set_directory_dacl(&parent, "(A;;GA;;;WD)");
+        assert_eq!(
+            state_directory_below(parent.clone(), "new").err(),
+            Some("inventory-state-insecure-ancestor-acl")
+        );
+        assert_eq!(
+            std::fs::read(moved.join("leaf/inventory-revision-v1")).unwrap(),
+            saved
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn kernel_private_acl_hardlink_corruption_and_atomic_replacement_checks() {
         let name = format!("state-test-{}", std::process::id());

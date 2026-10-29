@@ -12,6 +12,26 @@ $root = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicati
 $destination = Join-Path $root "MixyardRuntime-$Name"
 if (Test-Path -LiteralPath $destination) { throw 'Refusing to replace an existing installation' }
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+# Check from the drive root down before writing selected executables. A private
+# leaf is insufficient when a parent grants another account delete-child rights.
+if ([IO.Path]::GetPathRoot($root) -notmatch '^[A-Za-z]:\\$') { throw 'Installation requires local drive ancestry' }
+$trusted = @($sid, 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+$parents = [Collections.Generic.List[IO.DirectoryInfo]]::new()
+for ($part = [IO.DirectoryInfo]::new($root); $null -ne $part; $part = $part.Parent) { $parents.Add($part) }
+$parents.Reverse()
+foreach ($part in $parents) {
+    if (($part.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Installation ancestry must not contain reparse points' }
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl($part)
+    $raw = [Security.AccessControl.RawSecurityDescriptor]::new($security.GetSecurityDescriptorBinaryForm(), 0)
+    if ($raw.Owner.Value -notin $trusted -or $null -eq $raw.DiscretionaryAcl) { throw 'Untrusted installation ancestor owner or ACL' }
+    foreach ($ace in $raw.DiscretionaryAcl) {
+        if (($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly) -ne 0) { continue }
+        if ($ace.AceType -eq [Security.AccessControl.AceType]::AccessDenied) { continue }
+        if ($ace.AceType -ne [Security.AccessControl.AceType]::AccessAllowed) { throw 'Unsupported installation ancestor ACL' }
+        # Specific delete/delete-child/write-DACL/write-owner, or generic-all.
+        if (($ace.AccessMask -band 0x100d0040) -ne 0 -and $ace.SecurityIdentifier.Value -notin $trusted) { throw 'Untrusted installation ancestor mutation grant' }
+    }
+}
 $sddl = "O:${sid}D:P(A;;FA;;;${sid})"
 $directorySecurity = [Security.AccessControl.DirectorySecurity]::new()
 $directorySecurity.SetSecurityDescriptorSddlForm($sddl)

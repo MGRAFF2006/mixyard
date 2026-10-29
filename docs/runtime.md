@@ -297,7 +297,15 @@ the installed production helper name.
 
 Windows requires a real single-link helper owned by the current SID, a protected
 DACL with one current-SID full-access ACE, and the same private DACL on its parent
-installation directory. Ancestors are checked for reparse points and pinned
+installation directory. Every ancestor must be owned by the current SID,
+LocalSystem, Builtin Administrators or TrustedInstaller. Effective allow entries
+granting deletion, child deletion, owner changes or DACL changes to any other
+principal are rejected after mapping generic rights. Read/execute and unrelated
+child creation are allowed; inherit-only entries are checked where they become
+effective on the actual selected descendant. Unknown effective ACE types fail
+closed, and deny entries do not excuse a dangerous allow entry. This conservative
+policy can reject unusual managed ACLs even when a more complex access check
+would deny the mutation. Ancestors are also checked for reparse points and pinned
 without delete sharing. macOS requires a real single-link executable owned by
 root/current UID, no set-ID bits, no group/other writes, and trusted real
 ancestors owned by root/current UID with no group/other writes. Additional Darwin
@@ -305,7 +313,8 @@ ACL allow grants are rejected (deny entries are allowed). Keep installations in
 a private local user directory; symlinked/reparse/redirected installations are
 intentionally unavailable. Installers refuse to replace an existing installation.
 They copy artifacts only; they do not launch a service, install drivers or SDKs,
-or change login startup.
+or change login startup. The Windows installer also rejects unsafe Known Folder
+ancestry before copying the selected runtime/helper executables.
 
 Build using the existing SDK recipes in [native inventory](platform-native-inventory.md),
 then install on Windows in PowerShell 7 with an already installed toolchain:
@@ -371,7 +380,9 @@ Only the 80-byte checksummed digest/counter is retained, using the same revision
 codec as Linux. Unix state is 0700/0600, no symlinks, single-link regular files,
 and pinned-directory `openat`/`renameat` plus file/directory fsync. Windows state
 directories/files have protected current-SID-only ACLs, no reparse points or
-hardlinks, and pinned ancestors; updates use create-new private files,
+hardlinks, and pinned ancestors under the same ownership/mutation policy used
+for installations. Known Folder lookup establishes location, not ACL safety;
+unsafe redirected ancestry fails before creating state. Updates use create-new private files,
 `FlushFileBuffers` and same-volume atomic `MoveFileExW(REPLACE_EXISTING |
 WRITE_THROUGH)`. Read, permission, corruption, persistence or counter exhaustion
 failures do not reset the counter or replace bad state. Unchanged refresh/restart
@@ -384,7 +395,10 @@ the runtime never automatically deletes or repairs revision state.
 on hosted Windows/macOS: provenance, exact IDs, null formats, revisions across
 restart/reversion, private errors, malformed/partial output, cancellation,
 descendant cleanup, shutdown, large replies, corruption, hardlinks and exhaustion.
-Kernel-level state tests additionally reject insecure ACLs/modes. Runtime CI
+Kernel-level state tests additionally reject insecure ACLs/modes, including a
+private leaf under a shared parent before initialization and after prior pins
+close. That regression retains an existing revision-2 record while rejecting
+all delete/ACL/owner mutation grants and replacement-tree initialization. Runtime CI
 builds the unchanged native SDK helpers, installs the actual sibling artifacts,
 and exercises the production provider over real IPC. It accepts a scoped OS
 helper failure on a headless runner, but fails for missing/untrusted installation,
@@ -396,4 +410,7 @@ and `audioApplied: false` remain unchanged.
 
 Implementation references: [Windows job ownership](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
 [atomic Windows replacement](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw),
+[parent deletion rights](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-deletefilew),
+[generic rights mapping](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-mapgenericmask),
+[Windows principals and TrustedInstaller SID](https://learn.microsoft.com/en-us/archive/msdn-magazine/2008/november/access-control-understanding-windows-file-and-registry-permissions),
 and [Darwin descriptor ACL retrieval](https://github.com/apple-oss-distributions/Libc/blob/main/posix1e/acl_file.c).
