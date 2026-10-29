@@ -67,7 +67,12 @@ impl OwnedDescendant {
         if let Some(stat) = process_stat(self.pid) {
             // Never signal a reused PID during failure cleanup.
             if stat_fields(&stat)[19] == self.start_time {
-                assert_eq!(unsafe { libc::kill(self.pid as i32, libc::SIGKILL) }, 0);
+                if unsafe { libc::kill(self.pid as i32, libc::SIGKILL) } != 0 {
+                    let error = std::io::Error::last_os_error();
+                    // The same owned task may disappear after stat but before
+                    // signal delivery. Only ESRCH is idempotent absence.
+                    assert_eq!(error.raw_os_error(), Some(libc::ESRCH), "{error}");
+                }
             }
         }
     }
@@ -373,6 +378,37 @@ fn process_stat_accepts_concurrent_owned_reaping_as_absence() {
             }
             killer.join().unwrap();
         });
+        assert!(process_stat(pid).is_none());
+    }
+}
+
+#[test]
+fn descendant_cleanup_is_idempotent_during_concurrent_owned_reaping() {
+    for _ in 0..128 {
+        let mut child = sentinel();
+        let pid = child.0.id();
+        let stat = process_stat(pid).unwrap();
+        let descendant = OwnedDescendant {
+            pid,
+            start_time: stat_fields(&stat)[19].to_owned(),
+        };
+        let (tx, rx) = mpsc::channel();
+        thread::scope(|scope| {
+            let killer = scope.spawn(move || {
+                rx.recv().unwrap();
+                let _ = child.0.kill();
+                child.0.wait().unwrap();
+            });
+            tx.send(()).unwrap();
+            for _ in 0..10_000 {
+                descendant.terminate();
+                if process_stat(pid).is_none() {
+                    break;
+                }
+            }
+            killer.join().unwrap();
+        });
+        descendant.terminate();
         assert!(process_stat(pid).is_none());
     }
 }
