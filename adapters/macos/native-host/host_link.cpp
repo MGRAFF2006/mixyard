@@ -1,0 +1,184 @@
+// SPDX-License-Identifier: MIT
+#include "host_link.hpp"
+#include <algorithm>
+
+namespace mixyard::macos {
+namespace w = worker;
+namespace {
+constexpr size_t portLimit = 8;
+std::string quoted(const std::string& text) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string result = "\"";
+    for (const unsigned char c : text) {
+        switch (c) {
+        case '\"': result += "\\\""; break;
+        case '\\': result += "\\\\"; break;
+        case '\b': result += "\\b"; break;
+        case '\f': result += "\\f"; break;
+        case '\n': result += "\\n"; break;
+        case '\r': result += "\\r"; break;
+        case '\t': result += "\\t"; break;
+        default:
+            if (c < 0x20) {
+                result += "\\u00"; result += hex[c >> 4]; result += hex[c & 15];
+            } else result += static_cast<char>(c);
+        }
+    }
+    return result + "\"";
+}
+std::string labels(const std::vector<std::string>& values) {
+    std::string result = "[";
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i) result += ',';
+        result += quoted(values[i]);
+    }
+    return result + "]";
+}
+using Getter = int (*)(const mx_host*, size_t, uint8_t*, size_t, size_t*);
+void validatePort(const mx_host* host, size_t index, Getter getter, const Port& port, bool source) {
+    size_t needed = 0;
+    // The getter may report insufficient capacity while returning needed.
+    if (getter(host, index, nullptr, 0, &needed) != MX_BUFFER || !needed || needed > 65536)
+        throw std::invalid_argument("Unbounded/unavailable host port info");
+    std::vector<uint8_t> buffer(needed);
+    if (getter(host, index, buffer.data(), buffer.size(), &needed) != 0 || needed > buffer.size())
+        throw std::invalid_argument("Host port info unavailable");
+    const auto& f = port.queue->format();
+    // ABI v1 promises compact JSON, exact field order and no NUL. Compare only
+    // immutable control metadata; the audio path never serializes PCM or JSON.
+    std::string expected = "{\"observedId\":" + quoted(port.observedId);
+    if (source) expected += ",\"encoding\":" + quoted(f.precision == w::Precision::Float64 ? "f64-le" : "f32-le");
+    expected += ",\"sampleRateHz\":" + std::to_string(f.sampleRateHz) + ",\"channels\":" + labels(f.channels) +
+                ",\"mapping\":" + labels(port.mapping) + "}";
+    if (needed != expected.size() || std::memcmp(buffer.data(), expected.data(), needed) != 0)
+        throw std::invalid_argument("Observed native port differs from compiled canonical slot");
+}
+mx_stamp stamp(const w::Stamp& s) noexcept {
+    return {s.binding.generation, s.binding.revision, s.clockId, s.sequence, s.firstFrame, s.capturedNs, s.deadlineNs};
+}
+}
+struct HostLink::Impl {
+    mx_host* host = nullptr;
+    const Timeline timeline;
+    const std::vector<Port> sources, outputs;
+    std::array<mx_input, portLimit> inputs{};
+    alignas(8) std::array<uint8_t, w::maxBytes> converted{};
+    std::atomic<uint32_t> cancelled{0};
+    bool hostRevoked = false;
+    StepResult stopReason = StepResult::Cancelled;
+    explicit Impl(Timeline t, std::vector<Port> in, std::vector<Port> out)
+        : timeline(t), sources(std::move(in)), outputs(std::move(out)) {}
+    ~Impl() {
+        if (!host) return;
+        if (!hostRevoked) mx_host_revoke(host);
+        mx_host_destroy(host);
+    }
+    void cancel() noexcept {
+        cancelled.store(1, std::memory_order_release);
+        for (const auto& port : sources) port.queue->revoke();
+        for (const auto& port : outputs) port.queue->revoke();
+    }
+    StepResult revokeOwned(StepResult reason) noexcept {
+        cancel();
+        if (!hostRevoked) {
+            stopReason = reason;
+            mx_host_revoke(host);
+            hostRevoked = true;
+        }
+        return stopReason;
+    }
+    StepResult step(uint64_t now, mx_stamp engine, uint32_t frames) noexcept {
+        if (cancelled.load(std::memory_order_acquire)) return revokeOwned(stopReason);
+        if (!frames || frames > w::maxFrames || engine.clock_id != timeline.id()) return revokeOwned(StepResult::HostFailure);
+        for (size_t i = 0; i < sources.size(); ++i) {
+            auto& q = *sources[i].queue;
+            const auto& f = q.format();
+            const auto* b = q.front(now);
+            // A missing native source is a terminal availability/privacy loss,
+            // not scheduled silence. Native queues/cursors may retain earlier
+            // derived PCM even after a Rust history reset: retire all authority.
+            if (!b) return revokeOwned(StepResult::SourceLoss);
+            if (b->frames != frames || b->stamp.firstFrame != engine.first_frame || b->stamp.clockId != engine.clock_id) {
+                q.fail(w::Fault::Clock);
+                return revokeOwned(StepResult::SourceLoss);
+            }
+            if (q.fault() != w::Fault::None) return revokeOwned(StepResult::SourceLoss);
+            inputs[i] = {b->pcm.data(), frames * f.frameBytes(), f.precision == w::Precision::Float64 ? MX_F64LE : MX_F32LE,
+                         f.sampleRateHz, static_cast<uint32_t>(f.channels.size()), stamp(b->stamp)};
+        }
+        const auto result = mx_host_process(host, now, engine, frames, inputs.data(), sources.size());
+        for (const auto& source : sources) source.queue->release();
+        if (result != MX_OK) return revokeOwned(StepResult::HostFailure);
+        // A source revoked while Rust borrowed its block cannot authorize the
+        // just-computed outputs. Retain no PCM from that in-flight generation.
+        for (size_t i = 0; i < sources.size(); ++i)
+            if (sources[i].queue->fault() != w::Fault::None) return revokeOwned(StepResult::SourceLoss);
+        if (cancelled.load(std::memory_order_acquire)) return revokeOwned(stopReason);
+        for (size_t i = 0; i < outputs.size(); ++i) {
+            auto& q = *outputs[i].queue;
+            if (q.fault() != w::Fault::None) continue;
+            const double* pcm = nullptr; size_t count = 0;
+            const auto expected = size_t(frames) * q.format().channels.size();
+            if (mx_host_output(host, i, &pcm, &count) != 0 || !pcm || count != expected ||
+                expected > w::maxBytes / sizeof(double)) { q.fail(w::Fault::Shape); continue; }
+            const void* bytes = pcm;
+            if (q.format().precision == w::Precision::Float32) {
+                for (size_t j = 0; j < count; ++j) {
+                    // Conversion belongs only to this explicitly Float32 sink.
+                    // Finite overflow is a terminal sink error, never clipping.
+                    if (!std::isfinite(pcm[j]) || std::abs(pcm[j]) > std::numeric_limits<float>::max()) {
+                        q.fail(w::Fault::Nonfinite); break;
+                    }
+                    const auto value = static_cast<float>(pcm[j]);
+                    std::memcpy(converted.data() + j * sizeof(float), &value, sizeof(value));
+                }
+                bytes = converted.data();
+            }
+            const void* buffers[]{bytes}; const uint32_t sizes[]{frames * q.format().frameBytes()};
+            const w::Stamp output{{engine.generation, engine.revision}, engine.clock_id, engine.sequence,
+                                  engine.first_frame, engine.captured_ns, engine.deadline_ns};
+            q.push(now, output, frames, buffers, sizes, 1, false);
+        }
+        for (const auto& source : sources)
+            if (source.queue->fault() != w::Fault::None) return revokeOwned(StepResult::SourceLoss);
+        if (cancelled.load(std::memory_order_acquire)) return revokeOwned(stopReason);
+        return StepResult::Processed;
+    }
+};
+HostLink::HostLink(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+HostLink::~HostLink() { impl_->cancel(); }
+std::unique_ptr<HostLink> HostLink::create(const std::string& request, Timeline timeline,
+                                         std::vector<Port> sources, std::vector<Port> outputs) {
+    if (mx_host_abi_version() != MX_HOST_ABI_VERSION) throw std::invalid_argument("Unsupported canonical host ABI");
+    if (sources.empty() || outputs.empty() || sources.size() > portLimit || outputs.size() > portLimit)
+        throw std::invalid_argument("Native host requires 1..8 sources and independent outputs");
+    const auto* first = sources.front().queue;
+    if (!first) throw std::invalid_argument("Missing source queue");
+    const auto binding = first->binding(); const auto rate = first->format().sampleRateHz;
+    std::vector<w::Queue*> queues;
+    for (const auto* ports : {&sources, &outputs}) for (const auto& port : *ports) {
+        const auto* q = port.queue;
+        if (!q || q->fault() != w::Fault::None || !(q->binding() == binding) || q->clockId() != timeline.id() ||
+            q->format().sampleRateHz != rate || q->format().channels.size() > 2 ||
+            port.mapping.size() != q->format().channels.size() || port.observedId.empty() ||
+            q->provenance().source != port.observedId || std::find(queues.begin(), queues.end(), q) != queues.end() ||
+            (ports == &outputs && q->provenance().origin != w::Origin::AdaptedEngine))
+            throw std::invalid_argument("Exact scoped mono/stereo native port binding required");
+        queues.push_back(port.queue);
+    }
+    auto impl = std::make_unique<Impl>(timeline, std::move(sources), std::move(outputs));
+    std::array<char, 1024> error{};
+    if (mx_host_create(reinterpret_cast<const uint8_t*>(request.data()), request.size(), &impl->host,
+                       error.data(), error.size()) != 0 || !impl->host)
+        throw std::invalid_argument(std::string("Canonical host rejected request: ") + error.data());
+    if (mx_host_source_count(impl->host) != impl->sources.size() || mx_host_output_count(impl->host) != impl->outputs.size())
+        throw std::invalid_argument("Host plan port count differs");
+    for (size_t i = 0; i < impl->sources.size(); ++i)
+        validatePort(impl->host, i, mx_host_source_info, impl->sources[i], true);
+    for (size_t i = 0; i < impl->outputs.size(); ++i)
+        validatePort(impl->host, i, mx_host_output_info, impl->outputs[i], false);
+    return std::unique_ptr<HostLink>(new HostLink(std::move(impl)));
+}
+StepResult HostLink::step(uint64_t now, mx_stamp s, uint32_t frames) noexcept { return impl_->step(now, s, frames); }
+void HostLink::cancel() noexcept { impl_->cancel(); }
+} // namespace mixyard::macos
