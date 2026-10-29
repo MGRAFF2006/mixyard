@@ -1,0 +1,73 @@
+name: Native inventory helpers (read-only runner proof)
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml']
+  pull_request:
+    paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    name: Portable writer and strict decoder fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: |
+          g++ -std=c++17 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -g adapters/windows/inventory/check.cpp -o /tmp/mixyard-inventory-check
+          /tmp/mixyard-inventory-check
+          python3 -B adapters/windows/inventory/test_protocol.py
+          python3 -B adapters/windows/inventory/test_protocol.py --fixture /tmp/mixyard-inventory-check
+
+  windows:
+    name: Windows SDK compile and read-only hosted snapshot
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: cmake -S adapters/windows -B build/inventory-windows -A x64
+      - run: cmake --build build/inventory-windows --config Release --target mixyard-windows-inventory mixyard-inventory-check
+      - run: ctest --test-dir build/inventory-windows -C Release -R '^native-inventory-protocol$' --output-on-failure --no-tests=error
+      - name: Read properties only; scoped unavailable accepted on headless runner
+        run: python -B adapters/windows/inventory/test_protocol.py --smoke build/inventory-windows/Release/mixyard-windows-inventory.exe windows
+      - run: cmake --install build/inventory-windows --config Release --prefix build/inventory-install
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-inventory-unsigned-${{ github.event.pull_request.head.sha || github.sha }}
+          path: build/inventory-install/bin/mixyard-windows-inventory.exe
+          if-no-files-found: error
+      - name: Qualification boundary
+        if: always()
+        shell: pwsh
+        run: "'Hosted Windows SDK build/read-only inventory only; scoped unavailable may occur. Physical endpoints, privacy, capture/playback, Bluetooth, transport and endurance UNQUALIFIED. No raw snapshot or selectors uploaded.' >> $env:GITHUB_STEP_SUMMARY"
+
+  macos:
+    name: Apple SDK compile and read-only hosted snapshot
+    runs-on: macos-14
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: bash adapters/macos/inventory/build.sh
+      - run: clang++ -std=c++17 -O2 -Wall -Wextra -Werror -pedantic adapters/windows/inventory/check.cpp -o /tmp/mixyard-inventory-check
+      - run: /tmp/mixyard-inventory-check
+      - run: python3 -B adapters/windows/inventory/test_protocol.py --fixture /tmp/mixyard-inventory-check
+      - name: Read properties only; no tap, stream, install or recording prompt
+        run: python3 -B adapters/windows/inventory/test_protocol.py --smoke adapters/macos/inventory/build/mixyard-macos-inventory macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-inventory-unsigned-${{ github.event.pull_request.head.sha || github.sha }}
+          path: adapters/macos/inventory/build/mixyard-macos-inventory
+          if-no-files-found: error
+      - name: Qualification boundary
+        if: always()
+        run: echo 'Hosted Apple SDK build/read-only inventory only; scoped unavailable may occur. Physical endpoints, privacy, capture/playback, Bluetooth, transport and endurance UNQUALIFIED. No raw snapshot or selectors uploaded.' >> "$GITHUB_STEP_SUMMARY"
