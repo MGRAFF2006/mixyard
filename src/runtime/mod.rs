@@ -34,6 +34,7 @@ const MAX_EVENTS: usize = 8;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
 const TICK: Duration = Duration::from_millis(10);
+const INVENTORY_TRANSFER_TICK: Duration = Duration::from_millis(1);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -191,13 +192,18 @@ impl Peer {
         }
     }
     fn flush(&mut self) -> io::Result<bool> {
-        if self.written < self.output.len() {
-            let end =
-                (self.written + if self.inventory { 65536 } else { 4096 }).min(self.output.len());
+        let budget = if self.inventory { 65536 } else { 4096 };
+        let end = (self.written + budget).min(self.output.len());
+        // Bound bytes and calls per peer, while allowing short OS writes to
+        // make progress without imposing a full scheduler tick per write.
+        for _ in 0..32 {
+            if self.written == end {
+                break;
+            }
             match self.stream.write(&self.output[self.written..end]) {
                 Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
                 Ok(n) => self.written += n,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => return Err(e),
             }
         }
@@ -387,7 +393,16 @@ pub fn serve_with_inventory(instance: &str, options: inventory::Options) -> io::
                 return Ok(());
             }
         }
-        thread::sleep(TICK);
+        thread::sleep(
+            if peers
+                .iter()
+                .any(|peer| peer.inventory && peer.written < peer.output.len())
+            {
+                INVENTORY_TRANSFER_TICK
+            } else {
+                TICK
+            },
+        );
     }
 }
 

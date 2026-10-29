@@ -210,6 +210,27 @@ impl Fake {
             assert_eq!(request["command"], command);
             assert_eq!(request["ipcVersion"], IPC_VERSION);
             assert_eq!(request.as_object().unwrap().len(), 3);
+            #[cfg(unix)]
+            if command == "inventory" {
+                use std::os::fd::AsRawFd;
+                // Exercise short OS reads/backpressure, as seen on macOS,
+                // without introducing artificial inter-chunk writer delays.
+                let size: libc::c_int = 2048;
+                assert_eq!(
+                    unsafe {
+                        libc::setsockopt(
+                            stream.as_raw_fd(),
+                            libc::SOL_SOCKET,
+                            libc::SO_SNDBUF,
+                            (&size as *const libc::c_int).cast(),
+                            std::mem::size_of_val(&size) as libc::socklen_t,
+                        )
+                    },
+                    0
+                );
+                stream.set_write_timeout(Some(LIMIT)).unwrap();
+                stream.set_nonblocking(false).unwrap();
+            }
             if let Err(error) = write(&mut stream, &reply(request["requestId"].as_str().unwrap())) {
                 // Only explicitly hostile oversized fixtures expect the reader
                 // to close before the entire response has been written.

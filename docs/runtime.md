@@ -215,7 +215,12 @@ Additional operational bounds:
   OS scheduling/filesystem stalls can still make a client time out safely.
 - Inventory alone permits a 1 MiB reply and up to 1024 entries per category,
   4096 UTF-8 bytes per identity. Requests/events retain their 8192-byte bounds;
-  inventory delivery reads/writes at most 64 KiB per tick. Raw helper draining
+  inventory server delivery writes at most 64 KiB in at most 32 calls per peer
+  per loop, using a 1 ms idle interval while a reply remains pending. The typed
+  client continues immediately after successful short reads (at most 64 KiB
+  each), checks cancellation/deadline every iteration, yields every 32 successful
+  operations and waits 1 ms on blocked reads after receiving partial data.
+  Before receiving data it retains the ordinary 10 ms idle interval. Raw helper draining
   performs at most 32 bounded reads per tick. Oversize/count errors explicitly
   ask to reduce the visible graph; nothing is silently truncated. A large graph
   can hit the byte cap before its entry cap. The Windows overlapped transport

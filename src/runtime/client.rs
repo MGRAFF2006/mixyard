@@ -338,6 +338,7 @@ impl ReadOnlyClient {
             frame(&json!({"ipcVersion":IPC_VERSION,"requestId":request_id,"command":"inventory"}));
         let mut sent = 0;
         let mut input = Vec::new();
+        let mut progress_operations = 0;
         loop {
             if cancelled.load(Ordering::Acquire) {
                 return Err(io::ErrorKind::Interrupted.into());
@@ -345,23 +346,32 @@ impl ReadOnlyClient {
             if start.elapsed() >= std::time::Duration::from_secs(2) {
                 return Err(io::ErrorKind::TimedOut.into());
             }
+            let mut progressed = false;
             if sent < request.len() {
                 match stream.write(&request[sent..]) {
                     Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-                    Ok(n) => sent += n,
+                    Ok(n) => {
+                        sent += n;
+                        progressed = true;
+                    }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
                     Err(e) => return Err(e),
                 }
             } else {
                 let mut buf = [0; 65536];
                 let limit = buf.len().min(super::MAX_INVENTORY_FRAME + 1 - input.len());
+                let previous_len = input.len();
                 match stream.read(&mut buf[..limit]) {
                     Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
-                    Ok(n) => input.extend_from_slice(&buf[..n]),
+                    Ok(n) => {
+                        input.extend_from_slice(&buf[..n]);
+                        progressed = true;
+                    }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
                     Err(e) => return Err(e),
                 }
-                if let Some(end) = input.iter().position(|b| *b == b'\n') {
+                if let Some(offset) = input[previous_len..].iter().position(|b| *b == b'\n') {
+                    let end = previous_len + offset;
                     if end > super::MAX_INVENTORY_FRAME || end + 1 != input.len() {
                         return Err(invalid("invalid inventory frame"));
                     }
@@ -391,7 +401,22 @@ impl ReadOnlyClient {
                     ));
                 }
             }
-            thread::sleep(TICK);
+            if progressed {
+                // A successful short read is not a reason to idle. Small OS
+                // buffers can require hundreds of reads for one bounded frame.
+                progress_operations += 1;
+                if progress_operations == 32 {
+                    thread::yield_now();
+                    progress_operations = 0;
+                }
+            } else {
+                progress_operations = 0;
+                thread::sleep(if input.is_empty() {
+                    TICK
+                } else {
+                    super::INVENTORY_TRANSFER_TICK
+                });
+            }
         }
     }
 }
