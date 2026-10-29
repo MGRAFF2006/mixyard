@@ -2,10 +2,10 @@ name: Network codec qualification
 
 on:
   pull_request:
-    paths: ['network/codecs/**', 'docs/network-codecs.md', '.github/workflows/network-codecs.yml']
+    paths: ['network/codecs/**', 'docs/network-codecs.md', 'docs/network-codec-platforms.md', '.github/workflows/network-codecs.yml']
   push:
     branches: [main, t3/network-codecs]
-    paths: ['network/codecs/**', 'docs/network-codecs.md', '.github/workflows/network-codecs.yml']
+    paths: ['network/codecs/**', 'docs/network-codecs.md', 'docs/network-codec-platforms.md', '.github/workflows/network-codecs.yml']
   workflow_dispatch:
 
 permissions:
@@ -54,34 +54,133 @@ jobs:
       - name: Test raw envelopes and compile example without system codecs
         run: cargo test --locked --manifest-path network/codecs/Cargo.toml --no-default-features --all-targets
 
-  linux-system-codecs:
-    name: Linux system Zstd and Opus loopback
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  system-codecs:
+    name: System codecs (${{ matrix.os }}, ${{ matrix.link }})
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        link: [dylib, static]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      MIXYARD_ZSTD_LINK_KIND: ${{ matrix.link }}
+      MIXYARD_OPUS_LINK_KIND: ${{ matrix.link }}
+      CODEC_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      VCPKG_MAX_CONCURRENCY: '2'
+      VCPKG_DISABLE_METRICS: '1'
+      VCPKG_BINARY_SOURCES: clear
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      HOMEBREW_NO_ANALYTICS: '1'
+      HOMEBREW_MAKE_JOBS: '2'
     steps:
       - uses: actions/checkout@v4
-      - name: Install public codec development libraries on ephemeral runner
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libzstd-dev libopus-dev pkg-config
-          pkg-config --modversion libzstd opus
-      - name: Set private target and require 10 GiB free
+      - name: Allocate private hosted build and dependency paths before acquisition
         shell: python
         run: |
-          import os, shutil
-          target = os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-network-codecs-system')
-          os.makedirs(target, mode=0o700, exist_ok=True)
-          free = shutil.disk_usage(target).free
-          print(f'Available: {free / 2**30:.1f} GiB')
-          if free < 10 * 2**30:
-              raise SystemExit('Less than 10 GiB free before codec build')
+          import os, pathlib, shutil
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'mixyard-codec-qualification'
+          root.mkdir(mode=0o700, exist_ok=True)
+          if shutil.disk_usage(root).free < 10 * 2**30:
+              raise SystemExit('Less than 10 GiB free before codec acquisition')
+          target = root / 'target'
+          (target / 'evidence').mkdir(parents=True, exist_ok=True)
           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
-              env.write(f'CARGO_TARGET_DIR={target}\n')
+              for key, value in {
+                  'CODEC_BUILD_ROOT': root,
+                  'CARGO_TARGET_DIR': target,
+                  'VCPKG_DOWNLOADS': root / 'downloads',
+                  'HOMEBREW_CACHE': root / 'brew-cache',
+              }.items():
+                  pathlib.Path(value).mkdir(parents=True, exist_ok=True)
+                  env.write(f'{key}={value}\n')
+      - name: Linux public development libraries and package notices
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libzstd-dev libopus-dev pkg-config
+          pkg-config --atleast-version=1.4.0 libzstd
+          pkg-config --atleast-version=1.3.0 opus
+          pkg-config --modversion libzstd opus | tee "$CARGO_TARGET_DIR/evidence/packages.txt"
+          python3 -B -m unittest discover -s network/codecs/ci -p 'test_*.py'
+          zstd_dir=$(python3 -B network/codecs/ci/linux_library.py libzstd-dev zstd "$MIXYARD_ZSTD_LINK_KIND")
+          opus_dir=$(python3 -B network/codecs/ci/linux_library.py libopus-dev opus "$MIXYARD_OPUS_LINK_KIND")
+          {
+            echo "MIXYARD_ZSTD_LIB_DIR=$zstd_dir"
+            echo "MIXYARD_OPUS_LIB_DIR=$opus_dir"
+            echo "LD_LIBRARY_PATH=$zstd_dir:$opus_dir"
+          } >> "$GITHUB_ENV"
+          dpkg-query -W libzstd-dev libzstd1 libopus-dev libopus0 >> "$CARGO_TARGET_DIR/evidence/packages.txt"
+          cp /usr/share/doc/libzstd-dev/copyright "$CARGO_TARGET_DIR/evidence/zstd-copyright.txt"
+          cp /usr/share/doc/libopus-dev/copyright "$CARGO_TARGET_DIR/evidence/opus-copyright.txt"
+      - name: macOS public Homebrew bottles and package notices
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install --formula --force-bottle zstd opus pkgconf
+          zstd_prefix=$(brew --prefix zstd)
+          opus_prefix=$(brew --prefix opus)
+          {
+            echo "MIXYARD_ZSTD_LIB_DIR=$zstd_prefix/lib"
+            echo "MIXYARD_OPUS_LIB_DIR=$opus_prefix/lib"
+            echo "DYLD_LIBRARY_PATH=$zstd_prefix/lib:$opus_prefix/lib"
+          } >> "$GITHUB_ENV"
+          brew list --versions zstd opus | tee "$CARGO_TARGET_DIR/evidence/packages.txt"
+          brew info --json=v2 zstd opus > "$CARGO_TARGET_DIR/evidence/homebrew-formulae.json"
+          python - "$zstd_prefix" "$opus_prefix" <<'PY_NOTICES'
+          import os, pathlib, shutil, sys
+          for name, prefix in zip(['zstd', 'opus'], sys.argv[1:]):
+              prefix = pathlib.Path(prefix).resolve()
+              destination = pathlib.Path(os.environ['CARGO_TARGET_DIR']) / 'evidence' / (name + '-notices')
+              notices = [p for p in prefix.rglob('*') if p.is_file() and
+                         p.name.upper().startswith(('LICENSE', 'COPYING', 'PATENT'))]
+              if not notices:
+                  raise SystemExit(f'No installed upstream notices found in {prefix}')
+              for path in notices:
+                  output = destination / path.relative_to(prefix)
+                  output.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(path, output)
+          PY_NOTICES
+      - name: Windows public vcpkg release-only codecs and runtime DLL search path
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          $triplet = if ($env:MIXYARD_ZSTD_LINK_KIND -eq 'static') { 'x64-windows-static-md-release' } else { 'x64-windows-release' }
+          $installed = Join-Path $env:CODEC_BUILD_ROOT 'installed'
+          $overlay = Join-Path $env:GITHUB_WORKSPACE 'network/codecs/ci/triplets'
+          & $vcpkg version | Tee-Object "$env:CARGO_TARGET_DIR/evidence/vcpkg-version.txt"
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg version failed' }
+          git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD | Out-File "$env:CARGO_TARGET_DIR/evidence/vcpkg-revision.txt"
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg revision failed' }
+          & $vcpkg install 'zstd' 'opus' "--triplet=$triplet" "--host-triplet=$triplet" "--overlay-triplets=$overlay" "--x-install-root=$installed" "--x-buildtrees-root=$env:CODEC_BUILD_ROOT/buildtrees" "--x-packages-root=$env:CODEC_BUILD_ROOT/packages" --clean-after-build | Tee-Object "$env:CARGO_TARGET_DIR/evidence/packages.txt"
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg codec installation failed' }
+          $prefix = Join-Path $installed $triplet
+          "MIXYARD_ZSTD_LIB_DIR=$prefix/lib" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "MIXYARD_OPUS_LIB_DIR=$prefix/lib" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CODEC_DLL_DIR=$prefix/bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          if ($env:MIXYARD_ZSTD_LINK_KIND -eq 'dylib') {
+            "$prefix/bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+          Copy-Item "$prefix/share/zstd/copyright" "$env:CARGO_TARGET_DIR/evidence/zstd-copyright.txt"
+          Copy-Item "$prefix/share/opus/copyright" "$env:CARGO_TARGET_DIR/evidence/opus-copyright.txt"
+          Copy-Item "$installed/vcpkg/status" "$env:CARGO_TARGET_DIR/evidence/vcpkg-status.txt"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - run: cargo fmt --manifest-path network/codecs/Cargo.toml -- --check
-      - run: cargo clippy --locked --manifest-path network/codecs/Cargo.toml --all-features --all-targets
-      - run: cargo test --locked --manifest-path network/codecs/Cargo.toml --all-features --all-targets
-      - name: Execute raw, lossless and explicit lossy TCP loopback (synthetic only)
-        run: cargo run --locked --manifest-path network/codecs/Cargo.toml --all-features --example loopback
+          components: clippy
+      - name: Qualify actual Encoder/Decoder, conversion/capacity/padding and owned TCP loopback
+        run: python network/codecs/ci/qualify.py
+      - name: Upload logs, versions, link evidence and upstream notices
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codec-evidence-${{ matrix.os }}-${{ matrix.link }}
+          path: ${{ env.CARGO_TARGET_DIR }}/evidence
+          if-no-files-found: error
+          retention-days: 14

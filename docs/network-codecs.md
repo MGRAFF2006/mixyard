@@ -246,9 +246,12 @@ Throughput, CPU, latency and memory will change with inputs, libraries and host 
 Authentication, production reliable-control plan serialization, exact Spec adapter
 validation, Session integration, datagram fragmentation/MTU, packet loss recovery,
 pacing, native endpoints, two-host/LAN tests, physical latency, sustained heavy
-load and Windows/macOS system-library execution remain separate qualification
-gates. Existing network CI does not execute this nested workspace yet; the parent
-owns adding its authenticated integration and hosted checks.
+load remain separate qualification gates. The dedicated
+[platform workflow](network-codec-platforms.md) now requests actual system-library
+worker tests and synthetic TCP loopback on Linux, Windows and macOS, separately
+from raw-only checks. A requested job is not passing platform evidence: inspect
+the exact revision's run and uploaded logs before making a qualification claim.
+Authenticated integration remains independently owned by the parent.
 
 ## Dependency sources and distribution
 
