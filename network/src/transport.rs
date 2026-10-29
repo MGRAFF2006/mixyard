@@ -196,7 +196,7 @@ impl SecureEndpoint {
 
 /// Network/codec worker boundary. No devices, mixing, resampling or realtime callbacks.
 pub struct Session {
-    connection: Connection,
+    pub(crate) connection: Connection,
     permissions: Permissions,
     limits: Limits,
     receiver: Mutex<Receiver>,
