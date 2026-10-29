@@ -5,7 +5,10 @@ import unittest
 from dataclasses import replace
 
 from mixyard_interop.http_upnp import ProtocolError, Resource, StreamReceiver, StreamSource
-from test_stream import endpoint, metadata, peer, response_head, sessions, spec, wire_record
+if __package__:
+    from .test_stream import endpoint, metadata, peer, response_head, sessions, spec, wire_record
+else:
+    from test_stream import endpoint, metadata, peer, response_head, sessions, spec, wire_record
 
 try:
     from mixyard_interop.runtime import ClockEvidence, LeaseBinding, LeasedBlock, RuntimeLease
