@@ -279,3 +279,17 @@ test('a rejected old save cannot pause writes after a fresh successful reconnect
     assert.equal(session.error, '')
   } finally { await s.close() }
 })
+
+test('a host-held Api lifecycle change notifies consumers through the original reference', async () => {
+  const host = new Api(async () => Response.json({ apiVersion: 1, csrfToken: 'local', audioAvailable: false }))
+  const observed = reactive(host), epochs: number[] = []
+  const stop = watch(() => observed.epoch, value => epochs.push(value), { flush: 'sync' })
+  try {
+    await observed.connect()
+    const before = epochs.length
+    host.disconnect('Host revoked this session')
+    assert.equal(epochs.length, before + 1)
+    assert.equal(observed.connected, false)
+    assert.equal(observed.connectionError, 'Host revoked this session')
+  } finally { stop() }
+})
