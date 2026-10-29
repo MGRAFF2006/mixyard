@@ -45,7 +45,7 @@ jobs:
           cp apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt verification/mobile-native/kotlin/build/production/
           cp apps/mobile/android/core/src/main/kotlin/org/mixyard/mobile/Endpoint.kt verification/mobile-native/kotlin/build/production/
           sha256sum apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt verification/mobile-native/kotlin/build/production/PinnedControl.kt
-          gradle --no-daemon -p verification/mobile-native/kotlin installDist --write-locks
+          gradle --no-daemon -p verification/mobile-native/kotlin installDist
       - uses: actions/upload-artifact@v6
         with:
           name: mobile-native-http-dependency-locks
@@ -103,6 +103,12 @@ jobs:
         working-directory: apps/mobile/android
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/android-shipping-http-gradle
-        run: gradle --no-daemon :app:assembleDebug :app:lintDebug --write-locks
+        run: |
+          gradle --no-daemon :app:assembleDebug :app:lintDebug --write-locks
+          gradle --no-daemon :app:dependencies --configuration releaseRuntimeClasspath --write-locks
+      - uses: actions/upload-artifact@v6
+        with:
+          name: mobile-android-http-dependency-locks
+          path: apps/mobile/android/app/gradle.lockfile
       - if: always()
         run: echo 'Actual Android SDK application compilation/lint with the same shipping HTTP engine. No Android runtime/emulator/physical secure-storage execution is claimed.' >> "$GITHUB_STEP_SUMMARY"
