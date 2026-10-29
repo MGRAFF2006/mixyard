@@ -64,10 +64,16 @@ pub(super) fn start(options: &Options) -> Result<Box<dyn Capture>> {
     {
         Ok(Box::new(super::discovery::Job::start(options)?))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(target_os = "macos", windows))]
     {
-        let _ = options;
-        Err("native-inventory-provider-not-installed-for-platform")
+        let platform = if cfg!(windows) {
+            crate::Platform::Windows
+        } else {
+            crate::Platform::Macos
+        };
+        Ok(Box::new(super::native_inventory::Job::start(
+            options, platform,
+        )?))
     }
 }
 
@@ -78,9 +84,9 @@ pub(super) fn complete(instance: &str, inventory: &mut Inventory) -> Result<()> 
         let endpoint = super::endpoint(instance).map_err(|_| "inventory-invalid-namespace")?;
         super::discovery::revision(inventory, std::path::Path::new(&endpoint).parent().unwrap())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(target_os = "macos", windows))]
     {
-        let _ = (instance, inventory);
-        Err("native-inventory-revision-store-not-installed-for-platform")
+        let directory = super::inventory_os::state_directory(instance)?;
+        super::inventory_state::revision(inventory, &directory)
     }
 }

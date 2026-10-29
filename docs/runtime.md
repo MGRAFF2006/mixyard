@@ -230,19 +230,19 @@ Additional operational bounds:
 boundary and trusted options. A provider returns `Result<Option<Inventory>>`
 without blocking on subprocess I/O, owns cleanup on drop, translates exact
 platform identities/formats, and starts at revision zero. The runtime completes
-it with secure durable revision state before publishing. Windows/macOS native
-inventory providers and their secure revision stores are pending integration;
-they currently return explicit provider-unavailable, not fabricated inventory.
+it with secure durable revision state before publishing. Windows/macOS use the
+installed read-only providers and persistent secure stores described below.
 Their adapter protocol is `snapshot`, one <=1 MiB schema2 discovery Inventory,
 revision 0, actual platform, <=1024/category and <=4096 UTF-8 bytes per ID. The
 trusted runtime wrapper assigns evidence and high-water; helper-supplied claims
 do not authorize native evidence. Native OS qualification is a separate gate.
 
-For reproducible process/IPC tests only, Linux accepts a local absolute
+For reproducible process/IPC tests only, all three platforms accept a local absolute
 `serve --inventory-fixture-helper /ABSOLUTE/HELPER` option. It invokes that helper
-without arguments, expecting raw pw-dump-shaped stdout, and **always** labels
-its inventory `simulated`. This protocol is deliberately different from native
-Windows/macOS normalized helper output. It cannot establish native evidence.
+without arguments on Linux, expecting raw pw-dump-shaped stdout. Windows/macOS
+fixtures use the schema-2 helper contract and fixed `snapshot` argument instead.
+Every fixture inventory is **always** labelled `simulated`; none can establish
+native evidence.
 `cargo test --locked --test runtime_inventory` exercises actual helper/runtime
 child processes and typed IPC with owned fixtures: precision, formats,
 refresh/restart/content changes, malformed/partial/oversized output, timeouts,
@@ -277,3 +277,118 @@ counts, revision equality/change and scoped failure reasons. Native tests on a
 host without PipeWire can establish unavailable behavior only.
 
 Discovery parsing references: [PipeWire pw-dump source](https://github.com/PipeWire/pipewire/blob/master/src/tools/pw-dump.c), [SPA audio format parameters](https://docs.pipewire.org/group__spa__param.html), and [standard PipeWire driver configuration](https://github.com/PipeWire/pipewire/blob/master/src/daemon/pipewire.conf.in).
+
+## Installed Windows and macOS inventory providers
+
+Production uses `current_exe()` to find exactly `mixyard-windows-inventory.exe`
+or `mixyard-macos-inventory` beside the runtime. There is no native helper path
+flag, environment override, PATH lookup, shell, HTTP path, or IPC observation
+submission. Explicit `--inventory-fixture-helper` always assigns `simulated`,
+regardless of the child's evidence claim. The sibling installation is the trust
+boundary: the user explicitly selects reviewed local build artifacts to install.
+Unsigned local development builds are supported; this is not code-signature or
+publisher attestation. A different untrusted executable must never be copied to
+the installed production helper name.
+
+Windows requires a real single-link helper owned by the current SID, a protected
+DACL with one current-SID full-access ACE, and the same private DACL on its parent
+installation directory. Ancestors are checked for reparse points and pinned
+without delete sharing. macOS requires a real single-link executable owned by
+root/current UID, no set-ID bits, no group/other writes, and trusted real
+ancestors owned by root/current UID with no group/other writes. Additional Darwin
+ACL allow grants are rejected (deny entries are allowed). Keep installations in
+a private local user directory; symlinked/reparse/redirected installations are
+intentionally unavailable. Installers refuse to replace an existing installation.
+They copy artifacts only; they do not launch a service, install drivers or SDKs,
+or change login startup.
+
+Build using the existing SDK recipes in [native inventory](platform-native-inventory.md),
+then install on Windows in PowerShell 7 with an already installed toolchain:
+
+```powershell
+cargo build --locked --bin mixyard-runtime
+./scripts/install-inventory-runtime.ps1 -Runtime target/debug/mixyard-runtime.exe -Helper build/inventory-windows/Release/mixyard-windows-inventory.exe -Name dev-2026-10-29
+# The script prints the installed runtime's absolute path under LocalAppData.
+# Run that exact executable with: serve --instance native-check
+# Query it with: inventory --instance native-check
+# Stop it with the existing mixyard shutdown --instance native-check command.
+```
+
+On macOS, with developer tools and SDK 14.2+ already installed:
+
+```sh
+cargo build --locked --bin mixyard-runtime
+bash adapters/macos/inventory/build.sh
+bash scripts/install-inventory-runtime.sh "$PWD/target/debug/mixyard-runtime" "$PWD/adapters/macos/inventory/build/mixyard-macos-inventory" "$HOME/MixyardRuntime-2026-10-29"
+# Use the printed runtime path with serve/inventory --instance native-check.
+# Shut down explicitly with mixyard shutdown --instance native-check.
+```
+
+The provider spawns exactly `snapshot`, with null stdin and private pipes.
+Windows creates the process suspended, assigns an owned job with kill-on-close
+and no breakaway, and resumes only after assignment. Only the three standard
+handles are inherited. Bounded `PeekNamedPipe`/`ReadFile` polling never waits for
+unavailable bytes. macOS uses nonblocking pipes and an owned POSIX process group;
+`waitid(WNOWAIT)` reserves its leader PID until cleanup. Cancellation, disconnect,
+timeout, parse failure and shutdown terminate the owned group/job and reap the
+leader. The runtime's 700 ms helper budget, 1200 ms preparation cutoff and typed
+2-second client deadline still apply; requests/events retain their 8 KiB bounds.
+
+Exactly one LF-terminated schema-2 snapshot, revision 0, matching the actual OS,
+zero stderr bytes and successful exit is required. Native stdout is bounded to
+1 MiB, each category to 1024 entries and each string to 4096 UTF-8 bytes (control
+characters are rejected by shared admission). Wrong platform, duplicate JSON
+keys/observed IDs, partial fields, malformed or invalid concrete formats,
+nonzero exit, diagnostic stderr and oversized output return `inventory-unavailable`.
+Private child errors are never forwarded. Successful empty enumeration is allowed;
+an empty helper failure envelope is never treated as success.
+
+The wrapper preserves byte-exact native selectors, nullable formats and origin
+exclusions. It assigns evidence from invocation provenance, replaces ordinal
+observed IDs with bounded selector digests plus occurrence IDs, and sorts all
+represented properties before revision hashing. Duplicated semantic selectors
+stay distinct and ambiguous. This prevents OS enumeration order alone from
+advancing revisions. The helper's ordinal tokens and claimed revision/evidence
+cannot establish freshness. Windows app-source identity remains unavailable;
+no PID, endpoint, executable-label or media-session identity is substituted.
+macOS bundle/process limitations and pre-14.2 app-discovery limits remain as
+specified in the helper documentation. Native discovery does not grant consent.
+
+Persistent state locations, per validated runtime instance:
+
+| OS | Private state directory |
+| --- | --- |
+| Windows | `FOLDERID_LocalAppData/MixyardInventory/<instance>` via `SHGetKnownFolderPath` |
+| macOS | account-database home + `Library/Application Support/MixyardInventory/<instance>` via `getpwuid_r` |
+
+`HOME`/`LOCALAPPDATA` overrides and request fields cannot choose these paths.
+Only the 80-byte checksummed digest/counter is retained, using the same revision
+codec as Linux. Unix state is 0700/0600, no symlinks, single-link regular files,
+and pinned-directory `openat`/`renameat` plus file/directory fsync. Windows state
+directories/files have protected current-SID-only ACLs, no reparse points or
+hardlinks, and pinned ancestors; updates use create-new private files,
+`FlushFileBuffers` and same-volume atomic `MoveFileExW(REPLACE_EXISTING |
+WRITE_THROUGH)`. Read, permission, corruption, persistence or counter exhaustion
+failures do not reset the counter or replace bad state. Unchanged refresh/restart
+retains its revision, changes and reversions increase it. Installation replacement
+also retains state because it is outside the install directory. Deleting state
+manually discards that guarantee and requires discarding outstanding reviews;
+the runtime never automatically deletes or repairs revision state.
+
+`runtime_native_inventory` runs actual runtime/fixture processes and typed OS IPC
+on hosted Windows/macOS: provenance, exact IDs, null formats, revisions across
+restart/reversion, private errors, malformed/partial output, cancellation,
+descendant cleanup, shutdown, large replies, corruption, hardlinks and exhaustion.
+Kernel-level state tests additionally reject insecure ACLs/modes. Runtime CI
+builds the unchanged native SDK helpers, installs the actual sibling artifacts,
+and exercises the production provider over real IPC. It accepts a scoped OS
+helper failure on a headless runner, but fails for missing/untrusted installation,
+unimplemented providers, malformed helper output or insecure state. It uploads
+no raw native catalog. These are hosted OS/SDK and process/IPC checks, not physical
+Windows/macOS audio, hardware, privacy-prompt, Bluetooth, latency or quality
+qualification. `backendAvailable: false`, unavailable apply/mute/native dispatch
+and `audioApplied: false` remain unchanged.
+
+Implementation references: [Windows job ownership](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
+[atomic Windows replacement](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw),
+and [Darwin descriptor ACL retrieval](https://github.com/apple-oss-distributions/Libc/blob/main/posix1e/acl_file.c).
