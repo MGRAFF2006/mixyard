@@ -171,15 +171,15 @@ test('shipping native pinned control client against owned production TLS service
     await t.test('stored intent, exact raw Float64 body/reply and independent device', async () => {
       const initial = envelope(await client.request(scope, '/api/profiles/read', {}))
       const config = JSON.parse(readFileSync(new URL('../../apps/web/src/example-config.json', import.meta.url), 'utf8'))
-      config.sends[0].gain = -0; config.sends[1].gain = 1.0000000000000002
+      config.sends[0].gain = -0; config.sends[1].gain = 0.5000000000000001
       const edited = envelope(await client.request(scope, '/api/profiles/edit', { expectedRevision: initial.body.storeRevision, edit: { kind: 'draft', config } }))
       scope = { ...scope, revision: edited.revision }; saved = edited.body.draft
       assert.ok(Object.is(saved.sends[0].gain, -0), 'stored canonical signed zero survives the native serializer')
-      assert.equal(saved.sends[1].gain, 1.0000000000000002)
+      assert.equal(saved.sends[1].gain, 0.5000000000000001)
       // These samples exercise the complete canonical request and response,
       // including nested arrays. This is offline DSP, never audio transport.
-      const samples = [-0, 1.0000000000000002, 5e-324, -1.0000000000000002, -0.23456789012345678, 9007199254740992]
-      const rendered = envelope(await client.request(scope, '/api/dsp/preview', { config: { name: 'native precision', format: { sampleRateHz: 48001, channels: ['right', 'left'] }, effects: [] }, frames: 3, iterations: 1, bypassed: true, signal: { kind: 'samples', samples } }))
+      const samples = [-0, 1.0000000000000002, 5e-324, -1.0000000000000002, -0.23456789012345678, 9007199254740992, Number.MAX_VALUE, -Number.MAX_VALUE]
+      const rendered = envelope(await client.request(scope, '/api/dsp/preview', { config: { name: 'native precision', format: { sampleRateHz: 48001, channels: ['right', 'left'] }, effects: [] }, frames: 4, iterations: 1, bypassed: true, signal: { kind: 'samples', samples } }))
       assert.deepEqual(rendered.body.channels, ['right', 'left']); assert.equal(rendered.body.sampleRateHz, 48001)
       assert.equal(rendered.body.output.length, samples.length)
       samples.forEach((sample, index) => assert.ok(Object.is(rendered.body.output[index], sample), `Float64 bits at sample ${index}`))
