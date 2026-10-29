@@ -58,9 +58,11 @@ impl Vault for PlatformVault {
         self.available()?;
         match keyring::Entry::new(SERVICE, key)
             .map_err(vault_error)?
-            .get_password()
+            .get_secret()
         {
-            Ok(value) => Ok(Some(value)),
+            Ok(value) => String::from_utf8(value).map(Some).map_err(|_| {
+                "Secure paired record is not valid UTF-8; no authority was restored".into()
+            }),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(vault_error(e)),
         }
@@ -69,7 +71,7 @@ impl Vault for PlatformVault {
         self.available()?;
         keyring::Entry::new(SERVICE, key)
             .map_err(vault_error)?
-            .set_password(value)
+            .set_secret(value.as_bytes())
             .map_err(vault_error)
     }
     fn delete(&self, key: &str) -> Result<(), String> {

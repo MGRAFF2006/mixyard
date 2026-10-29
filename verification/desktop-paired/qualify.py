@@ -306,6 +306,10 @@ def qualify(args):
                 assert rendered['status'] == 'passed'
                 results.extend(rendered['checks'])
                 results.append(rendered['boundary'])
+            if os.name == 'nt' or sys.platform == 'darwin':
+                roundtrip = harness.ok('platform-vault-roundtrip')
+                assert roundtrip['platformVaultRoundtrip'] and roundtrip['reopened'] and roundtrip['deleted']
+                results.append('actual hosted platform vault preserves bounded UTF-8 secret bytes across owner reopen and deletes only its owned synthetic entry')
             if os.name != 'nt' and args.expect_no_secret_service:
                 harness.ok('platform-vault-unavailable')
                 results.append('actual platform vault unavailable fails closed (no production fallback)')

@@ -100,6 +100,33 @@ fn main() {
                     );
                     Ok(json!({"injected":true}))
                 }
+                "platform-vault-roundtrip" => {
+                    let directory = std::env::temp_dir()
+                        .join(format!("mixyard-vault-roundtrip-{}", std::process::id()));
+                    let key = format!("qualification-owned-{}", std::process::id());
+                    let value = format!("{}€", "x".repeat(2300));
+                    let vault = PlatformVault::open(Ok(directory.clone()));
+                    vault.write(&key, &value)?;
+                    if vault.read(&key)?.as_deref() != Some(value.as_str()) {
+                        return Err("Platform vault byte readback mismatch".into());
+                    }
+                    drop(vault);
+                    let reopened = PlatformVault::open(Ok(directory.clone()));
+                    let persisted = reopened.read(&key)?.as_deref() == Some(value.as_str());
+                    let removed = reopened.delete(&key);
+                    drop(reopened);
+                    std::fs::remove_dir_all(directory)
+                        .map_err(|_| "Owned vault fixture lock cleanup failed")?;
+                    removed?;
+                    if !persisted {
+                        return Err(
+                            "Platform vault reopen did not preserve exact UTF-8 bytes".into()
+                        );
+                    }
+                    Ok(
+                        json!({"platformVaultRoundtrip":true,"bytes":value.len(),"reopened":true,"deleted":true}),
+                    )
+                }
                 "platform-vault-unavailable" => {
                     let directory = std::env::temp_dir()
                         .join(format!("mixyard-vault-failure-{}", std::process::id()));

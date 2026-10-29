@@ -71,7 +71,9 @@ canonical duplicate-field rejection. PCM never crosses this JSON interface.
 The native vault uses keyring 3 with explicit Secret Service on Linux, Windows
 Credential Manager and macOS Keychain backends. No production memory or plaintext
 fallback exists. A secure write/read/delete probe precedes consuming an invitation;
-new credential writes are read back before registering the device. If storage fails
+new credential writes are read back before registering the device. Vault entries
+use the platform's binary secret API with UTF-8 bytes: Windows password helpers
+would otherwise expand JSON to UTF-16 and exceed its credential blob limit. If storage fails
 after network pairing, the invitation may be consumed: revoke the new controller
 on the owner before retrying. Records are bounded for Windows credential storage;
 the vault index contains at most 16 IDs. A locked/missing vault is an actionable
