@@ -7,6 +7,8 @@
 extern "C" {
 #endif
 typedef struct mx_host mx_host;
+#define MX_HOST_ABI_VERSION 1u
+uint32_t mx_host_abi_version(void);
 typedef struct mx_stamp {
     uint64_t generation, revision, clock_id, sequence, first_frame, captured_ns, deadline_ns;
 } mx_stamp;
