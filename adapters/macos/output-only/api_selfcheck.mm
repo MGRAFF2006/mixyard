@@ -61,8 +61,9 @@ struct Fake {
     UInt32 inventoryBytes = sizeof(AudioDeviceID), streamBytes = sizeof(AudioStreamID);
     bool duplicate = false, missing = false, truncate = false, wrongInputRead = false;
     bool wrongBound = false, wrongMap = false, wrongLimit = false, eventOnStart = false;
-    bool corruptClient = false, corruptAfterInitialize = false;
-    bool suppressInputSet = false;
+    bool corruptClient = false, corruptAfterInitialize = false, wrongPropertySize = false;
+    bool suppressInputSet = false, startError = false;
+    unsigned stopFailures = 0;
     dispatch_semaphore_t entered = nullptr, release = nullptr;
 } g;
 AudioUnit unit() { return reinterpret_cast<AudioUnit>(&g); }
@@ -208,11 +209,12 @@ OSStatus start(AudioUnit u) {
         dispatch_semaphore_signal(g.entered);
         dispatch_semaphore_wait(g.release, DISPATCH_TIME_FOREVER);
     }
-    return fail() ? injectedError : noErr;
+    return (fail() || g.startError) ? injectedError : noErr;
 }
 OSStatus stop(AudioUnit u) {
     assert(u == unit() && g.live); ++g.stops;
     if (fail()) return injectedError;
+    if (g.stopFailures) { --g.stopFailures; return injectedError; }
     g.running = false; return noErr;
 }
 OSStatus size(AudioObjectID object, const AudioObjectPropertyAddress* a, UInt32 qualifierSize,
@@ -247,7 +249,11 @@ OSStatus data(AudioObjectID object, const AudioObjectPropertyAddress* a, UInt32 
             return put(value, bytes, text);
         }
         if (a->mSelector == kAudioDevicePropertyDeviceIsAlive) return put(value, bytes, g.alive);
-        if (a->mSelector == kAudioDevicePropertyNominalSampleRate) return put(value, bytes, g.nominal);
+        if (a->mSelector == kAudioDevicePropertyNominalSampleRate) {
+            const auto status = put(value, bytes, g.nominal);
+            if (g.wrongPropertySize) --*bytes;
+            return status;
+        }
         assert(a->mSelector == kAudioDevicePropertyStreams && a->mScope == kAudioObjectPropertyScopeOutput);
         return put(value, bytes, stream);
     }
@@ -312,10 +318,21 @@ void lifecycleFailures() {
         assert(g.failures == 1 && q->fault() != w::Fault::None);
         clean();
     }
+    reset();
+    {
+        auto q = queue(); auto worker = out::Worker::open("chosen-output", *q);
+        g.startError = true; g.stopFailures = 2;
+        rejects([&] { worker->start(); });
+        assert(g.running && q->fault() == w::Fault::Revoked && g.stops == 1);
+        assert(!worker->revoke() && g.running && g.stops == 2);
+        rejects([&] { worker->start(); }); assert(g.starts == 1);
+        assert(worker->close() && !g.running && g.stops == 3);
+    }
+    clean();
     std::cout << "Injected failure and cleanup at all " << total << " public API operations\n";
 }
 void admission() {
-    for (unsigned mode = 0; mode != 20; ++mode) {
+    for (unsigned mode = 0; mode != 21; ++mode) {
         reset(); auto q = queue();
         switch (mode) {
         case 0: g.inventoryBytes = 0; break;
@@ -338,6 +355,7 @@ void admission() {
         case 17: g.corruptClient = true; break;
         case 18: g.corruptAfterInitialize = true; break;
         case 19: q = queue(w::Precision::Float64, {"CA:2", "CA:1"}); break;
+        case 20: g.wrongPropertySize = true; break;
         }
         rejects([&] { out::Worker::open("chosen-output", *q); });
         assert(g.starts == 0); clean();
@@ -375,13 +393,30 @@ void topologyAndRaces() {
         assert(dispatch_semaphore_wait(g.entered, dispatch_time(DISPATCH_TIME_NOW, 2000000000)) == 0);
         // Start is deliberately blocked INSIDE the native API. Concurrent revoke
         // must wait for its ownership, then stop. No restart may follow revoke.
-        std::thread revoker([&] { assert(worker->revoke()); });
+        const auto revoking = dispatch_semaphore_create(0);
+        std::thread revoker([&] { dispatch_semaphore_signal(revoking); assert(worker->revoke()); });
+        assert(dispatch_semaphore_wait(revoking, dispatch_time(DISPATCH_TIME_NOW, 2000000000)) == 0);
         dispatch_semaphore_signal(g.release);
-        starter.join(); revoker.join();
+        starter.join(); revoker.join(); dispatch_release(revoking);
         assert(!g.running && g.starts == 1 && g.stops == 1 && g.input == 0);
         rejects([&] { worker->start(); }); assert(g.starts == 1);
         dispatch_release(g.entered); dispatch_release(g.release); g.entered = g.release = nullptr;
         assert(worker->close());
+    }
+    clean(); reset();
+    {
+        auto q = queue(); auto worker = out::Worker::open("chosen-output", *q);
+        g.entered = dispatch_semaphore_create(0); g.release = dispatch_semaphore_create(0);
+        std::thread starter([&] { worker->start(); });
+        assert(dispatch_semaphore_wait(g.entered, dispatch_time(DISPATCH_TIME_NOW, 2000000000)) == 0);
+        const auto closing = dispatch_semaphore_create(0);
+        std::thread closer([&] { dispatch_semaphore_signal(closing); assert(worker->close()); });
+        assert(dispatch_semaphore_wait(closing, dispatch_time(DISPATCH_TIME_NOW, 2000000000)) == 0);
+        dispatch_semaphore_signal(g.release);
+        starter.join(); closer.join(); dispatch_release(closing);
+        assert(!g.live && !g.running && g.starts == 1 && g.stops == 1);
+        rejects([&] { worker->start(); }); assert(g.starts == 1);
+        dispatch_release(g.entered); dispatch_release(g.release); g.entered = g.release = nullptr;
     }
     clean(); reset();
     {
@@ -418,6 +453,22 @@ OSStatus render(UInt32 frames, uint64_t first, uint64_t ticks, Buffers& buffers,
     return status;
 }
 void renderPcm() {
+    reset();
+    {
+        auto first = queue(); auto sibling = queue();
+        auto worker = out::Worker::open("chosen-output", *first);
+        const auto ticks = futureTick();
+        const double pcm[]{0.125, -0.125};
+        push(*sibling, 0, 3, ticks, 1, pcm);
+        assert(worker->revoke() && first->fault() == w::Fault::Revoked);
+        w::Renderer renderer(*sibling); double actual[2]{}; w::HostClock clock;
+        inRender = true;
+        assert(renderer.render(clock.nanos(ticks), 3, 1, actual, sizeof(actual)));
+        inRender = false;
+        assert(sibling->fault() == w::Fault::None && std::memcmp(actual, pcm, sizeof(pcm)) == 0);
+        assert(worker->close());
+    }
+    clean();
     for (auto precision : {w::Precision::Float32, w::Precision::Float64}) for (bool planar : {false, true}) {
         reset(precision, planar); auto q = queue(precision); auto worker = out::Worker::open("chosen-output", *q);
         worker->start();
