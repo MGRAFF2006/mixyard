@@ -20,12 +20,14 @@ impl Fixture {
                 .unwrap()
                 .as_nanos()
         ));
-        let mut builder = fs::DirBuilder::new();
+        let builder = fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::DirBuilderExt;
+            let mut builder = builder;
             builder.mode(0o700);
-        }
+            builder
+        };
         builder.create(&path).unwrap();
         fs::create_dir(path.join("assets")).unwrap();
         fs::write(path.join("assets/index.html"), "fixture").unwrap();
