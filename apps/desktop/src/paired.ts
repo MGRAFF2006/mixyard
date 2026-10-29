@@ -1,0 +1,57 @@
+import { Api } from '../../web/src/api.ts'
+import type { Permission } from '../../web/src/api.ts'
+import type { Invoke } from './transport.ts'
+
+export type PairedTarget = { deviceId: string; displayName: string; endpoint: string; certificateSha256: string; credentialId: string; permissions: Permission[] }
+export const nativeCredentialSentinel = 'native-owned-paired-credential'
+type Reply = { status: number; body: string; generation?: number }
+
+/** A sentinel requests native authority; it is never an HTTP credential. */
+export function pairedApi(invoke: Invoke, target: PairedTarget): Api {
+  let generation: number | null = null
+  let lifecycle = 0
+  function invalidate() {
+    lifecycle++
+    const expectedGeneration = generation
+    generation = null
+    if (expectedGeneration !== null) void invoke('paired_disconnect', { targetId: target.deviceId, expectedGeneration }).catch(() => { /* Native generations also reject stale queued requests. */ })
+  }
+  const fetcher: typeof fetch = async (input, init) => {
+    if (input !== '/control/session' && input !== '/control/request') throw new Error('Unsupported native paired route.')
+    const headers = new Headers(init?.headers)
+    if (init?.method !== 'POST' || typeof init.body !== 'string' || headers.get('authorization') !== `Bearer ${nativeCredentialSentinel}` || headers.get('content-type') !== 'application/json' || [...headers.keys()].some(key => !['authorization', 'content-type'].includes(key))) throw new Error('Paired requests require native-owned authority and raw JSON.')
+    init.signal?.throwIfAborted()
+    const epoch = lifecycle
+    const current = generation
+    const abort = () => invalidate()
+    init.signal?.addEventListener('abort', abort, { once: true })
+    let reply: Reply
+    try {
+      if (input === '/control/session') {
+        if (init.body !== '{}') throw new Error('Session discovery requires an empty object.')
+        reply = await invoke<Reply>('paired_open', { targetId: target.deviceId })
+        if (!Number.isSafeInteger(reply.generation) || reply.generation! < 1) throw new Error('Invalid native session generation.')
+        if (epoch !== lifecycle || init.signal?.aborted) {
+          await invoke('paired_disconnect', { targetId: target.deviceId, expectedGeneration: reply.generation })
+          throw new DOMException('Paired session cancelled', 'AbortError')
+        }
+        generation = reply.generation!
+      } else {
+        if (current === null) throw new Error('Refresh this paired target before another operation.')
+        reply = await invoke<Reply>('paired_request', { targetId: target.deviceId, generation: current, raw: init.body })
+      }
+      if (epoch !== lifecycle) throw new DOMException('Paired target changed', 'AbortError')
+      init.signal?.throwIfAborted()
+      return new Response(reply.body, { status: reply.status, headers: { 'Content-Type': 'application/json' } })
+    } catch (error) {
+      invalidate()
+      if (error instanceof DOMException) throw error
+      throw new TypeError(`Native paired transport: ${String(error)}`)
+    } finally { init.signal?.removeEventListener('abort', abort) }
+  }
+  class NativeApi extends Api {
+    override disconnect(reason = '') { invalidate(); super.disconnect(reason) }
+  }
+  // NativeApi retains the normal Api control lifecycle, including its host epoch.
+  return new NativeApi(fetcher, { deviceId: target.deviceId, credential: nativeCredentialSentinel })
+}

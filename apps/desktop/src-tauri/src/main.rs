@@ -2,6 +2,7 @@
 
 mod connection;
 mod control_http;
+mod paired;
 
 use connection::{Connection, ConnectionStatus};
 use serde::{Deserialize, Serialize};
@@ -331,6 +332,13 @@ fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
             app.manage(Connection::new()?);
+            app.manage(Arc::new(mixyard_desktop_control::Paired::new(
+                mixyard_desktop_control::PlatformVault::open(
+                    app.path()
+                        .app_local_data_dir()
+                        .map_err(|_| "Desktop app data directory unavailable".to_string()),
+                ),
+            )));
             let port = std::env::var("MIXYARD_WEB_PORT")
                 .unwrap_or_else(|_| "8384".into())
                 .parse::<u16>()?;
@@ -370,6 +378,13 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             console_request,
+            paired::paired_list,
+            paired::paired_pair,
+            paired::paired_open,
+            paired::paired_request,
+            paired::paired_disconnect,
+            paired::paired_forget,
+            paired::paired_revoke,
             set_compact,
             update_tray_context,
             shell_status,

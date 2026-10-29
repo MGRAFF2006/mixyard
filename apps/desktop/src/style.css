@@ -8,3 +8,7 @@
 .desktop-runtime input { max-width: 100%; }
 .desktop-runtime p { overflow-wrap: anywhere; }
 @media (max-width: 520px) { .desktop-toolbar strong, .desktop-target { width: 100%; } }
+.desktop-runtime textarea { width: 100%; min-width: 0; font: inherit; }
+.desktop-runtime form > label { flex: 1 1 18rem; min-width: 0; overflow-wrap: anywhere; }
+.desktop-runtime summary { cursor: pointer; font-weight: 600; }
+.desktop-runtime li { margin-block: 1rem; overflow-wrap: anywhere; }

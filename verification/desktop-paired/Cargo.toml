@@ -1,0 +1,11 @@
+[package]
+name = "mixyard-desktop-paired-qualification"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+mixyard-desktop-control = { path = "../../apps/desktop/native-control" }
+serde_json = "1"

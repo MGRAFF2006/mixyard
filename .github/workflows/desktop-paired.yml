@@ -1,0 +1,99 @@
+name: Native paired desktop control (no audio qualification)
+on:
+  workflow_dispatch:
+  push:
+    paths: ['apps/desktop/**', 'verification/desktop-paired/**', '.github/workflows/desktop-paired.yml']
+  pull_request:
+    paths: ['apps/desktop/**', 'verification/desktop-paired/**', '.github/workflows/desktop-paired.yml']
+permissions:
+  contents: read
+concurrency:
+  group: desktop-paired-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-control:
+    name: Production native TLS / actual control service (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            suffix: ''
+          - os: windows-2022
+            suffix: '.exe'
+          - os: macos-14
+            suffix: ''
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          # Independent frozen service implementation. Never alter or build the local shared cache.
+          ref: 812eee1479702635dc51994dc795ca9f8a655351
+          path: qualification-service
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+          components: rustfmt
+      - name: Hosted disk guard
+        run: |
+          python - <<'PY'
+          import shutil
+          assert shutil.disk_usage('.').free >= 10 * 2**30, 'Need 10 GiB before hosted builds'
+          PY
+      - name: Linux Secret Service build prerequisites (hosted only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - name: Resolve native lockfiles for review (no lock bypass in release workflow)
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          cargo generate-lockfile --manifest-path apps/desktop/native-control/Cargo.toml
+          cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml
+          cargo generate-lockfile --manifest-path verification/desktop-paired/Cargo.toml
+          cp apps/desktop/native-control/Cargo.lock evidence/native-control-Cargo.lock
+          cp apps/desktop/src-tauri/Cargo.lock evidence/desktop-Cargo.lock
+          cp verification/desktop-paired/Cargo.lock evidence/qualification-Cargo.lock
+      - name: Build production native module and its vault-only API double
+        run: |
+          set -euo pipefail
+          cargo fmt --check --manifest-path apps/desktop/native-control/Cargo.toml
+          cargo fmt --check --manifest-path verification/desktop-paired/Cargo.toml
+          cargo test --locked --manifest-path apps/desktop/native-control/Cargo.toml
+          cargo build --locked --manifest-path verification/desktop-paired/Cargo.toml
+      - name: Build actual frozen control CLI separately
+        run: cargo build --locked --manifest-path qualification-service/control/Cargo.toml --bin mixyard-control
+      - name: Production native code to actual owned TLS service
+        env:
+          # An absent isolated bus proves Linux platform-vault failure rather than using any runner session.
+          DBUS_SESSION_BUS_ADDRESS: 'unix:path=/nonexistent/mixyard-paired-owned-bus'
+        run: |
+          set -euo pipefail
+          mkdir -p apps/web/dist
+          extra=()
+          if [[ '${{ runner.os }}' == 'Linux' ]]; then extra+=(--expect-no-secret-service); fi
+          python -B verification/desktop-paired/qualify.py \
+            --harness "verification/desktop-paired/target/debug/mixyard-desktop-paired-qualification${{ matrix.suffix }}" \
+            --service "qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}" \
+            --assets apps/web/dist --output evidence/native-paired.json "${extra[@]}"
+      - name: Upload nonsecret results and reviewable lockfiles only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-paired-${{ matrix.os }}-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 7
