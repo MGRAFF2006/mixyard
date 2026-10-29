@@ -119,6 +119,14 @@ supplies the explicit device operations; opening is never automatic. It cannot
 share a queue with a render consumer. Driver generation/epoch changes stop it
 without reopen. The driver global ingress is still unmapped to a PnP/MMDevice
 endpoint: queue/Delivery checks do **not** prove a selectable virtual microphone.
+An IOCTL/queue service error closes admission, not driver cleanup. Failed native
+close retains the exact producer handle, and every quiescent scrub retries that
+close. The lifecycle stays pending with ownership retained until real cleanup
+succeeds; a second call cannot turn a forgotten handle into false completion.
+Never destroy the owner after a pending stop. Injected SDK regressions exercise
+first-close failure in scrub and failed close from stale-pop/submit paths on an
+actual owned worker thread, then inspect every retained driver packet after join
+and successful cleanup. No real driver is installed or activated by these tests.
 
 ## Build and evidence
 

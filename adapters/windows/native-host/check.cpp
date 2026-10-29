@@ -443,11 +443,19 @@ public:
 };
 mixyard_input::Transport driver{};
 unsigned driver_closed = 0, driver_submitted = 0;
+std::atomic<unsigned> driver_close_failures{0};
+std::atomic<bool> driver_submit_failure{false};
 HANDLE driver_open() {
     require(driver.begin(1, 123) == mixyard_input::Result::accepted, "injected driver admission");
     return reinterpret_cast<HANDLE>(static_cast<uintptr_t>(1));
 }
-BOOL driver_close(HANDLE) { ++driver_closed; (void)driver.cleanup(1); return TRUE; }
+BOOL driver_close(HANDLE file) {
+    ++driver_closed;
+    if (file != reinterpret_cast<HANDLE>(static_cast<uintptr_t>(1))) return FALSE;
+    auto failures = driver_close_failures.load();
+    if (failures) { driver_close_failures.store(failures - 1); return FALSE; }
+    return driver.cleanup(1) == mixyard_input::Result::accepted ? TRUE : FALSE;
+}
 BOOL driver_ioctl(HANDLE, DWORD code, LPVOID input, DWORD input_bytes,
                    LPVOID output, DWORD output_bytes, LPDWORD returned, LPOVERLAPPED) {
     using namespace mixyard_input;
@@ -461,12 +469,81 @@ BOOL driver_ioctl(HANDLE, DWORD code, LPVOID input, DWORD input_bytes,
     }
     if (code == ioctl_submit && output_bytes == sizeof(SubmitReply)) {
         ++driver_submitted;
+        if (driver_submit_failure.load()) return FALSE;
         SubmitReply reply{};
         reply.version = control_version; reply.bytes = sizeof(reply);
         reply.result = static_cast<uint32_t>(driver.submit(1, input, input_bytes));
         std::memcpy(output, &reply, sizeof(reply)); *returned = sizeof(reply); return TRUE;
     }
     return FALSE;
+}
+class FailedIngressClose final : public Worker {
+    myw_port* port_;
+    IngressConsumer ingress_;
+    int mode_;
+public:
+    std::atomic<bool> ready{false};
+    FailedIngressClose(myw_port* port, int mode)
+        : port_(port), ingress_(port, {driver_open, driver_ioctl, driver_close}), mode_(mode) {}
+    void run(Bridge&) override {
+        require(ingress_.open(), "owned injected ingress opens on its real worker thread");
+        require(ingress_.service() == MYW_OK, "owned ingress retains actual nonzero driver PCM");
+        if (mode_ == 1) {
+            myw_port_revoke(port_);
+            require(ingress_.service() == MYW_STALE, "stale pop attempts close without claiming cleanup");
+        } else if (mode_ == 2) {
+            driver_submit_failure.store(true);
+            require(ingress_.service() == MYW_NATIVE, "failed submit attempts close without claiming cleanup");
+        }
+        ready.store(true, std::memory_order_release);
+    }
+    bool scrub_quiescent() override { return ingress_.scrub_quiescent(); }
+};
+void failed_ingress_cleanup_check() {
+    // Exercise first close failure in scrub, stale-pop close failure, and the
+    // producer's internal submit-failure close followed by ingress close.
+    for (int mode = 0; mode != 3; ++mode) {
+        driver.initialize(); driver_closed = driver_submitted = 0;
+        driver_close_failures.store(100); driver_submit_failure.store(false);
+        Session s;
+        try {
+            auto mapped = push(s, 0, 0); process(s, 0, 0, mapped);
+            mapped = push(s, 1, 2); process(s, 1, 2, mapped);
+            auto worker = std::make_unique<FailedIngressClose>(s.bridge->output(1), mode);
+            auto* observed = worker.get();
+            require(s.lifecycle->add(std::move(worker)) && s.lifecycle->start(), "lifecycle owns actual ingress thread");
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (!observed->ready.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::yield();
+            require(observed->ready.load(std::memory_order_acquire), "actual ingress worker finished its IOCTL work");
+            s.lifecycle->request_stop();
+            while (s.lifecycle->stop_issue() != StopIssue::worker_scrub_failed && std::chrono::steady_clock::now() < deadline) {
+                require(s.lifecycle->try_finish_stop() == StopState::pending, "failed driver cleanup never completes");
+                std::this_thread::yield();
+            }
+            require(s.lifecycle->stop_issue() == StopIssue::worker_scrub_failed && !s.lifecycle->worker_failed(),
+                "actual worker joined but failed close retains ownership and pending state");
+            require(driver.owner == 1 && driver.next_sequence && driver.packets[0].samples[0],
+                "failed close really retains injected driver ownership and nonzero packet storage");
+            const auto attempts = driver_closed;
+            require(s.lifecycle->try_finish_stop() == StopState::pending && driver_closed == attempts + 1 && driver.owner == 1,
+                "retry actually re-closes the retained handle, not false success from a forgotten handle");
+            driver_close_failures.store(0); driver_submit_failure.store(false);
+            require(s.lifecycle->try_finish_stop() == StopState::complete && !driver.owner && !driver.next_sequence,
+                "completion requires successful real close/cleanup after actual ingress thread join");
+            for (const auto& packet : driver.packets) {
+                require(!packet.generation && !packet.epoch && !packet.revision && !packet.first_frame && !packet.sequence && !packet.frames,
+                    "actual retired driver packet metadata cleared");
+                for (auto sample : packet.samples) require(!sample, "every actual retained driver PCM word cleared");
+            }
+            mixyard_input::Delivery delivery;
+            uint32_t silence[]{0xffffffffu, 0xffffffffu}; delivery.frame(driver, silence);
+            require(!silence[0] && !silence[1], "driver consumer sees silence only after actual cleanup");
+        } catch (...) {
+            driver_close_failures.store(0); driver_submit_failure.store(false);
+            throw;
+        }
+    }
 }
 void sdk_checks() {
     {
@@ -537,6 +614,7 @@ void sdk_checks() {
         consume(s, 0, a);
         require(ingress.scrub_quiescent(), "stopped injected driver consumer storage scrubbed");
     }
+    failed_ingress_cleanup_check();
 }
 #endif
 } // namespace
