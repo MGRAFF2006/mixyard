@@ -34,6 +34,8 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/checkout@v7
         with:
           # Independent frozen service implementation. Never alter or build the local shared cache.
@@ -57,13 +59,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
-      - name: Resolve native lockfiles for review (no lock bypass in release workflow)
+      - name: Record committed native lockfiles (all builds are locked)
         run: |
           set -euo pipefail
           mkdir -p evidence
-          cargo generate-lockfile --manifest-path apps/desktop/native-control/Cargo.toml
-          cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml
-          cargo generate-lockfile --manifest-path verification/desktop-paired/Cargo.toml
           cp apps/desktop/native-control/Cargo.lock evidence/native-control-Cargo.lock
           cp apps/desktop/src-tauri/Cargo.lock evidence/desktop-Cargo.lock
           cp verification/desktop-paired/Cargo.lock evidence/qualification-Cargo.lock
@@ -83,6 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p apps/web/dist
+          python -c "from pathlib import Path; Path('apps/web/dist/index.html').write_text('<!doctype html><title>Owned control API fixture only</title>')"
           extra=()
           if [[ '${{ runner.os }}' == 'Linux' ]]; then extra+=(--expect-no-secret-service); fi
           python -B verification/desktop-paired/qualify.py \

@@ -206,7 +206,12 @@ impl<V: Vault> Paired<V> {
     fn ids(&self) -> Result<Vec<String>, String> {
         let ids: Vec<String> = match self.vault.read(INDEX)? {
             None => Vec::new(),
-            Some(text) => decode(&text)?,
+            Some(text) => {
+                if text.len() > 4096 {
+                    return Err("Secure paired-device index exceeds its bound".into());
+                }
+                decode(&text)?
+            }
         };
         if ids.len() > MAX_DEVICES
             || ids.iter().any(|id| hex_id(id).is_err())
@@ -230,6 +235,9 @@ impl<V: Vault> Paired<V> {
             .vault
             .read(id)?
             .ok_or("Paired credential missing; pair again with a new invitation")?;
+        if text.len() > 2400 {
+            return Err("Secure paired-device record exceeds its bound".into());
+        }
         let stored: Stored = decode(&text)?;
         if stored.target.device_id != id {
             return Err("Vault device identity mismatch".into());
@@ -240,6 +248,7 @@ impl<V: Vault> Paired<V> {
         Ok(stored)
     }
     pub fn list(&self) -> Result<Vec<Target>, String> {
+        let _admission = self.admit()?;
         let _storage = self.storage.lock().map_err(|_| "Vault operation failed")?;
         self.ids()?
             .iter()
@@ -276,6 +285,28 @@ impl<V: Vault> Paired<V> {
         }
         if ids.len() >= MAX_DEVICES {
             return Err("Remove an unused paired device first (limit 16)".into());
+        }
+        let placeholder = Stored {
+            target: Target {
+                device_id: invite.device_id.clone(),
+                display_name: display_name.clone(),
+                endpoint: endpoint.clone(),
+                certificate_sha256: invite.certificate_sha256.clone(),
+                credential_id: "0".repeat(64),
+                permissions: invite.permissions.clone(),
+            },
+            certificate_pem: invite.certificate_pem.clone(),
+            credential: "0".repeat(64),
+        };
+        if serde_json::to_string(&placeholder)
+            .map_err(|_| "Invalid provisioning record")?
+            .len()
+            > 2400
+        {
+            return Err(
+                "Provisioning record exceeds secure vault limits; invitation was not consumed"
+                    .into(),
+            );
         }
         // A secure write/read/delete probe precedes one-use invitation consumption.
         // Use a fixed, nonsecret sentinel; a platform vault error never becomes memory-only pairing.
@@ -456,6 +487,7 @@ impl<V: Vault> Paired<V> {
         result
     }
     pub fn forget(&self, id: &str) -> Result<(), String> {
+        let _admission = self.admit()?;
         self.disconnect(id, None)?;
         let host = self.host(id)?;
         let _operation = host.operation.lock().map_err(|_| "Session unavailable")?;
@@ -600,4 +632,72 @@ fn allowed_route(path: &str) -> bool {
             | "/api/automation/disarm"
             | "/api/automation/manual"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[derive(Default)]
+    struct MemoryVault(Mutex<BTreeMap<String, String>>);
+    impl Vault for MemoryVault {
+        fn read(&self, key: &str) -> Result<Option<String>, String> {
+            Ok(self.0.lock().unwrap().get(key).cloned())
+        }
+        fn write(&self, key: &str, value: &str) -> Result<(), String> {
+            self.0.lock().unwrap().insert(key.into(), value.into());
+            Ok(())
+        }
+        fn delete(&self, key: &str) -> Result<(), String> {
+            self.0.lock().unwrap().remove(key);
+            Ok(())
+        }
+    }
+    #[test]
+    fn missing_deleted_index_record_does_not_hide_other_paired_devices() {
+        let deleted = "a".repeat(64);
+        let retained = "b".repeat(64);
+        let vault = MemoryVault::default();
+        vault
+            .write(
+                INDEX,
+                &serde_json::to_string(&vec![&deleted, &retained]).unwrap(),
+            )
+            .unwrap();
+        vault.write(&retained, "existing-record").unwrap();
+        let client = Paired::new(vault);
+        assert_eq!(client.ids().unwrap(), vec![retained]);
+    }
+    #[test]
+    fn disconnect_invalidates_queued_native_authority_without_touching_another_host() {
+        let client = Paired::new(MemoryVault::default());
+        let a = "a".repeat(64);
+        let b = "b".repeat(64);
+        let host_a = client.host(&a).unwrap();
+        let host_b = client.host(&b).unwrap();
+        client.disconnect(&a, Some(0)).unwrap();
+        assert!(client.fresh(&host_a, 0).is_err());
+        assert!(client.fresh(&host_b, 0).is_ok());
+        // A delayed abort cannot disconnect a later session.
+        client.disconnect(&a, Some(0)).unwrap();
+        assert!(client.fresh(&host_a, 1).is_ok());
+    }
+    #[test]
+    fn native_owner_conflict_is_explicit_and_owner_is_released_on_exit() {
+        let directory =
+            std::env::temp_dir().join(format!("mixyard-paired-owner-test-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let first = PlatformVault::open(Ok(directory.clone()));
+        assert!(first.available().is_ok());
+        let second = PlatformVault::open(Ok(directory.clone()));
+        assert!(second
+            .available()
+            .unwrap_err()
+            .contains("Another desktop process"));
+        drop(first);
+        drop(second);
+        let reopened = PlatformVault::open(Ok(directory.clone()));
+        assert!(reopened.available().is_ok());
+        drop(reopened);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

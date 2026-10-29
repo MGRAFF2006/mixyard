@@ -69,7 +69,12 @@ class Service:
                                          '--bind', self.ready['address'] if hasattr(self, 'ready') else '127.0.0.1:0', '--store', str(self.root / 'profiles'),
                                          '--assets', str(self.assets), '--instance', 'paired-qualification'],
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **flags)
-        self.ready = receive(self.process.stdout)
+        try:
+            self.ready = receive(self.process.stdout)
+        except (AssertionError, queue.Empty):
+            if self.process.poll() is not None:
+                raise AssertionError('Owned control service startup failed: ' + self.process.stderr.read()) from None
+            raise
         self.endpoint = 'https://' + self.ready['address']
 
     def stop(self):
@@ -258,7 +263,7 @@ def qualify(args):
             for service in services:
                 service.stop()
             harness.close()
-    evidence = {'status': 'passed', 'checks': results, 'nativeHarnessSha256': hashlib.sha256(Path(args.harness).read_bytes()).hexdigest(),
+    evidence = {'status': 'passed', 'sourceHead': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'checks': results, 'nativeHarnessSha256': hashlib.sha256(Path(args.harness).read_bytes()).hexdigest(),
                 'serviceSha256': hashlib.sha256(Path(args.service).read_bytes()).hexdigest(),
                 'gaps': ['vault API double persistence is not OS-vault persistence qualification', 'native webview/onboarding GUI and physical devices not exercised',
                          'Secret Service, Windows Credential Manager and macOS Keychain success paths remain separate qualification gates',

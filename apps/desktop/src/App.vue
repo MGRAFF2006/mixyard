@@ -17,18 +17,23 @@ const paired = ref<PairedTarget[]>([])
 let targetApis: DeviceTarget[] = [{ id: 'local', displayName: 'This device · loopback service', api }]
 const targets = shallowRef<readonly DeviceTarget[]>(targetApis)
 const targetVersion = ref(0)
+let loadingTargets = false
 const ready = ref(!inDesktopShell)
 function canReload() { return !(consoleView.value?.hasUnsavedDrafts() ?? false) }
 async function loadTargets() {
+  if (loadingTargets) return
   if (!canReload()) { notice.value = 'Save or export unsaved host drafts before refreshing saved targets.'; return }
+  loadingTargets = true
   try {
     const saved = await nativeInvoke<PairedTarget[]>('paired_list')
+    // Vault IPC can wait for an unlock; edits made during that wait still belong to the current workspaces.
+    if (!canReload()) { notice.value = 'Saved devices loaded. Save or export new unsaved drafts before rebuilding the target list.'; return }
     for (const target of targetApis) target.api.disconnect()
     paired.value = saved
     targetApis = [{ id: 'local', displayName: 'This device · loopback service', api }, ...saved.map(target => ({ id: target.deviceId, displayName: target.displayName, api: pairedApi(nativeInvoke, target) }))]
     targets.value = targetApis; targetVersion.value++
   } catch (error) { notice.value = `Saved paired devices unavailable: ${String(error)}` }
-  finally { ready.value = true }
+  finally { ready.value = true; loadingTargets = false }
 }
 function disconnectedTarget(id: string) { targetApis.find(target => target.id === id)?.api.disconnect('Disconnected through native device management; refresh to reconnect.') }
 const consoleView = ref<InstanceType<typeof Console> | null>(null)
