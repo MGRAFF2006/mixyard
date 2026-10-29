@@ -164,3 +164,17 @@ They use declared synthetic common clocks and owned in-memory/null consumers;
 they do not prove physical capture/render, hardware clocks, native endpoint
 transport, continuous gap-free audio, endurance, production pairing, SRTP,
 Snapcast PCM/group sync, full DLNA or vendor receiver support.
+
+Current integration normally includes accepted main
+`d25239c8395dfb3e0b915a826a7dec6940ed9f05`, including provenance prerequisite105.
+The complete interoperability source/tests and protocol contracts before this
+composition note are byte-identical to reviewed
+`9bfbd099d74b86de7fbfc89ae7fa0ad3956e2be6`. Actual engine manifest/lock/header,
+fixture and implementation plus root audio/DSP/policy/lib/manifest/lock inputs
+are byte-identical to native proof source
+`1a8ff190474d92237369a81d5b08cda63b7b3b9b`. Historical125-pass/1-oracle-skip
+native evidence therefore applies to those unchanged inputs; the r4 loan is
+fully released and its path retired. No new native execution or artifact use is
+claimed for this composition. The default suite and Git provenance fixtures
+are rerun separately; required hosted CI and a NEW whole exact-head composition
+review remain gates. Independent web-module changes create no native authority.
