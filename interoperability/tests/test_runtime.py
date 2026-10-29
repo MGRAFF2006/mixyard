@@ -4,7 +4,8 @@ import threading
 import unittest
 
 from mixyard_interop import Provenance, Source, Spec
-from mixyard_interop.runtime import ClockEvidence, LeaseBinding, LeasedBlock, RuntimeBusy, RuntimeLease
+from mixyard_interop.runtime import (ClockEvidence, LeaseBinding, LeasedBlock, RuntimeBusy,
+                                    RuntimeLease, RuntimeSourceLost)
 
 
 def fixture(codec="raw-f64-le", groups=()):
@@ -26,6 +27,28 @@ def block(spec, frame=0):
 
 
 class RuntimeLeaseTests(unittest.TestCase):
+    def test_production_owner_callback_revoke_and_source_loss_admit_no_consumer(self):
+        spec, binding, _, _ = fixture()
+        holder, consumed = {}, []
+        def current_owner():
+            if holder.get("armed"):
+                holder["lease"].revoke()
+            return binding
+        actual = RuntimeLease(spec, observed_id=binding.observed_id, generation=7, revision=3,
+                              source_epoch=binding.source_epoch, clock=binding.clock_evidence,
+                              owner_check=current_owner, consent=True)
+        holder.update(lease=actual, armed=True)
+        with self.assertRaises(PermissionError):
+            actual.accept(block(spec), consumed.append)
+        self.assertEqual(consumed, [])
+        _, _, _, lost = fixture()
+        lost.source_lost()
+        with self.assertRaises(RuntimeSourceLost):
+            lost.read(lambda: block(spec))
+        with self.assertRaises(RuntimeSourceLost):
+            lost.accept(block(spec), consumed.append)
+        self.assertEqual(consumed, [])
+
     def test_current_observation_and_exact_block_binding(self):
         spec, binding, state, lease = fixture()
         pcm = block(spec)

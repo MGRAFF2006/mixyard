@@ -20,6 +20,10 @@ class RuntimeBusy(RuntimeError):
     """A worker attempted to reenter an exclusively owned operation."""
 
 
+class RuntimeSourceLost(PermissionError):
+    """The selected source was lost; a fresh owner epoch/admission is required."""
+
+
 @dataclass(frozen=True)
 class ClockEvidence:
     clock_id: int
@@ -132,6 +136,7 @@ class RuntimeLease:
         self._owner_check = owner_check
         self._deadline = time.monotonic() + lifetime_seconds
         self._active = True
+        self._source_lost = threading.Event()
         self._next_frame = clock.base_frame
         self._lock = threading.RLock()
         self._busy = False
@@ -151,6 +156,8 @@ class RuntimeLease:
         return self._clock
 
     def _check_locked(self):
+        if self._source_lost.is_set():
+            raise RuntimeSourceLost("selected source lost; fresh owner epoch/admission required")
         if not self._active or time.monotonic() >= self._deadline:
             raise PermissionError("runtime owner lease revoked or expired")
         if self._checking:
@@ -166,7 +173,7 @@ class RuntimeLease:
             self._checking = False
         # Owner code may revoke reentrantly on this RLock or run past expiry.
         # No downstream consumer may be admitted on that callback's return.
-        if not self._active or time.monotonic() >= self._deadline:
+        if self._source_lost.is_set() or not self._active or time.monotonic() >= self._deadline:
             raise PermissionError("runtime owner lease revoked or expired during observation")
         if current != self._binding:
             self._active = False
@@ -175,6 +182,19 @@ class RuntimeLease:
     def check(self):
         with self._lock:
             self._check_locked()
+
+    def check_liveness(self):
+        """Final revoke/expiry check without invoking external owner callbacks.
+
+        A graph owner first checks every owner binding, then checks liveness of
+        all leases after the last callback. This catches cross-lease revocation
+        from an owner callback without reentering that callback at commit.
+        """
+        with self._lock:
+            if self._source_lost.is_set():
+                raise RuntimeSourceLost("selected source lost; fresh owner epoch/admission required")
+            if not self._active or time.monotonic() >= self._deadline:
+                raise PermissionError("runtime owner lease revoked or expired")
 
     def validate(self, block):
         with self._lock:
@@ -224,4 +244,10 @@ class RuntimeLease:
     def revoke(self):
         with self._lock:
             self._active = False
+
+    def source_lost(self):
+        """Called by the actual source owner; no automatic rebinding or silence."""
+        # Notification must not wait behind an owner callback or consumer. It
+        # does not itself prove callback/native-buffer stop or scrub completion.
+        self._source_lost.set()
 

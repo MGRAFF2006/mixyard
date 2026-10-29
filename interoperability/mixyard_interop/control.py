@@ -211,6 +211,9 @@ class RuntimeRegistry:
                 raise ValueError("selected endpoint scheme differs from adapter")
             if type(lease) is not RuntimeLease or type(session) is not Session or lease.spec != selection.spec:
                 raise PermissionError("exact runtime lease and separate local directional grant required")
+            if protocol == "rtp":
+                from .realtime.rtp import RtpProfile
+                RtpProfile(selection.spec)  # Exact implemented encoding/packet budget; no IO.
             activation = MediaActivation(self, selection, lease, session)
             self._activations[(protocol, role)] = activation
             return activation

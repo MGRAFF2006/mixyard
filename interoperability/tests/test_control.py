@@ -68,6 +68,17 @@ class ControlBoundaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             dataclasses.replace(self.scope, permissions=frozenset({"audioPublish"}))
 
+    def test_rtp_capability_cannot_advertise_unimplemented_float64_format(self):
+        endpoint = Endpoint("127.0.0.1", 19998, "udp")
+        self.registry.add_suggestion(Suggestion("rtp-peer", "rtp", "owned peer", endpoint))
+        spec, _, _, lease = fixture()
+        selection = self.registry.select(self.scope, "rtp-peer", "live-send", spec)
+        session = Session("source", [Grant("live-send", endpoint, "receiver", spec)], consent=True)
+        with self.assertRaises(ValueError):
+            self.registry.attach(selection, lease, session)
+        snapshot = self.registry.snapshot(dataclasses.replace(self.scope, revision=2))
+        self.assertTrue(all(not r["available"] for c in snapshot["capabilities"] for r in c["roles"]))
+
     def test_batch_both_directions_and_invalid_batch_is_atomic(self):
         spec, _, _, _ = fixture()
         with self.assertRaises(ValueError):
