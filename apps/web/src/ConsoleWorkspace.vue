@@ -62,7 +62,9 @@ async function applyImport(kind: 'config' | 'inventory', text: string) {
     return
   }
   const config = readConfig(parsed)
+  const epoch = s.api.epoch
   const valid = object(await s.api.post('/api/validate', { config }))
+  s.api.assertEpoch(epoch)
   if (valid.valid !== true) throw new Error('Core did not validate the imported config.')
   if (!canReplace('Import this config')) return
   s.replace(config)
@@ -86,7 +88,7 @@ async function undo() { if (canReplace('Restore the previous stored draft')) awa
 function saveDraft() { if (s.local) void s.edit({ kind: 'draft', config: copy(s.local) }) }
 function saveProfile(id: string | null) { if (s.local && profileName.value.trim()) void s.edit({ kind: 'save', id, name: profileName.value.trim(), config: copy(s.local) }) }
 function selectProfile() { profileName.value = selected.value?.name ?? '' }
-function hasUnsavedDrafts() { return s.dirty || !!configText.value || !!inventoryText.value || !!newMixName.value || !!profileName.value || !!processingPanel.value?.hasUnsavedDrafts() || !!situationsPanel.value?.hasUnsavedDrafts() }
+function hasUnsavedDrafts() { return s.dirty || !!s.inventory || !!configText.value || !!inventoryText.value || !!newMixName.value || !!profileName.value || !!processingPanel.value?.hasUnsavedDrafts() || !!situationsPanel.value?.hasUnsavedDrafts() }
 function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsavedDrafts()) { event.preventDefault(); event.returnValue = '' } }
 onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onActivated(() => { void s.refresh() })

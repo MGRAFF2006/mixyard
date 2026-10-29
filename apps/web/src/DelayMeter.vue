@@ -31,7 +31,9 @@ async function measure() {
   busy.value = true; error.value = ''; notice.value = ''
   try {
     const request = { config: readChain(props.config), probe: { blockFrames: block.value, observationFrames: windowFrames.value, referenceChannels: references.value, amplitude: amplitude.value, detectionThreshold: threshold.value, bypassed: props.bypassed }, alignment: selected.value.length >= 2 ? { channels: selected.value, feature: feature.value } : null }
-    if (!await d.measure(props.api, request)) notice.value = 'Chain or probe changed during measurement; discarded the old result.'
+    const measured = await d.measure(props.api, request)
+    if (epoch !== sessionEpoch.value) return
+    if (!measured) notice.value = 'Chain or probe changed during measurement; discarded the old result.'
   } catch (e) { if (epoch === sessionEpoch.value) error.value = e instanceof Error ? e.message : String(e) }
   finally { if (epoch === sessionEpoch.value) busy.value = false }
 }
@@ -41,13 +43,14 @@ function apply() {
   d.changed(); emit('append', effects)
   notice.value = 'Alignment stages appended. Measure again to verify the changed chain; no native route was changed.'
 }
+defineExpose({ hasUnsavedDrafts: () => block.value !== 128 || windowFrames.value !== 2048 || amplitude.value !== 1 || threshold.value !== 0 || feature.value !== 'first-response' || dspJson(references.value) !== dspJson(props.config.format.channels) || dspJson(selected.value) !== dspJson(props.config.format.channels) || !!form.value?.querySelector(':invalid') })
 </script>
 
 <template>
   <section class="delay-meter" aria-labelledby="delay-meter-title">
     <h3 id="delay-meter-title">Signal delay and alignment</h3>
     <p>Measure how an impulse travels through this chain, independently of CPU processing time. No audio plays. Each selected reference channel receives the same impulse at sample zero.</p>
-    <form ref="form" @submit.prevent="measure">
+    <form ref="form" @submit.prevent="measure" @input="d.changed()">
       <div class="dsp-fields">
         <DspNumber label="Delay probe block frames" :value="block" :min="1" :max="4096" integer @update="block = $event" />
         <DspNumber label="Delay observation frames" :value="windowFrames" :min="1" :max="65536" integer @update="windowFrames = $event" />

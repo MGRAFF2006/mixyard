@@ -1,5 +1,5 @@
 import type { ApiClient } from './api.ts'
-import { Api, ApiError } from './api.ts'
+import { Api, ApiError, StaleSessionError } from './api.ts'
 import { copy, object, readConfig, readInspection, readSnapshot, readStatus, signature } from './model.ts'
 import type { Config, Inspection, Inventory, Snapshot, Status } from './model.ts'
 
@@ -30,27 +30,33 @@ export class ConsoleSession {
   }
   changed() { this.inspection = null; this.validated = false; this.notice = '' }
   replace(config: Config, simulated = false) { this.local = copy(readConfig(config)); this.simulated = simulated; this.changed() }
-  async run(work: () => Promise<void>) {
+  async run(work: (current: () => void) => Promise<void>) {
     if (this.busy) return
-    const operation = ++this.operation
+    const operation = ++this.operation, epoch = this.api.epoch
+    const current = () => { this.api.assertEpoch(epoch); if (operation !== this.operation) throw new StaleSessionError() }
     this.busy = true; this.error = ''; this.notice = ''
-    try { await work() } catch (error) { if (operation === this.operation) this.error = error instanceof Error ? error.message : String(error) }
-    finally { if (operation === this.operation) this.busy = false }
+    try { await work(current) } catch (error) {
+      if (operation === this.operation) {
+        if (epoch === this.api.epoch) this.error = error instanceof Error ? error.message : String(error)
+        else if (!this.api.connected) this.invalidate()
+      }
+    }
+    finally { if (operation === this.operation && epoch === this.api.epoch) this.busy = false }
   }
   async refresh() {
     if (this.busy) return
     const connection = this.api.connect()
-    await this.run(async () => {
+    await this.run(async current => {
       this.needsRefresh = true
       this.status = null; this.statusError = ''
       await connection
-      const epoch = this.api.epoch
+      current()
       if (!this.canRead) {
         this.error = 'View permission was not granted. Ask the owning device for view access to routing, profiles and runtime status. Other explicitly granted rights remain available.'
         return
       }
       const [store, status] = await Promise.allSettled([this.api.post('/api/profiles/read'), this.api.post('/api/status')])
-      this.api.assertEpoch(epoch)
+      current()
       if (status.status === 'fulfilled') {
         try { this.status = readStatus(status.value) } catch (error) { this.statusError = String(error) }
       } else this.statusError = status.reason instanceof Error ? status.reason.message : String(status.reason)
@@ -70,9 +76,10 @@ export class ConsoleSession {
   async edit(edit: Edit) {
     if (!this.canWrite || !this.snapshot) return
     const expectedRevision = this.snapshot.storeRevision
-    await this.run(async () => {
+    await this.run(async current => {
       try {
         const snapshot = readSnapshot(await this.api.post('/api/profiles/edit', { expectedRevision, edit }))
+        current()
         this.snapshot = snapshot
         if (['draft', 'load', 'undo'].includes(edit.kind)) {
           this.local = copy(snapshot.draft); this.baseline = signature(this.local); this.simulated = false; this.changed()
@@ -80,6 +87,7 @@ export class ConsoleSession {
         // Saving/renaming a profile does not persist or replace the stored draft.
         this.notice = edit.kind === 'save' ? 'Profile saved. Use Save draft to also reopen these edits as the draft.' : edit.kind === 'rename' ? 'Profile renamed.' : edit.kind === 'load' ? 'Profile loaded into the stored draft.' : edit.kind === 'undo' ? 'Previous stored draft restored.' : 'Draft saved. These edits will reopen from the store.'
       } catch (error) {
+        current()
         this.needsRefresh = true
         if (error instanceof ApiError && error.status === 409) throw new Error(`Store conflict: ${error.message} Local edits kept. Refresh and review before saving again.`)
         throw error
@@ -88,18 +96,20 @@ export class ConsoleSession {
   }
   async validate() {
     if (!this.local) return
-    await this.run(async () => {
+    await this.run(async current => {
       this.validated = false
       const v = object(await this.api.post('/api/validate', { config: this.local }))
+      current()
       if (v.valid !== true) throw new Error('Unsupported validation response.')
       this.validated = true; this.notice = 'Core validation passed. No audio was applied.'
     })
   }
   async inspect() {
     if (!this.local || !this.inventory) return
-    await this.run(async () => {
+    await this.run(async current => {
       this.inspection = null
       const result = readInspection(await this.api.post('/api/inspect', { config: this.local, inventory: this.inventory }))
+      current()
       if (result.configRevision !== this.local?.revision || result.inventoryRevision !== this.inventory?.revision) throw new Error('Inspection revisions do not match the current inputs.')
       this.inspection = result
     })
