@@ -1,6 +1,7 @@
 import { dspJson } from './dsp-json.ts'
 import { object, string } from './model.ts'
 import { parseAutomationJson } from './situations.ts'
+import { shallowReactive } from 'vue'
 
 export type Permission = 'view' | 'control' | 'settings'
 export type DeviceIdentity = { deviceId: string; authorityId: string; revision: number; permissions: Permission[]; backendAvailable: false; audioApplied: false }
@@ -23,10 +24,17 @@ export class ApiError extends Error {
   constructor(status: number, code: string, message: string) { super(message); this.status = status; this.code = code }
 }
 export class Api {
-  token: string | null = null
-  identity: DeviceIdentity | null = null
-  epoch = 0
-  connectionError = ''
+  // Lifecycle changes also originate from a host retaining the original Api,
+  // outside App's proxy. Keep the state itself observable for every caller.
+  private readonly state = shallowReactive<{ token: string | null; identity: DeviceIdentity | null; epoch: number; connectionError: string }>({ token: null, identity: null, epoch: 0, connectionError: '' })
+  get token() { return this.state.token }
+  set token(value: string | null) { this.state.token = value }
+  get identity() { return this.state.identity }
+  set identity(value: DeviceIdentity | null) { this.state.identity = value }
+  get epoch() { return this.state.epoch }
+  set epoch(value: number) { this.state.epoch = value }
+  get connectionError() { return this.state.connectionError }
+  set connectionError(value: string) { this.state.connectionError = value }
   private fetcher: typeof fetch
   private control: Readonly<ControlConnection> | null
   private requests = new Set<AbortController>()
