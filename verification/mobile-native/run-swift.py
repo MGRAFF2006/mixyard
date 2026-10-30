@@ -4,6 +4,7 @@
 No command runs outside a disposable GitHub macOS VM. Production Security PKI,
 name validation, pinning and HTTP deadlines are unchanged.
 """
+import json
 import os
 from pathlib import Path
 import re
@@ -17,16 +18,43 @@ def phase(label, status):
     print(f'MIXYARD_PHASE {label}-{status}', file=sys.stderr, flush=True)
 
 
+SECURITY_PHASES = frozenset(['startup-list', 'startup-create', 'startup-unlock', 'startup-search',
+    'trust-a', 'trust-b', 'trust-viewer', 'cleanup-search', 'cleanup-verify',
+    'cleanup-trust-a', 'cleanup-trust-b', 'cleanup-trust-viewer', 'cleanup-keychain'])
+
+
 def security(label, deadline, *args, maximum=4):
+    if label not in SECURITY_PHASES:
+        raise RuntimeError('owned-security-phase-invalid')
     phase(label, 'start')
     remaining = deadline - time.monotonic()
+    timeout = min(maximum, remaining)
+    kind, value = None, 0
     try:
         if remaining <= 0:
             raise TimeoutError('owned-phase-budget')
         result = subprocess.run(['security', *args], check=True, capture_output=True,
-                                text=True, timeout=min(maximum, remaining))
-    except (subprocess.SubprocessError, TimeoutError, OSError):
+                                text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kind, value = 'timeout', max(0, round(timeout * 1000))
+    except subprocess.CalledProcessError as error:
+        code = error.returncode
+        if type(code) is int and -2**31 < code < 2**31:
+            kind, value = ('signal', -code) if code < 0 else ('exit', code)
+        else:
+            kind = 'subprocess-error'
+    except TimeoutError:
+        kind = 'budget-exhausted'
+    except OSError as error:
+        kind = 'os-error'
+        value = error.errno if type(error.errno) is int and 0 <= error.errno < 2**31 else 0
+    except subprocess.SubprocessError:
+        kind = 'subprocess-error'
+    if kind is not None:
         phase(label, 'failed')
+        # Only our fixed phase/kind and an OS/process numeric classification.
+        # NEVER stringify exceptions, argv, stdout, stderr or trust state.
+        print('MIXYARD_SECURITY ' + json.dumps({'phase':label,'kind':kind,'value':value}, separators=(',', ':')), file=sys.stderr, flush=True)
         raise RuntimeError('owned-security-phase-failed') from None
     phase(label, 'done')
     return result.stdout

@@ -21,11 +21,23 @@ export class Native {
     this.prepared = new Promise<void>((resolve, reject) => { ready = resolve; failed = reject })
     void this.prepared.catch(() => {})
     const knownPhases = new Set(['startup-list', 'startup-create', 'startup-unlock', 'startup-search', 'trust-a', 'trust-b', 'trust-viewer', 'child-start', 'child-exit', 'cleanup-child', 'cleanup-search', 'cleanup-verify', 'cleanup-trust-a', 'cleanup-trust-b', 'cleanup-trust-viewer', 'cleanup-keychain', 'cleanup-complete'].flatMap(base => ['start', 'done', 'failed'].map(status => `${base}-${status}`)))
-    let stderr = '', phases = 0
+    let stderr = '', phases = 0, reasons = 0
     this.child.stderr!.on('data', data => {
       // Drain all bytes, but expose only our small fixed phase vocabulary.
       const lines = (stderr + String(data)).split('\n'); stderr = lines.pop()!.slice(-4096)
       for (const line of lines) {
+        if (line.startsWith('MIXYARD_SECURITY ') && line.length < 256) {
+          try {
+            const reason = JSON.parse(line.slice('MIXYARD_SECURITY '.length))
+            const keys = Object.keys(reason).sort().join(',')
+            const kinds = ['timeout', 'exit', 'signal', 'os-error', 'budget-exhausted', 'subprocess-error']
+            if (keys === 'kind,phase,value' && typeof reason.phase === 'string' && knownPhases.has(`${reason.phase}-failed`) &&
+                kinds.includes(reason.kind) && Number.isSafeInteger(reason.value) && reason.value >= 0 && reason.value < 2 ** 31 && reasons++ < 8) {
+              process.stderr.write(`Owned Security failure: ${reason.phase} ${reason.kind} ${reason.value}\n`)
+            }
+          } catch { /* Unrecognized stderr is drained, never exposed. */ }
+          continue
+        }
         const match = /^MIXYARD_PHASE ([a-z0-9-]{1,64})$/.exec(line)
         if (!match || !knownPhases.has(match[1]!)) continue
         this.phase = match[1]!
