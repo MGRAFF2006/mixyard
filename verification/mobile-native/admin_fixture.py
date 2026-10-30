@@ -58,15 +58,18 @@ class OwnedAdmin:
             absent = all(code in ABSENT for code in statuses)
             if type(value['ownedTrustAbsent']) is not bool or value['ownedTrustAbsent'] != absent: raise ValueError()
         except (ValueError,KeyError,TypeError):
+            print('MIXYARD_PHASE ' + label + '-failed', file=sys.stderr, flush=True)
             raise RuntimeError('owned-admin-readback-invalid') from None
         # Only bounded numeric statuses and our fixed phase/absence boolean.
         print('MIXYARD_TRUST_STATE ' + json.dumps({'phase':label,'absent':absent,'statuses':statuses},separators=(',',':')), file=sys.stderr, flush=True)
         if any(code != 0 and code not in ABSENT for code in statuses):
+            print('MIXYARD_PHASE ' + label + '-failed', file=sys.stderr, flush=True)
             raise RuntimeError('owned-admin-readback-unavailable')
         return statuses
 
     def admit(self, deadline):
         if any(code not in ABSENT for code in self.state('admin-before', deadline)):
+            print('MIXYARD_PHASE admin-before-failed', file=sys.stderr, flush=True)
             raise RuntimeError('owned-fingerprint-already-trusted')
         self.admitted = True
 
@@ -82,6 +85,7 @@ class OwnedAdmin:
 
     def ready(self, deadline):
         if self.state('admin-ready', deadline) != [0,0,0]:
+            print('MIXYARD_PHASE admin-ready-failed', file=sys.stderr, flush=True)
             raise RuntimeError('owned-admin-trust-not-present')
 
     def cleanup(self, deadline):

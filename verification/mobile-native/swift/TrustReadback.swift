@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Security
 import CryptoKit
 
@@ -19,7 +20,8 @@ import CryptoKit
             statuses.append(SecTrustSettingsCopyTrustSettings(certificate, .admin, &settings))
         }
         let absent = statuses.allSatisfy { $0 == errSecItemNotFound || $0 == errSecNoTrustSettings }
-        guard let encoded = try? JSONSerialization.data(withJSONObject: ["statuses":statuses, "ownedTrustAbsent":absent]) else { exit(2) }
+        let report: [String: Any] = ["statuses": statuses.map { Int($0) }, "ownedTrustAbsent": absent]
+        guard let encoded = try? JSONSerialization.data(withJSONObject: report) else { exit(2) }
         FileHandle.standardOutput.write(encoded)
         FileHandle.standardOutput.write(Data([10]))
     }
