@@ -7,6 +7,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import signal
+import selectors
+import sys
 import tempfile
 import time
 import unittest
@@ -92,7 +95,7 @@ class TrustLifecycle(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired): module.privileged_capture(['sudo','-n','/usr/bin/security'],4)
         child.terminate.assert_called_once(); child.kill.assert_not_called()
         budgets=[call.kwargs['timeout'] for call in child.communicate.call_args_list]
-        self.assertEqual(budgets[0],3.5); self.assertGreater(budgets[1],0); self.assertLessEqual(budgets[1],0.5)
+        self.assertGreater(budgets[0],0); self.assertLessEqual(budgets[0],3.5); self.assertGreater(budgets[1],0); self.assertLessEqual(budgets[1],0.5)
         self.assertIsNone(module.pending_command)
 
     def test_unproved_privileged_stop_retains_ownership_until_bounded_drain_completes(self):
@@ -127,3 +130,30 @@ class TrustLifecycle(unittest.TestCase):
         value=json.loads(output.getvalue().removeprefix('MIXYARD_OWNED_SIGNAL '))
         self.assertEqual(value,{'phase':'before-privileged-term','pid':42,'result':'os-error','errno':errno.EPERM})
         self.assertNotIn('SECRET',output.getvalue());child.communicate.assert_not_called()
+
+    @unittest.skipUnless(os.name=='posix','POSIX signal inheritance mechanism')
+    def test_actual_owned_unprivileged_exec_inherits_ignore_before_and_restores_default_after(self):
+        script='import signal,time;print("ready:"+str(signal.getsignal(signal.SIGTERM)==signal.SIG_IGN),flush=True);time.sleep(30)'
+        for repaired in (False,True):
+            command=[sys.executable,'-B','-c',script]
+            if repaired:command=module.command_with_default_term(command)
+            original=signal.getsignal(signal.SIGTERM)
+            child=None
+            try:
+                signal.signal(signal.SIGTERM,signal.SIG_IGN)
+                try: child=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
+                finally: signal.signal(signal.SIGTERM,original)
+                with selectors.DefaultSelector() as selector:
+                    selector.register(child.stdout,selectors.EVENT_READ)
+                    self.assertTrue(selector.select(timeout=1),'Owned child readiness boundary')
+                    self.assertEqual(child.stdout.readline().strip(),'ready:'+str(not repaired))
+                child.terminate() # Only our own UNPRIVILEGED direct child.
+                if repaired:self.assertEqual(child.wait(timeout=1),-signal.SIGTERM)
+                else:
+                    with self.assertRaises(subprocess.TimeoutExpired):child.wait(timeout=0.05)
+            finally:
+                signal.signal(signal.SIGTERM,original)
+                if child is not None:
+                    if child.poll() is None:child.kill() # Never a sudo/root monitor.
+                    child.wait(timeout=1)
+                    child.stdout.close()

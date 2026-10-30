@@ -78,19 +78,31 @@ def terminate_owned(child, label):
     print('MIXYARD_OWNED_SIGNAL ' + json.dumps(report,separators=(',',':')),file=sys.stderr,flush=True)
 
 
+
+def command_with_default_term(command):
+    # The cleanup parent ignores TERM to finish restoration. POSIX exec preserves
+    # ignored dispositions; Popen.restore_signals does NOT reset SIGTERM. Reset
+    # only in this fresh child interpreter, then exec SAME argv/PID. No shell,
+    # preexec_fn/thread hazard, parent-signal window or elevated kill is involved.
+    launcher = 'import os,signal,sys;signal.signal(signal.SIGTERM,signal.SIG_DFL);os.execvp(sys.argv[1],sys.argv[1:])'
+    return [sys.executable, '-B', '-c', launcher, *command]
+
+
 def privileged_capture(command, timeout):
     global pending_command
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
         raise RuntimeError('owned-host-required')
     if pending_command is not None:
         raise StopIncomplete('owned-security-command-still-active')
-    child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    deadline = time.monotonic() + timeout
+    child = subprocess.Popen(command_with_default_term(command), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, start_new_session=True)
     pending_command = child
-    deadline = time.monotonic() + timeout
     reserve = min(0.5, timeout / 4)
     try:
-        output, errors = child.communicate(timeout=max(0.001, timeout - reserve))
+        remaining = deadline-time.monotonic()-reserve
+        if remaining <= 0: raise subprocess.TimeoutExpired('owned-security-start',timeout)
+        output, errors = child.communicate(timeout=remaining)
     except subprocess.TimeoutExpired:
         # SIGTERM is relayed by sudo. SIGKILL of the monitor would not relay and
         # could leave a privileged Security child writing after our readback.

@@ -172,3 +172,18 @@ security or inherited pipes stopped; the existing communicate()/readback proof
 and ownership retention remain mandatory. No exception text/argv is output and
 no privileged signal or kill policy changed. The actual stop/authorization cause
 remains unproved until fresh runner evidence; this correction is diagnostic-only.
+
+The next c9/dbd/a24 actual runs show terminate() accepted to the sudo supervisor,
+not EPERM, while supervisor/security stayed alive and owned trust remained. A
+separate concrete source defect was then found: cleanup sets parent SIGTERM to
+SIG_IGN before Popen. Python's [restore_signals](https://docs.python.org/3/library/subprocess.html#subprocess.Popen)
+resets its startup-ignored signals, not this application-set SIGTERM. Sudo's
+[initialization/restoration](https://github.com/sudo-project/sudo/blob/main/src/signal.c)
+preserves inherited ignored dispositions. The new exec-only child launcher resets
+ONLY its own SIGTERM to default, then execs the SAME sudo argv/PID; the protected
+parent remains unchanged. No shell/preexec_fn/privileged kill, changed timeout or
+policy fallback. Actual owned unprivileged POSIX children demonstrate ignored TERM
+before and default termination after. That proves the launcher mechanism locally,
+not actual macOS privileged cleanup or the last trust-removal cause. Stop/drain
+AND owned trust absence still must pass; stopping an authorization wait is not
+removal. Actual runner qualification is still held pending that evidence.
