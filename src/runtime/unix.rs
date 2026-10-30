@@ -238,3 +238,25 @@ pub fn connect_cancellable(
     check_peer(&stream)?;
     Ok(stream)
 }
+
+/// Wake as soon as bounded inventory I/O can continue, including EOF/errors.
+/// The caller rechecks cancellation and its total deadline after every wait.
+pub(super) fn wait_inventory(
+    stream: &Stream,
+    writing: bool,
+    timeout: std::time::Duration,
+) -> io::Result<()> {
+    let mut descriptor = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: if writing { libc::POLLOUT } else { libc::POLLIN },
+        revents: 0,
+    };
+    let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
+    if unsafe { libc::poll(&mut descriptor, 1, millis) } < 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
