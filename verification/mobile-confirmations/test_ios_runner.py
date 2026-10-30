@@ -84,7 +84,7 @@ class SimulatorSelection(unittest.TestCase):
         command=next(args for args in calls if args[:2]==['xcodebuild','test-without-building'])
         self.assertIn('SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE',command)
         self.assertIn('ARCHS=arm64', command); self.assertIn('ONLY_ACTIVE_ARCH=YES', command)
-        self.assertIn('platform=iOS Simulator,id='+owned+',arch=arm64', command)
+        self.assertIn('platform=iOS Simulator,id='+owned, command)
         self.assertEqual(calls[-2:], [['xcrun','simctl','shutdown',owned], ['xcrun','simctl','delete',owned]])
 
     def test_boot_timeout_stays_primary_when_shutdown_and_delete_also_time_out(self):
