@@ -213,13 +213,13 @@ import MobileCore
         do { try control?.forget(); status = "Local credential removed. Revoke this controller on the host separately." }
         catch { status = "Keychain removal failed. Repair native credential storage." }
     }
-    func pair(origin: String, pin: String, device: String, invitation: String, name: String) {
+    func pair(origin: String, pin: String, certificatePem: String, device: String, invitation: String, name: String) {
         suspend(.peerRevoked)
         guard let control else { return }
         let expected = control.ticket
         Task {
-            do { try await control.pair(endpoint: origin, pin: pin, device: device, invitation: invitation, name: name, expected: expected); status = "Paired. Open controller explicitly." }
-            catch { status = "Pair failed. Check invitation, TLS trust, verified identity and leaf fingerprint." }
+            do { try await control.pair(endpoint: origin, pin: pin, certificatePem: certificatePem, device: device, invitation: invitation, name: name, expected: expected); status = "Paired. Open controller explicitly." }
+            catch { status = "Pair failed. Verify the OOB certificate, fingerprint, target and invitation. Existing local credentials are retained." }
         }
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
@@ -235,7 +235,7 @@ import MobileCore
                 if control.ticket.epoch != expected.epoch { cancelConfirmation() }
                 replyHandler(value, nil)
             }
-            catch { cancelConfirmation(); replyHandler(nil, "Native control failed or session changed. Verify pairing/trust, then Refresh; no replay.") }
+            catch { cancelConfirmation(); replyHandler(nil, "Native control failed or session changed. Verify OOB certificate provisioning (legacy credentials are retained), then Refresh; no replay.") }
         }
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -262,6 +262,7 @@ struct MobileView: View {
     @Environment(\.scenePhase) private var phase
     @State private var origin = ""
     @State private var pin = ""
+    @State private var certificatePem = ""
     @State private var device = ""
     @State private var invitation = ""
     @State private var name = ""
@@ -270,10 +271,11 @@ struct MobileView: View {
             DisclosureGroup("Pair verified device") {
                 TextField("Exact trusted HTTPS origin", text: $origin).textInputAutocapitalization(.never).autocorrectionDisabled()
                 TextField("Leaf certificate SHA-256 hex", text: $pin).textInputAutocapitalization(.never).autocorrectionDisabled()
+                TextEditor(text: $certificatePem).frame(height: 70).accessibilityLabel("Out-of-band certificate PEM (one certificate)")
                 TextField("Expected device ID", text: $device).textInputAutocapitalization(.never).autocorrectionDisabled()
                 SecureField("One-time invitation", text: $invitation).textContentType(.oneTimeCode)
                 TextField("Controller name", text: $name)
-                Button("Pair") { let secret = invitation; invitation = ""; shell.pair(origin: origin, pin: pin, device: device, invitation: secret, name: name) }
+                Button("Pair") { let secret = invitation; invitation = ""; shell.pair(origin: origin, pin: pin, certificatePem: certificatePem, device: device, invitation: secret, name: name) }
                 Button("Disconnect and forget local credential") { shell.forget() }
             }.padding(.horizontal)
             Button("Open controller / Refresh connection") { shell.open() }

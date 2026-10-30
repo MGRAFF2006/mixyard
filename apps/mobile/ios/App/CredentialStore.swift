@@ -5,6 +5,10 @@ import MobileCore
 struct Provisioning: Codable {
     let endpoint: String; let pin: String; let deviceId: String
     let credentialId: String; let credential: String
+    // Optional only to decode legacy records without erasing their credentials.
+    // Such records cannot dispatch HTTP; explicit OOB reprovisioning is required.
+    let certificatePem: String?
+    let version: Int?
 }
 protocol CredentialVault {
     func load() throws -> Provisioning?

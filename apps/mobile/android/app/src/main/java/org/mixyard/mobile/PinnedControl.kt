@@ -3,6 +3,7 @@ package org.mixyard.mobile
 import org.json.JSONObject
 import java.net.URI
 import org.mixyard.mobile.http.PinnedHttpExchange
+import org.mixyard.mobile.http.OobCertificate
 
 /** No redirects, proxy login, cookie jar, local CSRF service, permissive trust or token in URLs. */
 class PinnedControl(private val store: CredentialStore) {
@@ -32,8 +33,9 @@ class PinnedControl(private val store: CredentialStore) {
     }
     private fun request(config: JSONObject, path: String, body: String, ticket: Ticket, credential: Boolean): Pair<Int, String> {
         require(path in allowed)
+        require(config.optInt("version", 0) == 2 && config.has("certificatePem")) { "reprovision-oob-certificate-required-credential-retained" }
         val exchange = PinnedHttpExchange(endpoint(config), config.getString("pin"), path, body,
-            if (credential) config.getString("credential") else null)
+            if (credential) config.getString("credential") else null, config.getString("certificatePem"))
         try {
             synchronized(this) { fence.check(ticket); active = exchange }
             val result = exchange.execute()
@@ -41,10 +43,11 @@ class PinnedControl(private val store: CredentialStore) {
             return result
         } finally { exchange.close(); synchronized(this) { if (active === exchange) active = null } }
     }
-    fun pair(endpoint: String, pin: String, device: String, invitation: String, name: String, expected: Ticket) {
+    fun pair(endpoint: String, pin: String, certificatePem: String, device: String, invitation: String, name: String, expected: Ticket) {
+        OobCertificate(certificatePem, pin) // BEFORE invalidation or invitation HTTP.
         val ticket: Ticket
         synchronized(this) { fence.check(expected); invalidate(); ticket = fence.ticket() }
-        val config = JSONObject().put("endpoint", endpoint).put("pin", pin).put("deviceId", device)
+        val config = JSONObject().put("version", 2).put("endpoint", endpoint).put("pin", pin).put("certificatePem", certificatePem).put("deviceId", device)
         val (status, rawReply) = request(config, "/control/pair", JSONObject().put("deviceId", device).put("invitation", invitation).put("name", name).toString(), ticket, false)
         val reply = JSONObject(rawReply)
         require(status == 200 && reply.getString("deviceId") == device) { "pairing-failed" }

@@ -40,7 +40,7 @@ final class MemoryVault: CredentialVault {
                 } else { expected = client.ticket }
                 switch op {
                 case "pair":
-                    try await client.pair(endpoint: text("endpoint"), pin: text("pin"), device: text("deviceId"), invitation: text("invitation"), name: "Owned native qualification", expected: expected)
+                    try await client.pair(endpoint: text("endpoint"), pin: text("pin"), certificatePem: text("certificatePem"), device: text("deviceId"), invitation: text("invitation"), name: "Owned native qualification", expected: expected)
                 case "invoke":
                     let method = try text("method")
                     let payload: Any = method == "request" ? try text("payload") : [String: Any]()

@@ -3,19 +3,49 @@ import Security
 import CryptoKit
 import MobileCore
 
+// Public SDK trust evaluation only. No global/user/admin trust mutation, custom
+// parser, certificate exceptions, system-anchor fallback or learned certificate.
+private struct OobCertificate {
+    let certificate: SecCertificate
+    init(pem: String, pin: String) throws {
+        guard pem.utf8.count <= 65536, pin.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else { throw MobileError.invalid("explicit-oob-certificate-required") }
+        let text = pem.trimmingCharacters(in: .whitespacesAndNewlines)
+        let begin = "-----BEGIN CERTIFICATE-----", end = "-----END CERTIFICATE-----"
+        guard text.hasPrefix(begin), text.hasSuffix(end) else { throw MobileError.invalid("one-explicit-oob-certificate-required") }
+        let body = text.dropFirst(begin.count).dropLast(end.count)
+        guard body.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || [43,47,61,32,13,10].contains($0) }) else { throw MobileError.invalid("certificate-base64-invalid") }
+        let encoded = body.filter { !" \r\n".contains($0) }
+        guard let bytes = Data(base64Encoded: encoded), bytes.base64EncodedString() == encoded,
+              let certificate = SecCertificateCreateWithData(nil, bytes as CFData), SecCertificateCopyData(certificate) as Data == bytes else { throw MobileError.invalid("exact-certificate-der-required") }
+        let actual = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        guard actual == pin.lowercased() else { throw MobileError.invalid("oob-certificate-fingerprint-mismatch") }
+        self.certificate = certificate
+    }
+    func admits(_ trust: SecTrust, host: String) -> Bool {
+        guard SecTrustSetPolicies(trust, [SecPolicyCreateSSL(true, host as CFString), SecPolicyCreateBasicX509()] as CFArray) == errSecSuccess,
+              SecTrustSetAnchorCertificates(trust, [certificate] as CFArray) == errSecSuccess,
+              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess,
+              SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess,
+              SecTrustEvaluateWithError(trust, nil), let leaf = SecTrustGetCertificateAtIndex(trust, 0) else { return false }
+        return SecCertificateCopyData(leaf) as Data == SecCertificateCopyData(certificate) as Data
+    }
+}
+
 // Each exchange has an ephemeral session, an exact origin, bounded receive data, no redirects and normal PKI + leaf pin.
 private final class PinnedExchange: NSObject, URLSessionDataDelegate {
-    let endpoint: URL; let pin: String
+    let endpoint: URL; private let anchor: OobCertificate
     private var buffer = Data(); private var status = 0
     private var continuation: CheckedContinuation<(Int, String), Error>?
     private var session: URLSession?
-    init(endpoint: URL, pin: String) { self.endpoint = endpoint; self.pin = pin.lowercased() }
+    init(endpoint: URL, pin: String, certificatePem: String) throws { self.endpoint = endpoint; self.anchor = try OobCertificate(pem: certificatePem, pin: pin) }
     func run(_ request: URLRequest) async throws -> (Int, String) {
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             let config = URLSessionConfiguration.ephemeral
             config.httpShouldSetCookies = false; config.urlCache = nil; config.requestCachePolicy = .reloadIgnoringLocalCacheData
             config.timeoutIntervalForRequest = 8; config.timeoutIntervalForResource = 12
+            config.tlsMinimumSupportedProtocolVersion = .TLSv13; config.tlsMaximumSupportedProtocolVersion = .TLSv13
+            config.connectionProxyDictionary = ["HTTPEnable": 0, "HTTPSEnable": 0, "SOCKSEnable": 0]
             let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
             self.session = session; session.dataTask(with: request).resume()
         }
@@ -26,11 +56,9 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
               challenge.protectionSpace.host == endpoint.host,
               challenge.protectionSpace.port == (endpoint.port ?? 443),
               let trust = challenge.protectionSpace.serverTrust,
-              SecTrustEvaluateWithError(trust, nil), let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
+              anchor.admits(trust, host: challenge.protectionSpace.host) else {
             completionHandler(.cancelAuthenticationChallenge, nil); return
         }
-        let hash = SHA256.hash(data: SecCertificateCopyData(certificate) as Data).map { String(format: "%02x", $0) }.joined()
-        guard hash == pin else { completionHandler(.cancelAuthenticationChallenge, nil); return }
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
@@ -90,16 +118,18 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
         let bytes = Data(body.utf8)
         guard bytes.count <= 2_097_152 else { throw MobileError.invalid("request-too-large") }
         request.httpBody = bytes
-        let exchange = PinnedExchange(endpoint: endpoint, pin: config.pin); active = exchange
+        guard config.version == 2, let certificatePem = config.certificatePem else { throw MobileError.invalid("reprovision-oob-certificate-required-credential-retained") }
+        let exchange = try PinnedExchange(endpoint: endpoint, pin: config.pin, certificatePem: certificatePem); active = exchange
         defer { if active === exchange { active = nil } }
         let result = try await exchange.run(request)
         try fence.check(ticket)
         return result
     }
-    func pair(endpoint: String, pin: String, device: String, invitation: String, name: String, expected: Ticket) async throws {
+    func pair(endpoint: String, pin: String, certificatePem: String, device: String, invitation: String, name: String, expected: Ticket) async throws {
+        _ = try OobCertificate(pem: certificatePem, pin: pin) // BEFORE invitation HTTP or old credential changes.
         try fence.check(expected); guard !busy else { throw MobileError.invalid("native-busy") }
         invalidate(); let ticket = fence.ticket; busy = true; defer { busy = false }
-        let config = Provisioning(endpoint: endpoint, pin: pin, deviceId: device, credentialId: "", credential: "")
+        let config = Provisioning(endpoint: endpoint, pin: pin, deviceId: device, credentialId: "", credential: "", certificatePem: certificatePem, version: 2)
         let pairBody = try JSONSerialization.data(withJSONObject: ["deviceId": device, "invitation": invitation, "name": name])
         let (status, rawReply) = try await request(config: config, path: "/control/pair", body: String(decoding: pairBody, as: UTF8.self), ticket: ticket, credential: false)
         let value = try object(rawReply)
@@ -108,7 +138,7 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
               !credentialId.isEmpty, let credential = value["credential"] as? String, !credential.isEmpty,
               credential.utf8.count <= 4096, credential.utf8.allSatisfy({ (33...126).contains($0) }) else { throw MobileError.invalid("pair-failed") }
         try fence.check(ticket)
-        let next = Provisioning(endpoint: endpoint, pin: pin, deviceId: device, credentialId: credentialId, credential: credential)
+        let next = Provisioning(endpoint: endpoint, pin: pin, deviceId: device, credentialId: credentialId, credential: credential, certificatePem: certificatePem, version: 2)
         try store.save(next); configuration = next
     }
     func invoke(method: String, payload: Any, expected: Ticket) async throws -> [String: Any] {

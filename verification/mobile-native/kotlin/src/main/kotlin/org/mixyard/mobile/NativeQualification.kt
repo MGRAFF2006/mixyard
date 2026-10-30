@@ -14,7 +14,7 @@ fun main() {
             val command = JSONObject(line)
             val expected = if (command.has("expected")) captured.getValue(command.getString("expected")) else client.ticket()
             when (command.getString("op")) {
-                "pair" -> client.pair(command.getString("endpoint"), command.getString("pin"), command.getString("deviceId"), command.getString("invitation"), "Owned native qualification", expected)
+                "pair" -> client.pair(command.getString("endpoint"), command.getString("pin"), command.getString("certificatePem"), command.getString("deviceId"), command.getString("invitation"), "Owned native qualification", expected)
                 "invoke" -> {
                     val method = command.getString("method")
                     val payload: Any = if (method == "request") command.getString("payload") else JSONObject()

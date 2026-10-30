@@ -58,37 +58,27 @@ jobs:
             apps/mobile/android/http/gradle.lockfile
       - name: Build pinned production control service
         run: cargo build --locked --manifest-path .qualification-control/control/Cargo.toml --bin mixyard-control --jobs 2
-      - name: Prove scoped Settings409 regression against previous shipping Kotlin client
-        env:
-          GRADLE_USER_HOME: ${{ runner.temp }}/native-control-gradle
-          MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/.qualification-control/control/target/debug/mixyard-control
-          MIXYARD_NATIVE_COMMAND: '["bash","verification/mobile-native/run-jvm.sh"]'
-        shell: bash
-        run: |
-          git fetch --no-tags --depth=1 origin 7da358ea416b4fae5ac011599014693e04648f36
-          git show 7da358ea416b4fae5ac011599014693e04648f36:apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt > verification/mobile-native/kotlin/build/production/PinnedControl.kt
-          gradle --no-daemon -p verification/mobile-native/kotlin installDist
-          if node --test --test-reporter=tap verification/mobile-native/control.test.ts > "$RUNNER_TEMP/native-scoped-settings-before.tap" 2>&1; then
-            echo 'Previous shipping client unexpectedly passed the scoped Settings409 regression'
-            exit 1
-          fi
-          node --input-type=module -e '
-            import assert from "node:assert/strict";
-            import { readFileSync } from "node:fs";
-            const result = readFileSync(process.env.RUNNER_TEMP + "/native-scoped-settings-before.tap", "utf8");
-            assert.ok(result.includes("scoped Settings conflict must revoke native authority"), "failure must be the scoped native revocation regression");
-            assert.match(result, /# fail 2(?:\r?\n|$)/, "only the scoped conflict subtest and its parent may fail");
-            console.log("PASS: strict Settings409 authority assertion fails against the previous shipping client");
-          '
-          cp apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt verification/mobile-native/kotlin/build/production/
-          gradle --no-daemon -p verification/mobile-native/kotlin installDist
+      # Historical scoped409 causal RED is preserved in prior92 evidence. Its
+      # PIN-only source cannot implement this new production OOB input contract.
       - name: Actual Kotlin JSSE and shipping pin/dispatch/serializer against actual TLS services
         env:
           MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/.qualification-control/control/target/debug/mixyard-control
           MIXYARD_NATIVE_COMMAND: '["bash","verification/mobile-native/run-jvm.sh"]'
         run: node --test verification/mobile-native/control.test.ts
+      - name: Record production anchor source identity
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/oob-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/oob-evidence/source-head.txt"
+          git ls-files 'apps/mobile/android/http/**' 'apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt' 'apps/mobile/ios/App/ControlClient.swift' 'apps/mobile/ios/App/CredentialStore.swift' 'verification/mobile-native/**' | while IFS= read -r file; do shasum -a 256 "$file"; done > "$RUNNER_TEMP/oob-evidence/source-sha256.txt"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mobile-oob-kotlin-source
+          path: ${{ runner.temp }}/oob-evidence
       - if: always()
-        run: echo 'Production Kotlin client + real JSSE PKI/pin/HTTP. JVM vault platform double, not Android Keystore or physical device qualification. PCM/audio roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
+        run: echo 'Production Kotlin client + real JSSE single-OOB-anchor PKI/pin/HTTP. JVM vault platform double, not Android Keystore or physical device qualification. PCM/audio roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
   swift-production-tls:
     runs-on: macos-15
     timeout-minutes: 20
@@ -115,10 +105,22 @@ jobs:
       - name: Actual Swift URLSession and shipping Security pin/dispatch/serializer against actual TLS services
         env:
           MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/.qualification-control/control/target/debug/mixyard-control
-          MIXYARD_NATIVE_COMMAND: '["python3","verification/mobile-native/run-swift.py"]'
+          MIXYARD_NATIVE_COMMAND: '["bash","verification/mobile-native/run-swift-anchor.sh"]'
         run: node --test verification/mobile-native/control.test.ts
+      - name: Record production anchor source identity
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/oob-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/oob-evidence/source-head.txt"
+          git ls-files 'apps/mobile/android/http/**' 'apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt' 'apps/mobile/ios/App/ControlClient.swift' 'apps/mobile/ios/App/CredentialStore.swift' 'verification/mobile-native/**' | while IFS= read -r file; do shasum -a 256 "$file"; done > "$RUNNER_TEMP/oob-evidence/source-sha256.txt"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mobile-oob-swift-source
+          path: ${{ runner.temp }}/oob-evidence
       - if: always()
-        run: echo 'Production Swift client + real URLSession/Security PKI/pin/HTTP in owned hosted keychain trust. Vault platform double, not iPhone Keychain/device-lock or physical qualification. PCM/audio roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
+        run: echo 'Production Swift client + real URLSession/Security single-OOB-anchor PKI/pin/HTTP; ZERO user/admin trust or keychain mutation. Vault platform double, not iPhone Keychain/device-lock or physical qualification. PCM/audio roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
   android-shipping-http-sdk:
     runs-on: ubuntu-latest
     timeout-minutes: 20

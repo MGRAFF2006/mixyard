@@ -73,7 +73,7 @@ class Device {
   provisioning() {
     const invitation = this.invitations.shift()
     assert.ok(invitation)
-    return { op: 'pair', endpoint: this.endpoint, pin: this.trust.certificateSha256, deviceId: this.trust.deviceId, invitation }
+    return { op: 'pair', endpoint: this.endpoint, pin: this.trust.certificateSha256, certificatePem: this.trust.certificatePem, deviceId: this.trust.deviceId, invitation }
   }
   async post(path: string, body: unknown, credential?: string): Promise<any> {
     return deadline(new Promise((resolveReply, reject) => {
@@ -108,8 +108,8 @@ test('shipping native pinned control client against owned production TLS service
     const a = new Device(join(directory, 'a'), 'view,control,settings'); devices.push(a)
     const b = new Device(join(directory, 'b'), 'view,control,settings'); devices.push(b)
     const viewer = new Device(join(directory, 'viewer'), 'view'); devices.push(viewer)
-    // Adapter launches provision a private JVM truststore or a private hosted
-    // macOS test keychain. Provisioning never changes this developer's PKI.
+    // Actual shipping providers accept explicit OOB certificates from stdin.
+    // No user/admin/JVM truststore or keychain search list is changed.
     await Promise.all(devices.map(device => device.start()))
     native = new Native(directory, command)
     const client = native
