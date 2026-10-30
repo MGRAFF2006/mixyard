@@ -45,6 +45,69 @@ class SimulatorSelection(unittest.TestCase):
         value=module.destination_evidence(raw,owned)
         self.assertEqual(value['records'],[{'platform':'iOS Simulator','arch':'missing-or-other','archPresent':False,'errorPresent':False,'availability':'available','duplicateFields':False}])
         self.assertNotIn('SECRET',json.dumps(value));self.assertNotIn(owned,json.dumps(value))
+    def test_command_echo_mention_is_not_an_owned_destination_record(self):
+        owned='11111111-2222-3333-4444-555555555555'
+        echo='Command line invocation:\n /PRIVATE/xcodebuild -showdestinations -destination platform=iOS Simulator,id='+owned
+        original=module.destination_evidence(echo,owned)
+        self.assertEqual(original,{'ownedUuidMentioned':True,'records':[],'recordLimitExceeded':False})
+        witness=module.destination_structure(echo,owned)
+        self.assertTrue(witness['uuidInCommandEchoLike'])
+        self.assertFalse(witness['uuidInDestinationSections'])
+        self.assertEqual(witness['exactOwnedIdMatches'],0)
+        self.assertEqual(witness['candidates'][0]['braceShape'],'none')
+        with self.assertRaises(RuntimeError):module.admit_destination(original,'arm64')
+        # Even a real available section containing only a different device is
+        # not evidence that the command's owned UUID has a destination entry.
+        text=echo+'\nAvailable destinations for Owned:\n{ platform:iOS Simulator, arch:arm64, id:OTHER, name:SECRET }'
+        witness=module.destination_structure(text,owned)
+        self.assertTrue(witness['availableSection'])
+        self.assertEqual(witness['braceRecordsBySection']['available'],1)
+        self.assertFalse(witness['uuidInDestinationSections'])
+        self.assertEqual(witness['exactOwnedIdMatches'],0)
+
+    def test_owned_wrapped_shape_is_visible_but_not_newly_admitted(self):
+        owned='11111111-2222-3333-4444-555555555555'
+        text='Available destinations for Owned:\n{ platform:iOS Simulator,\n id:'+owned+', name:SECRET }'
+        witness=module.destination_structure(text,owned)
+        self.assertTrue(witness['uuidInDestinationSections'])
+        self.assertFalse(witness['uuidInCommandEchoLike'])
+        self.assertEqual(witness['exactOwnedIdMatches'],0)
+        self.assertEqual(witness['candidates'][0]['braceShape'],'close-only')
+        self.assertTrue(witness['candidates'][0]['keysOnLine']['id'])
+        self.assertEqual(witness['candidates'][0]['ownedRecords'],[])
+        with self.assertRaises(RuntimeError):module.admit_destination(module.destination_evidence(text,owned),'arm64')
+
+    def test_structure_preserves_native_and_missing_text_arch_admission(self):
+        owned='11111111-2222-3333-4444-555555555555'
+        for suffix in ['',', arch:arm64']:
+            text='Available destinations for Owned:\n{ platform:iOS Simulator, id:'+owned+suffix+' }'
+            if suffix:text+='\n{ platform:iOS Simulator, id:'+owned+', arch:x86_64 }'
+            original=module.destination_evidence(text,owned)
+            witness=module.destination_structure(text,owned)
+            expected=2 if suffix else 1
+            self.assertEqual(witness['exactOwnedIdMatches'],expected)
+            self.assertEqual(len(witness['candidates']),expected)
+            self.assertIn('still required' if suffix else 'UNKNOWN',module.admit_destination(original,'arm64'))
+
+    def test_owned_error_duplicate_and_privacy_evidence_is_bounded(self):
+        owned='11111111-2222-3333-4444-555555555555'
+        line='{ platform:iOS Simulator, id:'+owned+', arch:arm64, arch:arm64, name:SECRET_NAME, error:SECRET_ERROR /PRIVATE/path }'
+        text='Ineligible destinations for SECRET_SCHEME:\n'+line
+        witness=module.destination_structure(text,owned)
+        self.assertTrue(witness['ineligibleSection'])
+        record=witness['candidates'][0]['ownedRecords'][0]
+        self.assertTrue(record['errorPresent']);self.assertTrue(record['duplicateFields'])
+        self.assertTrue(record['exactIdEqual'])
+        with self.assertRaises(RuntimeError):module.admit_destination(module.destination_evidence(text,owned),'arm64')
+        text='Available destinations for SECRET_SCHEME:\n'+'\n'.join([line]*100)
+        witness=module.destination_structure(text,owned)
+        self.assertEqual(len(witness['candidates']),8)
+        self.assertTrue(witness['candidateLimitExceeded'])
+        self.assertTrue(witness['braceCountLimitExceeded']);self.assertTrue(witness['exactMatchLimitExceeded'])
+        encoded=json.dumps(witness)
+        self.assertLess(len(encoded),16384)
+        self.assertNotIn(owned,encoded);self.assertNotIn('SECRET',encoded);self.assertNotIn('/PRIVATE',encoded)
+
     def test_shutdown149_requires_exact_owned_shutdown_readback_within_existing_budget(self):
         owned='11111111-2222-3333-4444-555555555555'
         with patch.object(module,'step',side_effect=subprocess.CalledProcessError(149,'owned-shutdown')),patch.object(module,'capture',return_value=json.dumps({'devices':{'runtime':[{'udid':owned,'state':'Shutdown'}]}})) as capture,contextlib.redirect_stdout(io.StringIO()):

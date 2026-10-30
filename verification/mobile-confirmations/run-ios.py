@@ -136,6 +136,61 @@ def destination_evidence(text, identifier):
     return {'ownedUuidMentioned':identifier in text,'records':records[:8],'recordLimitExceeded':len(records)>8}
 
 
+def destination_structure(text, identifier):
+    """Non-authorizing bounded witness; never used by destination admission."""
+    section='unknown';sections={'available':False,'ineligible':False}
+    braces={'available':0,'ineligible':0,'unknown':0}
+    command_mention=False;section_mention=False;outside_mention=False
+    exact=0;owned_lines=0;candidates=[]
+    known={'id','platform','arch','name','error','OS','variant'}
+    for index,line in enumerate(text.splitlines(),1):
+        if 'Available destinations for' in line:
+            section='available';sections[section]=True
+        if 'Ineligible destinations for' in line:
+            section='ineligible';sections[section]=True
+        mentioned=identifier in line
+        command_like='xcodebuild' in line and '-showdestinations' in line
+        entries=re.findall(r'\{([^{}]+)\}',line)
+        owned_records=[];owned_braces=0
+        for entry in entries:
+            braces[section]+=1
+            pairs=[part.strip().split(':',1) for part in entry.split(',') if ':' in part]
+            fields={key.strip():value.strip() for key,value in pairs}
+            if fields.get('id')==identifier:exact+=1
+            if identifier in entry:
+                owned_braces+=1
+                if len(owned_records)<4:
+                    owned_records.append({'fieldCount':min(len(pairs),16),'fieldCountCapped':len(pairs)>16,
+                        'knownKeyCount':min(sum(key.strip() in known for key,_ in pairs),16),
+                        'idPresent':'id' in fields,'exactIdEqual':fields.get('id')==identifier,
+                        'platform':fields.get('platform') if fields.get('platform') in ('iOS Simulator','iOS','macOS') else 'other',
+                        'arch':fields.get('arch') if fields.get('arch') in ('arm64','x86_64') else 'missing-or-other',
+                        'archPresent':'arch' in fields,'errorPresent':'error' in fields,
+                        'duplicateFields':len(fields)!=len(pairs)})
+        if not mentioned:continue
+        owned_lines+=1
+        command_mention |= command_like
+        section_mention |= section!='unknown'
+        outside_mention |= section=='unknown'
+        if len(candidates)<8:
+            opened=line.count('{');closed=line.count('}')
+            shape='none' if opened==closed==0 else 'balanced' if opened==closed else 'open-only' if not closed else 'close-only' if not opened else 'unbalanced'
+            candidates.append({'lineIndex':min(index,65535),'lineIndexCapped':index>65535,
+                'section':section,'commandEchoLike':command_like,'braceShape':shape,
+                'braceRecords':min(len(entries),8),'braceRecordLimitExceeded':len(entries)>8,
+                'keysOnLine':{key:bool(re.search(r'\b'+key+r'\s*:',line)) for key in ('id','platform','arch','error')},
+                'ownedBraceRecords':min(owned_braces,4),'ownedBraceRecordLimitExceeded':owned_braces>4,
+                'ownedRecords':owned_records})
+    return {'availableSection':sections['available'],'ineligibleSection':sections['ineligible'],
+            'uuidInCommandEchoLike':command_mention,'uuidInDestinationSections':section_mention,
+            'uuidOutsideDestinationSections':outside_mention,
+            'braceRecordsBySection':{key:min(value,64) for key,value in braces.items()},
+            'braceCountLimitExceeded':any(value>64 for value in braces.values()),
+            'exactOwnedIdMatches':min(exact,64),'exactMatchLimitExceeded':exact>64,
+            'ownedBearingLines':min(owned_lines,64),'candidateLimitExceeded':owned_lines>8,
+            'candidates':candidates}
+
+
 def shutdown_owned(identifier):
     deadline=time.monotonic()+30
     try:
@@ -184,6 +239,7 @@ def main():
         destinations = capture('owned-destinations', 'xcodebuild', '-showdestinations', *common)
         evidence=destination_evidence(destinations,identifier)
         print('Owned simulator destination evidence: '+json.dumps(evidence),flush=True)
+        print('Owned simulator destination structure: '+json.dumps(destination_structure(destinations,identifier)),flush=True)
         print('Owned simulator text architecture: '+admit_destination(evidence,arch),flush=True)
         step('boot', ['xcrun', 'simctl', 'boot', identifier], 30)
         step('bootstatus', ['xcrun', 'simctl', 'bootstatus', identifier, '-b'], 180)
