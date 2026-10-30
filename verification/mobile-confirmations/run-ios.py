@@ -238,6 +238,9 @@ def main():
                   '-onlyUsePackageVersionsFromResolvedFile', '-disableAutomaticPackageResolution',
                   '-derivedDataPath', str(output), 'ONLY_ACTIVE_ARCH=YES', f'ARCHS={arch}', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE', 'CODE_SIGNING_ALLOWED=NO']
         step('locked-package-resolution', ['xcodebuild', '-resolvePackageDependencies', *common], 120)
+        # Explicit prepared-device contract, not a discovery-cause claim.
+        step('boot', ['xcrun', 'simctl', 'boot', identifier], 30)
+        step('bootstatus', ['xcrun', 'simctl', 'bootstatus', identifier, '-b'], 180)
         destinations = capture('owned-destinations', 'xcodebuild', '-showdestinations', *common)
         evidence=destination_evidence(destinations,identifier)
         print('Owned simulator destination evidence: '+json.dumps(evidence),flush=True)
@@ -256,8 +259,6 @@ def main():
                     pass # Even a broken diagnostic output sink preserves rejection.
             raise
         print('Owned simulator text architecture: '+admitted,flush=True)
-        step('boot', ['xcrun', 'simctl', 'boot', identifier], 30)
-        step('bootstatus', ['xcrun', 'simctl', 'bootstatus', identifier, '-b'], 180)
         # One actual supported simulator architecture for app, local package and
         # UI-test target. No EXCLUDED_ARCHS, suppressed import or skipped test.
         budget=time.monotonic()+900
