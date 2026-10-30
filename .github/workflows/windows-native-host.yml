@@ -2,6 +2,7 @@ name: Windows linked Rust native host (injected endpoints only)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['adapters/windows/**', 'adapters/engine/**', 'src/audio/**', 'src/audio.rs', 'src/dsp.rs', 'src/dsp/**', 'src/lib.rs', 'src/worker/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/windows-native-host.yml']
   pull_request:
     paths: ['adapters/windows/**', 'adapters/engine/**', 'src/audio/**', 'src/audio.rs', 'src/dsp.rs', 'src/dsp/**', 'src/lib.rs', 'src/worker/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/windows-native-host.yml']
@@ -12,19 +13,36 @@ env:
   CARGO_BUILD_JOBS: '1'
   CARGO_PROFILE_RELEASE_DEBUG: '0'
   CARGO_PROFILE_TEST_DEBUG: '0'
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linked:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-2022]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 20
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.13'
       - uses: actions/checkout@v4
       - name: Select private disposable Rust target
-        shell: pwsh
-        run: "'CARGO_TARGET_DIR=' + $env:RUNNER_TEMP + '/mixyard-windows-linked-host-rust' >> $env:GITHUB_ENV"
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          target = Path(os.environ['RUNNER_TEMP']) / 'mixyard-windows-linked-host-rust'
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as environment:
+              environment.write(f'CARGO_TARGET_DIR={target}\n')
       - name: Require disposable runner reserve before building
         shell: python
         run: |
@@ -54,12 +72,25 @@ jobs:
           # directives. Preserve the actual toolchain tokens without guessing.
           cmake -S adapters/windows/native-host -B "$env:RUNNER_TEMP/mixyard-windows-host-cpp" -A x64 "-DMIXYARD_HOST_LIBRARY=$env:CARGO_TARGET_DIR/release/mixyard_host.lib" "-DMIXYARD_HOST_NATIVE_LIBRARIES=$nativeLibraries"
       - name: Build Windows production bridge and consumer oracle
+        if: runner.os == 'Windows'
         shell: pwsh
         run: cmake --build "$env:RUNNER_TEMP/mixyard-windows-host-cpp" --config Release --parallel 1
       - name: Exercise linked queues and injected SDK endpoints only
+        if: runner.os == 'Windows'
         shell: pwsh
         run: ctest --test-dir "$env:RUNNER_TEMP/mixyard-windows-host-cpp" -C Release --output-on-failure --no-tests=error
       - name: State exact qualification boundary
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           'Actual Rust planner/Processor64 plus production C++ SPSC/consumer byte oracle. Windows SDK endpoints and driver operations are injected; no physical audio/driver/default/service APIs execute. Physical clocks, native app identities, selectable microphones and backend availability remain unqualified/false.' >> $env:GITHUB_STEP_SUMMARY
+      - name: Build portable production bridge and consumer oracle
+        if: runner.os == 'Linux'
+        run: cmake --build "$RUNNER_TEMP/mixyard-windows-host-cpp" --config Release --parallel 1
+      - name: Exercise portable linked queues and injected endpoints only
+        if: runner.os == 'Linux'
+        run: ctest --test-dir "$RUNNER_TEMP/mixyard-windows-host-cpp" -C Release --output-on-failure --no-tests=error
+      - name: State exact portable qualification boundary
+        if: runner.os == 'Linux'
+        run: |
+          printf '%s\n' 'Actual Rust planner/Processor64 plus production C++ SPSC/consumer byte oracle. Windows SDK endpoints and driver operations are injected; no physical audio/driver/default/service APIs execute. Physical clocks, native app identities, selectable microphones and backend availability remain unqualified/false.' >> "$GITHUB_STEP_SUMMARY"

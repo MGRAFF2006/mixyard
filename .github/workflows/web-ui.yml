@@ -3,6 +3,7 @@ name: Web console frontend checks
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'apps/web/**'
       - 'src/**'
@@ -33,12 +34,16 @@ concurrency:
 jobs:
   frontend:
     name: Strict types, data safety, browser flows and build
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 10
     defaults:
       run:
         working-directory: apps/web
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:

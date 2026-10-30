@@ -2,11 +2,16 @@ name: Windows ingress and capture artifacts (no driver load)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml']
   pull_request:
     paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml']
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   producer:
     name: Usermode producer SDK artifact (injected operations only)
@@ -30,7 +35,7 @@ jobs:
         run: "'Usermode SDK compile/link and INJECTED operations only. NEVER actual software-device creation, driver open/IOCTL or audio. Native execution and MMDevice/consumer PCM BLOCKED.' >> $env:GITHUB_STEP_SUMMARY"
   transport:
     name: Bounded ingress queue model (no kernel or PCM delivery)
-    runs-on: ubuntu-24.04
+    runs-on: boat
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

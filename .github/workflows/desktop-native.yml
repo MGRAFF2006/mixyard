@@ -3,6 +3,7 @@ name: Desktop native shell (no audio qualification)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -51,7 +52,7 @@ jobs:
             binary: mixyard-desktop
             bundles: app,dmg
             test_suffix: ""
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-large' || matrix.os }}
     timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: '2'

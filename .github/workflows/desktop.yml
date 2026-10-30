@@ -3,6 +3,7 @@ name: Desktop frontend checks (not native audio)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'apps/desktop/**'
       - 'apps/web/**'
@@ -23,7 +24,7 @@ concurrency:
 jobs:
   frontend:
     name: Typecheck, shared console and native transport model tests, frontend build
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 10
     defaults:
       run:

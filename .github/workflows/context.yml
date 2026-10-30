@@ -2,11 +2,16 @@ name: Passive situation observers
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/context.rs', 'src/bin/mixyard-context.rs', 'src/automation/**', 'observers/**', 'tests/context.rs', 'adapters/linux/mixyard_linux.py', 'docs/context.md', '.github/workflows/context.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/context.rs', 'src/bin/mixyard-context.rs', 'src/automation/**', 'observers/**', 'tests/context.rs', 'adapters/linux/mixyard_linux.py', 'docs/context.md', '.github/workflows/context.yml']
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   observers:
     name: Collector contract (${{ matrix.os }})
@@ -14,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
@@ -22,6 +27,10 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_INCREMENTAL: 0
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
       - uses: actions/checkout@v4
       - run: cargo fmt --all -- --check
       - run: cargo test --locked --test context

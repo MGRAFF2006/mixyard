@@ -2,11 +2,16 @@ name: Loopback web service
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', 'tests/web_support/**', 'tests/runtime_inventory.rs', 'observers/**', 'adapters/linux/**', '.github/workflows/web-service.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', 'tests/web_support/**', 'tests/runtime_inventory.rs', 'observers/**', 'adapters/linux/**', '.github/workflows/web-service.yml']
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   http:
     name: Real HTTP and profile persistence (${{ matrix.os }})
@@ -14,13 +19,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
       - uses: actions/checkout@v4
       - name: Formatting
         run: cargo fmt --all --check

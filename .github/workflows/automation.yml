@@ -3,6 +3,7 @@ name: Situation decision core (explicit observations)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/automation/**', 'src/bin/mixyard-automation.rs', 'tests/automation*', 'examples/automation/**', 'docs/automation*.md', '.github/workflows/automation.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/automation/**', 'src/bin/mixyard-automation.rs', 'tests/automation*', 'examples/automation/**', 'docs/automation*.md', '.github/workflows/automation.yml']
@@ -10,16 +11,24 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   automation:
     name: Evaluator, proposals and transition lifecycle
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_INCREMENTAL: 0
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
       - uses: actions/checkout@v4
       - run: cargo fmt --all -- --check
       - run: cargo test --locked --test automation_core --test automation_cli --test automation_controller --test automation_observers

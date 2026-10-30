@@ -3,6 +3,7 @@ name: Native inventory helpers (read-only runner proof)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml']
   pull_request:
     paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml']
@@ -10,10 +11,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   portable:
     name: Portable writer and strict decoder fixtures
-    runs-on: ubuntu-24.04
+    runs-on: boat
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
