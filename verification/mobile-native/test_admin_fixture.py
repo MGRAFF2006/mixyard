@@ -31,7 +31,8 @@ def fixture():
 
 
 def state(codes):
-    return json.dumps({'statuses':codes,'ownedTrustAbsent':all(code in (-25300,-25263) for code in codes)})
+    count=sum(code==0 for code in codes)
+    return json.dumps({'statuses':codes,'ownedTrustAbsent':all(code in (-25300,-25263) for code in codes),'adminCount':count,'adminStatus':0 if count else -25263})
 
 
 class AdminFixture(unittest.TestCase):
@@ -107,4 +108,20 @@ class AdminFixture(unittest.TestCase):
             for name in admin.names: admin.add(name,root/'owned.keychain',time.monotonic()+18)
             admin.ready(time.monotonic()+18)
             self.assertFalse(admin.cleanup(time.monotonic()+14))
-            self.assertEqual(labels[-4:],['cleanup-trust-a','cleanup-trust-b','cleanup-trust-viewer','admin-after'])
+            self.assertEqual(labels[-4:],['cleanup-trust-viewer','cleanup-trust-b','cleanup-trust-a','admin-after'])
+
+    def test_unrelated_admin_record_count_never_grants_removal_ownership(self):
+        with fixture() as root, contextlib.redirect_stderr(io.StringIO()):
+            commands=[]
+            def run(label,deadline,args,**kwargs):
+                commands.append((label,args))
+                if label.startswith('admin-'):
+                    codes=[0]*3 if label in ('admin-ready','admin-precleanup') else [-25300]*3
+                    value=json.loads(state(codes)); value['adminCount']+=5; value['adminStatus']=0
+                    return json.dumps(value)
+                return ''
+            admin=OwnedAdmin(root,run); admin.admit(time.monotonic()+18)
+            for name in admin.names: admin.add(name,root/'owned',time.monotonic()+18)
+            admin.ready(time.monotonic()+18); self.assertTrue(admin.cleanup(time.monotonic()+14))
+            removed=[Path(args[-1]).name for label,args in commands if label.startswith('cleanup-trust-')]
+            self.assertEqual(removed,['owned-admin-viewer.der','owned-admin-b.der','owned-admin-a.der'])

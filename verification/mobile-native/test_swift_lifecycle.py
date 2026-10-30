@@ -88,16 +88,17 @@ class TrustLifecycle(unittest.TestCase):
         child = unittest.mock.Mock()
         child.returncode = -15
         child.communicate.side_effect = [subprocess.TimeoutExpired('owned',3.5), ('','')]
-        with patch.object(module.subprocess,'Popen',return_value=child):
+        with patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS'}), patch.object(module,'owned_process_evidence'), patch.object(module.subprocess,'Popen',return_value=child):
             with self.assertRaises(subprocess.TimeoutExpired): module.privileged_capture(['sudo','-n','/usr/bin/security'],4)
         child.terminate.assert_called_once(); child.kill.assert_not_called()
-        self.assertEqual([call.kwargs['timeout'] for call in child.communicate.call_args_list],[3.5,0.5])
+        budgets=[call.kwargs['timeout'] for call in child.communicate.call_args_list]
+        self.assertEqual(budgets[0],3.5); self.assertGreater(budgets[1],0); self.assertLessEqual(budgets[1],0.5)
         self.assertIsNone(module.pending_command)
 
     def test_unproved_privileged_stop_retains_ownership_until_bounded_drain_completes(self):
         child = unittest.mock.Mock()
         child.communicate.side_effect = subprocess.TimeoutExpired('owned',1)
-        with patch.object(module.subprocess,'Popen',return_value=child), patch.object(module,'phase'):
+        with patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS'}), patch.object(module,'owned_process_evidence'), patch.object(module.subprocess,'Popen',return_value=child), patch.object(module,'phase'):
             with self.assertRaises(module.StopIncomplete): module.privileged_capture(['sudo','-n','/usr/bin/security'],4)
             self.assertIs(module.pending_command,child)
             self.assertFalse(module.drain_command(time.monotonic()+1))
@@ -105,3 +106,14 @@ class TrustLifecycle(unittest.TestCase):
             child.communicate.side_effect=None; child.communicate.return_value=('','')
             self.assertTrue(module.drain_command(time.monotonic()+1))
         self.assertIsNone(module.pending_command)
+
+    def test_stop_metadata_is_limited_to_owned_security_ancestry_and_fixed_fields(self):
+        child=unittest.mock.Mock(); child.pid=10; child.poll.return_value=None
+        raw='10 1 501 S /private/SECRET/sudo\n11 10 0 S /usr/bin/security\n12 1 0 S /usr/bin/security\n13 10 501 S /private/SECRET/unrelated\n'
+        output=io.StringIO()
+        with patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS'}), patch.object(module.subprocess,'run',return_value=subprocess.CompletedProcess([],0,stdout=raw)) as run, contextlib.redirect_stderr(output):
+            module.owned_process_evidence('before-privileged-term',child,0.1)
+        data=json.loads(output.getvalue().removeprefix('MIXYARD_OWNED_PROCESS '))
+        self.assertEqual([row['pid'] for row in data['processes']],[10,11])
+        self.assertNotIn('SECRET',output.getvalue()); self.assertNotIn('unrelated',output.getvalue())
+        self.assertEqual(run.call_args.kwargs['timeout'],0.1)

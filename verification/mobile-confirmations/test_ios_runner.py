@@ -17,6 +17,20 @@ def runtime(number, available=True):
 
 
 class SimulatorSelection(unittest.TestCase):
+    def test_tool_identity_is_read_only_and_rejects_a_different_xcode(self):
+        developer='/Applications/OwnedXcode.app/Contents/Developer'
+        def capture(label,*_args):
+            return developer+'/usr/bin/simctl' if label=='resolved-simctl' else developer
+        data=module.plistlib.dumps({'CFBundleShortVersionString':'1032.2','CFBundleVersion':'SECRET-NOT-NUMERIC'})
+        evidence=io.StringIO()
+        with patch.object(module,'capture',side_effect=capture),patch.object(module,'step') as step,patch.object(module.Path,'read_bytes',return_value=data),contextlib.redirect_stdout(evidence):
+            module.toolchain_evidence()
+        step.assert_called_once_with('first-launch-status',['xcodebuild','-checkFirstLaunchStatus'],30)
+        self.assertIn('"simctlMatchesSelectedXcode": true',evidence.getvalue())
+        self.assertNotIn('SECRET',evidence.getvalue());self.assertNotIn('/Applications',evidence.getvalue())
+        with patch.object(module,'capture',side_effect=['/different/tool/simctl',developer]),patch.object(module,'step'),patch.object(module.Path,'read_bytes',return_value=data),contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(RuntimeError): module.toolchain_evidence()
+
     def test_selected_sdk_wins_over_a_newer_arbitrary_installed_runtime(self):
         result = module.select_runtime('18.5', [runtime('18.4'), runtime('18.5'), runtime('26.2')], 'arm64')
         self.assertEqual(result['version'], '18.5')
@@ -39,9 +53,10 @@ class SimulatorSelection(unittest.TestCase):
         def run(args, **kwargs):
             calls.append(args)
             if args[:2] == ['xcodebuild','test']: raise subprocess.CalledProcessError(65, 'owned-xcodebuild')
-        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform, 'machine', return_value='arm64'), patch.object(module, 'capture', side_effect=capture), patch.object(module, 'process_evidence'), patch.object(module.subprocess, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
+        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform, 'machine', return_value='arm64'), patch.object(module, 'capture', side_effect=capture), patch.object(module, 'process_evidence'),patch.object(module,'toolchain_evidence'), patch.object(module.subprocess, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(subprocess.CalledProcessError): module.main()
         command=next(args for args in calls if args[:2]==['xcodebuild','test'])
+        self.assertIn('SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE',command)
         self.assertIn('ARCHS=arm64', command); self.assertIn('ONLY_ACTIVE_ARCH=YES', command)
         self.assertIn('platform=iOS Simulator,id='+owned+',arch=arm64', command)
         self.assertEqual(calls[-2:], [['xcrun','simctl','shutdown',owned], ['xcrun','simctl','delete',owned]])
@@ -61,7 +76,7 @@ class SimulatorSelection(unittest.TestCase):
             if any(value in args for value in ['bootstatus','shutdown','delete']):
                 raise subprocess.TimeoutExpired(args, kwargs['timeout'])
         evidence=io.StringIO()
-        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform,'machine',return_value='arm64'), patch.object(module,'capture',side_effect=capture), patch.object(module,'process_evidence'), patch.object(module.subprocess,'run',side_effect=run), contextlib.redirect_stdout(evidence):
+        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform,'machine',return_value='arm64'), patch.object(module,'capture',side_effect=capture), patch.object(module,'process_evidence'),patch.object(module,'toolchain_evidence'), patch.object(module.subprocess,'run',side_effect=run), contextlib.redirect_stdout(evidence):
             with self.assertRaises(subprocess.TimeoutExpired) as failure: module.main()
         self.assertEqual(failure.exception.timeout,180)
         self.assertIn('bootstatus',failure.exception.cmd)

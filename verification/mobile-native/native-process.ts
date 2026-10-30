@@ -26,13 +26,29 @@ export class Native {
       // Drain all bytes, but expose only our small fixed phase vocabulary.
       const lines = (stderr + String(data)).split('\n'); stderr = lines.pop()!.slice(-4096)
       for (const line of lines) {
+        if (line.startsWith('MIXYARD_OWNED_PROCESS ') && line.length < 4096) {
+          try {
+            const value = JSON.parse(line.slice('MIXYARD_OWNED_PROCESS '.length))
+            if (Object.keys(value).sort().join(',') === 'phase,processes,state' &&
+                ['before-privileged-term','cleanup-privileged-term'].includes(value.phase) &&
+                ['unavailable','captured','owner-exited-pipes-unproved'].includes(value.state) &&
+                Array.isArray(value.processes) && value.processes.length <= 16 && value.processes.every((row: Record<string, unknown>) =>
+                  Object.keys(row).sort().join(',') === 'comm,parentPid,pid,state,uid' && ['sudo','security'].includes(String(row.comm)) &&
+                  ['pid','parentPid','uid'].every(key => Number.isSafeInteger(row[key]) && Number(row[key]) >= 0 && Number(row[key]) < 2 ** 31) &&
+                  typeof row.state === 'string' && /^[A-Za-z+<>-]{1,8}$/.test(row.state)) && reasons++ < 16) {
+              process.stderr.write(`Owned privileged process evidence: ${JSON.stringify(value)}\n`)
+            }
+          } catch { /* No argv, paths, environment or unrelated process data. */ }
+          continue
+        }
         if (line.startsWith('MIXYARD_TRUST_STATE ') && line.length < 256) {
           try {
             const value = JSON.parse(line.slice('MIXYARD_TRUST_STATE '.length))
-            if (Object.keys(value).sort().join(',') === 'absent,phase,statuses' &&
+            if (Object.keys(value).sort().join(',') === 'absent,adminCount,adminStatus,phase,statuses' &&
                 ['admin-before', 'admin-ready', 'admin-precleanup', 'admin-after'].includes(value.phase) && typeof value.absent === 'boolean' &&
+                Number.isSafeInteger(value.adminCount) && value.adminCount >= -1 && Number.isSafeInteger(value.adminStatus) && Math.abs(value.adminStatus) < 2 ** 31 &&
                 Array.isArray(value.statuses) && value.statuses.length === 3 && value.statuses.every((code: unknown) => Number.isSafeInteger(code) && Number(code) > -(2 ** 31) && Number(code) < 2 ** 31) && reasons++ < 16) {
-              process.stderr.write(`Owned admin trust readback: ${value.phase} absent=${value.absent} statuses=${value.statuses.join(',')}\n`)
+              process.stderr.write(`Owned admin trust readback: ${value.phase} absent=${value.absent} statuses=${value.statuses.join(',')} adminCount=${value.adminCount} adminStatus=${value.adminStatus}\n`)
             }
           } catch { /* No raw trust state or arbitrary native output. */ }
           continue

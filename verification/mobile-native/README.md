@@ -118,3 +118,32 @@ no admin-removal success is claimed while an add may still run. Overall18s start
 20s shared first-call budget and14s cleanup remain unchanged. Local mocked OS tests
 prove command-domain/ownership/failure behavior only. Actual hosted readback,
 normal URLSession PKI/name/pin/TLS exercise and successful cleanup are still required.
+
+Actual admin-fixture runs now establish a narrower result: [92@d06](https://github.com/MGRAFF2006/mixyard/actions/runs/40993167486/job/123860108783)
+and [93@eade](https://github.com/MGRAFF2006/mixyard/actions/runs/40993195716/job/123860202857)
+started the shipping Swift client and passed all nine functional TLS/lifecycle
+cases, including raw precision and scoped403/409. Both qualifications nevertheless
+FAILED cleanup: the first two owned removals returned, the last viewer removal
+exceeded its bound with an unproved sudo/security stop; readback still found that
+owned record. Restoration/search verification succeeded, but keychain deletion
+was correctly withheld. This is not successful trust cleanup or full qualification.
+
+A controlled next diagnostic reports ADMIN-domain record COUNT and OSStatus only,
+alongside the three owned-fingerprint statuses, before/ready/precleanup/after.
+The certificate array stays in memory; unrelated identities/trust settings are
+never output and a count grants no removal ownership. ONLY the same three owned
+removals are reversed (viewer,b,a), distinguishing a last-entry condition from a
+certificate-specific one without extra certificates or trust-policy fallback.
+Apple's [flush implementation](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_keychain/lib/TrustSettings.cpp)
+treats an empty settings domain differently; that is a hypothesis for these
+failures until actual count/order evidence exists, not an observed OS/UI cause.
+
+Before a timed-out privileged command is terminated, bounded read-only metadata
+can include only its owned sudo/security process ancestry and numeric PID/PPID/UID,
+fixed process name and state. No argv, environment, private path or unrelated
+process row is printed. An exited supervisor with unproved inherited pipes is
+explicitly distinguished; ownership is retained until actual drain. Sampling uses
+part of the EXISTING command/14s cleanup budget. No SIGKILL of a sudo monitor,
+deadline increase, success-on-timeout or absent-readback waiver was added. New
+count/order/process evidence and actual successful cleanup still require the
+hosted runner; local mocked tests cannot qualify them.
