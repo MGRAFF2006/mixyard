@@ -31,6 +31,14 @@ class SimulatorSelection(unittest.TestCase):
         with patch.object(module,'capture',side_effect=['/different/tool/simctl',developer]),patch.object(module,'step'),patch.object(module.Path,'read_bytes',return_value=data),contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(RuntimeError): module.toolchain_evidence()
 
+    def test_explicit_comparison_requires_exact_preinstalled_inputs_without_fallback(self):
+        with patch.dict(module.os.environ,{'MIXYARD_CONFIRMATION_COMPARISON':'xcode16.2-sdk18.2','DEVELOPER_DIR':'/Applications/Xcode_16.2.app/Contents/Developer'}),patch.object(module.Path,'is_dir',return_value=True),contextlib.redirect_stdout(io.StringIO()):
+            module.validate_comparison('Xcode 16.2\nBuild version 16C5032a','18.2')
+            for xcode,sdk in [('Xcode 16.4','18.2'),('Xcode 16.2','18.5')]:
+                with self.assertRaises(RuntimeError):module.validate_comparison(xcode,sdk)
+            with patch.object(module.Path,'is_dir',return_value=False):
+                with self.assertRaises(RuntimeError):module.validate_comparison('Xcode 16.2','18.2')
+
     def test_selected_sdk_wins_over_a_newer_arbitrary_installed_runtime(self):
         result = module.select_runtime('18.5', [runtime('18.4'), runtime('18.5'), runtime('26.2')], 'arm64')
         self.assertEqual(result['version'], '18.5')
