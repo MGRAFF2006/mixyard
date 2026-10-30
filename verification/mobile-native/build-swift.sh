@@ -12,3 +12,6 @@ swiftc -parse-as-library -I "$task_build" -L "$task_build" -lMobileCore \
   "$task_root/apps/mobile/ios/App/ControlClient.swift" \
   "$task_root/verification/mobile-native/swift/Qualification.swift" \
   -o "$task_build/native-control-qualification"
+
+swiftc -parse-as-library "$task_root/verification/mobile-native/swift/TrustReadback.swift" \
+  -o "$task_build/owned-admin-trust-state"

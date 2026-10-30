@@ -20,17 +20,28 @@ export class Native {
     let ready!: () => void, failed!: (error: Error) => void
     this.prepared = new Promise<void>((resolve, reject) => { ready = resolve; failed = reject })
     void this.prepared.catch(() => {})
-    const knownPhases = new Set(['startup-list', 'startup-create', 'startup-unlock', 'startup-search', 'trust-a', 'trust-b', 'trust-viewer', 'child-start', 'child-exit', 'cleanup-child', 'cleanup-search', 'cleanup-verify', 'cleanup-trust-a', 'cleanup-trust-b', 'cleanup-trust-viewer', 'cleanup-keychain', 'cleanup-complete'].flatMap(base => ['start', 'done', 'failed'].map(status => `${base}-${status}`)))
+    const knownPhases = new Set(['startup-list', 'startup-create', 'startup-unlock', 'startup-search', 'store-a', 'store-b', 'store-viewer', 'trust-a', 'trust-b', 'trust-viewer', 'child-start', 'child-exit', 'cleanup-child', 'cleanup-search', 'cleanup-verify', 'cleanup-trust-a', 'cleanup-trust-b', 'cleanup-trust-viewer', 'cleanup-keychain', 'cleanup-complete', 'admin-before', 'admin-ready', 'admin-precleanup', 'admin-after', 'cleanup-command'].flatMap(base => ['start', 'done', 'failed'].map(status => `${base}-${status}`)))
     let stderr = '', phases = 0, reasons = 0
     this.child.stderr!.on('data', data => {
       // Drain all bytes, but expose only our small fixed phase vocabulary.
       const lines = (stderr + String(data)).split('\n'); stderr = lines.pop()!.slice(-4096)
       for (const line of lines) {
+        if (line.startsWith('MIXYARD_TRUST_STATE ') && line.length < 256) {
+          try {
+            const value = JSON.parse(line.slice('MIXYARD_TRUST_STATE '.length))
+            if (Object.keys(value).sort().join(',') === 'absent,phase,statuses' &&
+                ['admin-before', 'admin-ready', 'admin-precleanup', 'admin-after'].includes(value.phase) && typeof value.absent === 'boolean' &&
+                Array.isArray(value.statuses) && value.statuses.length === 3 && value.statuses.every((code: unknown) => Number.isSafeInteger(code) && Number(code) > -(2 ** 31) && Number(code) < 2 ** 31) && reasons++ < 16) {
+              process.stderr.write(`Owned admin trust readback: ${value.phase} absent=${value.absent} statuses=${value.statuses.join(',')}\n`)
+            }
+          } catch { /* No raw trust state or arbitrary native output. */ }
+          continue
+        }
         if (line.startsWith('MIXYARD_SECURITY ') && line.length < 256) {
           try {
             const reason = JSON.parse(line.slice('MIXYARD_SECURITY '.length))
             const keys = Object.keys(reason).sort().join(',')
-            const kinds = ['timeout', 'exit', 'signal', 'os-error', 'budget-exhausted', 'subprocess-error']
+            const kinds = ['timeout', 'exit', 'signal', 'os-error', 'budget-exhausted', 'subprocess-error', 'stop-incomplete']
             if (keys === 'kind,phase,value' && typeof reason.phase === 'string' && knownPhases.has(`${reason.phase}-failed`) &&
                 kinds.includes(reason.kind) && Number.isSafeInteger(reason.value) && reason.value >= 0 && reason.value < 2 ** 31 && reasons++ < 8) {
               process.stderr.write(`Owned Security failure: ${reason.phase} ${reason.kind} ${reason.value}\n`)
@@ -42,7 +53,7 @@ export class Native {
         if (!match || !knownPhases.has(match[1]!)) continue
         this.phase = match[1]!
         if (this.phase.endsWith('-failed') && !this.firstProblem) this.firstProblem = this.phase
-        if (phases++ < 32) process.stderr.write(`Owned native phase: ${this.phase}\n`)
+        if (phases++ < 64) process.stderr.write(`Owned native phase: ${this.phase}\n`)
       }
     })
     const lines = createInterface({ input: this.child.stdout! })
