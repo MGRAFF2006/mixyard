@@ -1,6 +1,6 @@
 {
   "identifier": "mixer-shell",
-  "description": "Local shared-console client only. Bounded allowlisted API transport to numeric loopback; no remote origins, bearer forwarding, generic shell or filesystem. Window controls and read-only lifecycle subscription do not own the runtime. Tray context is display-only.",
+  "description": "Shared console over distinct local CSRF or native paired TLS transports. Native credentials stay in the platform vault. Only bounded canonical management commands; no remote origins or generic shell/filesystem bridge.",
   "local": true,
   "windows": [
     "main"
@@ -14,6 +14,15 @@
     "allow-console-request",
     "allow-set-compact",
     "allow-update-tray-context",
-    "allow-take-ui-action"
+    "allow-take-ui-action",
+    "allow-paired-list",
+    "allow-paired-pair",
+    "allow-paired-prepare-open",
+    "allow-paired-cancel-open",
+    "allow-paired-open",
+    "allow-paired-request",
+    "allow-paired-disconnect",
+    "allow-paired-forget",
+    "allow-paired-revoke"
   ]
 }

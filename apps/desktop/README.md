@@ -78,3 +78,7 @@ SDK/native builds must respect the task's disk budget. Native audio, hardware
 capture/render, gap-free runtime survival, physical presentation, remote desktop
 pairing and mobile support are separate gates. See
 [the native harness](../../verification/desktop-native/README.md).
+
+Paired native TLS management and the OOB invitation / platform-vault flow are
+specified in [desktop paired control](../../docs/desktop-paired-control.md).
+The local loopback CSRF target and independent lifecycle diagnostics stay separate.
