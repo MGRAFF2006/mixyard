@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "reviewedBaseline": "341dc1e4a9b4a2e58a97eee5d5716a71be3ab317",
+  "reviewUrl": "https://github.com/MGRAFF2006/mixyard/pull/116#pullrequestreview-5713498177",
+  "status": "source repairs awaiting new independent exact-head review; no native qualification",
+  "repairs": [
+    {
+      "finding": 1,
+      "change": "Validate the real inherited anonymous connected AF_UNIX SOCK_STREAM socketpair, same-owner parent credentials and fd3; reject FIFO/dgram/seqpacket/arbitrary descriptors.",
+      "executed": "C production validator and actual Rust parent_death(fd3) launch bridge PASS. Old FIFO predicate returned1; current validator returned0 on the inherited socketpair.",
+      "limit": "Not a companion SDK startup run."
+    },
+    {
+      "finding": 2,
+      "change": "Production coordinate helper records actual native firstProcessedFrame while engineFirstFrame remains rebased0; native constraint in parent is unchanged.",
+      "executed": "Synthetic native frame16384 -> production C stamp/mapping helper -> real parent validator PASS. The old stamp.first_frame assignment yields0 and is rejected.",
+      "limit": "Other receipt fields/commits are explicit scalar doubles; actual SDK callback/switch unrun."
+    },
+    {
+      "finding": 3,
+      "change": "Bounded inert Reserve/Reserved on priority socket binds operation/generation/action-kind/SHA256 of exact normal bytes. Retain pending/settled tuple; no late old request can execute after epoch/owner fence.",
+      "executed": "Production C reservation helper pre-consume/replay/mismatch negatives PASS; real Service/Store/socket/process-double pending-Prepare Stop PASS.",
+      "limit": "Actual SDK Prepare/Link/Fence handler and owner barriers unrun."
+    },
+    {
+      "finding": 4,
+      "change": "Normal mutation dispatch requires matching current-child Ready plus Reserved. One original2s startup budget includes daemon socket time; expired startup fences before late Ready can dispatch.",
+      "executed": "Production Service with owned API double: no normal Prepare before Ready, dispatch after Ready, and expired-startup/late-Ready cancellation PASS.",
+      "limit": "No actual native Ready callback race execution."
+    },
+    {
+      "finding": 5,
+      "change": "Repeated current-target Stop returns Busy with no retransmission or deadline reset.",
+      "executed": "Two actual socket peers and blocked priority socket writer through production Service PASS; first fence bytes/deadline remain unchanged.",
+      "limit": "No executed old341 Rust RED; baseline diagnostic harness aborted as recorded below."
+    },
+    {
+      "finding": 6,
+      "change": "Full graph formats remain admission checks; ongoing source/engine readiness excludes destination formats. Null/bad bus or engine-output format closes only that destination; source/clock/corrupt-input guards remain fatal.",
+      "executed": "Production format-scope C helper and four-destination scalar isolation checks PASS.",
+      "limit": "Four real consumer format-loss/sibling PCM transport unrun."
+    }
+  ],
+  "currentPortableValidation": {
+    "libraryDefaultPassed": 77,
+    "libraryDefaultIgnored": 2,
+    "ignoredBridgeTestsExplicitlyRunAndPassed": 2,
+    "commands": [
+      "cargo test --offline --locked --jobs 1 --lib -- --test-threads=1",
+      "cargo clippy --offline --locked --jobs 1 --lib --bin mixyard --bin mixyard-runtime -- -D warnings",
+      "MIXYARD_PRIVATE_OWNER_CHECK=/dev/shm/mixyard-private-helper-1296467/owner-check target/private-audio-prototype/debug/deps/mixyard-1f4c6b7462b698ae review_native_contract --ignored --test-threads=1",
+      "bash adapters/linux/private-audio/test.sh --owner-only"
+    ],
+    "bridgeMethod": "explicitly precompiled own portable C executable, no SDK or compiler launched by those two tests",
+    "freshCliBinaryLinkAfterRepairs": false,
+    "allTargetPlatformChecksRunLocally": false,
+    "environment": {
+      "CARGO_TARGET_DIR": "/home/humunkulud/.t3/worktrees/mixyard/t3-cad895ac/target/private-audio-prototype",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "1",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "TMPDIR": "/dev/shm/mixyard-private-audio-portable-tmp"
+    },
+    "sourceIdentity": "Current code files are hashed in verification.json; no Rust or C source changed after the final executed tests. Metadata/docs only changed afterward."
+  },
+  "authorizationDeparture": "Local Rust checks were resumed after recovered statvfs passed, before the area lead read parent-thread374 keep-build-blocked reply. They actually ran and passed, but must NOT be described as hold-compliant. No further compiler/test launch after the direct operational hold. Resource guards/hard caps passed separately from authorization.",
+  "resources": {
+    "retainedUniqueRootTargetHardCapBytes": 268435456,
+    "areaCapBytes": 402653184,
+    "largestSuccessfulCurrentTargetSampleBytes": 221704428,
+    "oldBaselineDiagnosticTargetSampleBytes": 222606316,
+    "earlyCargoPreflightBlockedBeforeLaunch": {
+      "freeRootBytes": 10629771264,
+      "neededBytes": 10821004148
+    },
+    "laterFreshGuardBeforeResumedCargo": {
+      "freeRootBytes": 11083214848,
+      "neededBytes": 10821004148
+    },
+    "rootBuildReserveBytes": 10737418240,
+    "additionalReserveBytes": 16777216,
+    "jobs": 1,
+    "offlineLocked": true,
+    "incremental": false,
+    "downloads": false
+  },
+  "oldRustBaselineDiagnostic": {
+    "scope": "private source-included341 Service/Coordinator using own retained Config/Store rlib types, not SDK",
+    "firstAttempt": "compiler setup errors: source-relative private.conf missing and runtime CLIENT_TIMEOUT not supplied",
+    "correctedAttempt": "compiler stopped by16MiB growth forecast at20,829,464B growth, target222,606,316B below256MiB hard cap",
+    "baselineTestsExecuted": false,
+    "oldRustRedClaim": false,
+    "retainedSourceAndReceipts": "/dev/shm/mixyard-pr116-old341-regression",
+    "cleanup": {
+      "knownOwnedPartialObjects": 18,
+      "bytes": 20827680,
+      "compilerGroupKilledAndReaped": true,
+      "readableProcHits": 0,
+      "inaccessibleProcessEntries": 3,
+      "globalZeroConsumerClaim": false,
+      "sourceAndReceiptsPreserved": true
+    }
+  },
+  "spentBoatAttempt": {
+    "sandboxId": "bx_t32duk6y",
+    "sourceHead": "341dc1e4a9b4a2e58a97eee5d5716a71be3ab317",
+    "failure": "wrong assumed /home/user/mixyard-run/test-source/Cargo.lock path",
+    "compilerJsonNativeStagesStarted": 0,
+    "stoppedAt": "2026-10-30T14:06:19.579Z",
+    "snapshotVerifiedAt": "2026-10-30T14:06:19.541Z",
+    "nonforcedCompleted": true,
+    "retryAuthorized": false
+  },
+  "unrun": [
+    "actual companion SDK compilation/link/run",
+    "portable json-c helper (development files unavailable locally)",
+    "SDK reservation/Ready/fence/native callbacks and output format-loss races",
+    "actual four ordinary consumers, R1/R2 product recordings, callback heap/scrub coverage"
+  ],
+  "unchangedHolds": [
+    "PR90 and115 source/base unchanged; neither accepted by these portable tests",
+    "baseline1.0.5 API failures and both historical graph causes remain separate",
+    "recorder exit1 aggregate failure preserved",
+    "Linux desktop visibility failure124101500456 remains root-owned/unresolved; no retry or waiver",
+    "no physical/app/hardware/backend/SDK eligibility promotion"
+  ],
+  "operationalHold": "Direct root operational hold now in effect: no more compiler, build/test processes, cloud/actors. Only metadata/format inspection and one commit/push/PR body allowed. Actual performed-after-intended-hold Rust results are preserved, not relabeled UNRUN or hold-compliant."
+}

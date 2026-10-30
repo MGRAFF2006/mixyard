@@ -153,6 +153,89 @@ pub struct Store {
     directory: PathBuf,
 }
 impl Store {
+    /// Read the canonical desired draft without acquiring the writer sentinel.
+    #[cfg(all(feature = "desktop", target_os = "linux"))]
+    pub fn current_snapshot(&self, max_bytes: usize) -> Result<CurrentSnapshot, Error> {
+        let snapshot = self.read_bounded(max_bytes)?;
+        let config = snapshot
+            .draft
+            .ok_or_else(|| Error::new("no-draft", "No canonical desired draft is stored", 3))?;
+        use sha2::{Digest, Sha256};
+        let bytes = serde_json::to_vec(&config).map_err(Error::io)?;
+        Ok(CurrentSnapshot {
+            store_revision: snapshot.store_revision,
+            config_revision: config.revision,
+            config_sha256: format!("{:x}", Sha256::digest(bytes)),
+            config,
+        })
+    }
+
+    /// Acquire the existing writer exclusion only after native compilation.
+    /// A successful acquisition owns the sentinel until explicit safe release.
+    #[cfg(all(feature = "desktop", target_os = "linux"))]
+    pub fn guard_current_snapshot(
+        &self,
+        expected: &CurrentSnapshot,
+        max_bytes: usize,
+    ) -> Result<CurrentSnapshotGuard, Error> {
+        self.guard_current_snapshot_with(expected, max_bytes, || {})
+    }
+    #[cfg(all(feature = "desktop", target_os = "linux"))]
+    fn guard_current_snapshot_with(
+        &self,
+        expected: &CurrentSnapshot,
+        max_bytes: usize,
+        before_lock: impl FnOnce(),
+    ) -> Result<CurrentSnapshotGuard, Error> {
+        self.current_snapshot(max_bytes)?.matches(expected)?;
+        before_lock();
+        self.check_directory()?;
+        use std::os::unix::fs::MetadataExt;
+        let directory = fs::symlink_metadata(&self.directory).map_err(Error::io)?;
+        if directory.uid() != unsafe { libc::geteuid() } {
+            return Err(Error::new(
+                "unsafe-store-path",
+                "Canonical store directory belongs to another user",
+                4,
+            ));
+        }
+        let path = self.directory.join(LOCK);
+        let lock = create_file(&path).map_err(|error| {
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                Error::new(
+                    "store-busy",
+                    "write.lock exists; it is never reclaimed automatically",
+                    5,
+                )
+            } else {
+                Error::io_at("create current-snapshot writer lock", &path, error)
+            }
+        })?;
+        let metadata = lock.metadata().map_err(Error::io)?;
+        let mut guard = CurrentSnapshotGuard {
+            directory: self.directory.clone(),
+            directory_identity: (directory.dev(), directory.ino()),
+            lock_identity: (metadata.dev(), metadata.ino()),
+            lock: Some(lock),
+        };
+        // No native ticket has been queued, so a stale recheck may safely
+        // release only this lock. Other I/O uncertainty retains the sentinel.
+        let current_directory = fs::symlink_metadata(&self.directory).map_err(Error::io)?;
+        if (current_directory.dev(), current_directory.ino()) != guard.directory_identity {
+            return Err(Error::new(
+                "store-lock-changed",
+                "Canonical store directory changed during lock acquisition",
+                5,
+            ));
+        }
+        let current = self.current_snapshot(max_bytes)?;
+        if let Err(error) = current.matches(expected) {
+            guard.release()?;
+            return Err(error);
+        }
+        Ok(guard)
+    }
+
     pub fn new(directory: impl AsRef<Path>) -> Result<Self, Error> {
         let path = directory.as_ref();
         if path.as_os_str().is_empty()
@@ -353,6 +436,78 @@ impl Store {
     }
     fn check_directory(&self) -> Result<bool, Error> {
         check_directory(&self.directory, &[DATA, LOCK, PENDING])
+    }
+}
+
+#[cfg(all(feature = "desktop", target_os = "linux"))]
+#[derive(Clone, Debug)]
+pub struct CurrentSnapshot {
+    pub store_revision: u64,
+    pub config_revision: u64,
+    pub config_sha256: String,
+    pub config: Config,
+}
+
+#[cfg(all(feature = "desktop", target_os = "linux"))]
+impl CurrentSnapshot {
+    fn matches(&self, expected: &Self) -> Result<(), Error> {
+        if self.store_revision != expected.store_revision {
+            return Err(Error::new(
+                "stale-store",
+                "Canonical store revision changed",
+                5,
+            ));
+        }
+        if self.config_revision != expected.config_revision
+            || self.config_sha256 != expected.config_sha256
+        {
+            return Err(Error::new(
+                "stale-config",
+                "Canonical desired draft changed",
+                5,
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Drop deliberately retains write.lock. Timeout, disconnect, or loss of this
+/// value proves nothing about whether a native install can still take effect.
+#[cfg(all(feature = "desktop", target_os = "linux"))]
+#[derive(Debug)]
+pub struct CurrentSnapshotGuard {
+    directory: PathBuf,
+    directory_identity: (u64, u64),
+    lock_identity: (u64, u64),
+    lock: Option<File>,
+}
+
+#[cfg(all(feature = "desktop", target_os = "linux"))]
+impl CurrentSnapshotGuard {
+    /// The caller must establish actual native owner completion/barrier proof,
+    /// or reap/disconnect both owned children, before calling this method.
+    pub fn release(&mut self) -> Result<(), Error> {
+        use std::os::unix::fs::MetadataExt;
+        if self.lock.is_none() {
+            return Ok(());
+        }
+        check_directory(&self.directory, &[DATA, LOCK, PENDING])?;
+        let directory = fs::symlink_metadata(&self.directory).map_err(Error::io)?;
+        let path = self.directory.join(LOCK);
+        check_file(&path)?;
+        let metadata = fs::symlink_metadata(&path).map_err(Error::io)?;
+        if (directory.dev(), directory.ino()) != self.directory_identity
+            || (metadata.dev(), metadata.ino()) != self.lock_identity
+        {
+            return Err(Error::new(
+                "store-lock-changed",
+                "Owned writer lock identity changed; no path removed",
+                5,
+            ));
+        }
+        fs::remove_file(&path).map_err(|e| Error::io_at("release owned writer lock", &path, e))?;
+        self.lock = None;
+        Ok(())
     }
 }
 
@@ -581,3 +736,100 @@ pub fn preview(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, feature = "desktop", target_os = "linux"))]
+mod private_guard_tests {
+    use super::*;
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let mut nonce = [0; 16];
+            getrandom::fill(&mut nonce).unwrap();
+            let path = PathBuf::from("/dev/shm").join(format!(
+                "mixyard-private-guard-{}-{:x}",
+                std::process::id(),
+                u128::from_ne_bytes(nonce)
+            ));
+            create_directory(&path).unwrap();
+            Self(path)
+        }
+        fn store(&self) -> Store {
+            Store::new(self.0.join("profiles")).unwrap()
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    fn config() -> Config {
+        serde_json::from_str(include_str!("../examples/config.json")).unwrap()
+    }
+    #[test]
+    fn guard_excludes_canonical_writers_until_explicit_owner_completion() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        store.edit(0, Edit::Draft(config())).unwrap();
+        let snapshot = store.current_snapshot(65536).unwrap();
+        let mut guard = store.guard_current_snapshot(&snapshot, 65536).unwrap();
+        assert_eq!(store.current_snapshot(65536).unwrap().store_revision, 1); // Status/read does not lock.
+        assert_eq!(
+            store.edit(1, Edit::Draft(config())).unwrap_err().code,
+            "store-busy"
+        );
+        guard.release().unwrap();
+        store.edit(1, Edit::Draft(config())).unwrap();
+        assert_eq!(
+            store
+                .guard_current_snapshot(&snapshot, 65536)
+                .unwrap_err()
+                .code,
+            "stale-store"
+        );
+        assert!(!fixture.0.join("profiles/write.lock").exists());
+        let current = store.current_snapshot(65536).unwrap();
+        drop(store.guard_current_snapshot(&current, 65536).unwrap());
+        assert_eq!(
+            store.edit(2, Edit::Draft(config())).unwrap_err().code,
+            "store-busy"
+        );
+    }
+    #[test]
+    fn snapshot_changed_between_precheck_and_writer_acquisition_is_rejected_under_guard() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        store.edit(0, Edit::Draft(config())).unwrap();
+        let expected = store.current_snapshot(65536).unwrap();
+        let error = store
+            .guard_current_snapshot_with(&expected, 65536, || {
+                store.edit(1, Edit::Draft(config())).unwrap();
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "stale-store");
+        assert!(!fixture.0.join("profiles/write.lock").exists());
+        store.edit(2, Edit::Draft(config())).unwrap();
+    }
+    #[test]
+    fn digest_mismatch_and_replaced_sentinel_never_delete_unknown_lock() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        store.edit(0, Edit::Draft(config())).unwrap();
+        let mut expected = store.current_snapshot(65536).unwrap();
+        expected.config_sha256 = "0".repeat(64);
+        assert_eq!(
+            store
+                .guard_current_snapshot(&expected, 65536)
+                .unwrap_err()
+                .code,
+            "stale-config"
+        );
+        let current = store.current_snapshot(65536).unwrap();
+        let mut guard = store.guard_current_snapshot(&current, 65536).unwrap();
+        let path = fixture.0.join("profiles/write.lock");
+        fs::remove_file(&path).unwrap();
+        let replacement = create_file(&path).unwrap();
+        assert_eq!(guard.release().unwrap_err().code, "store-lock-changed");
+        assert!(path.exists());
+        drop(replacement);
+    }
+}

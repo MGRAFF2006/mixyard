@@ -1,0 +1,328 @@
+{
+  "schemaVersion": 2,
+  "scope": "owned-private-generated-v1",
+  "qualification": "portable source repair only; no SDK qualification",
+  "historical341Delivery": {
+    "schemaVersion": 1,
+    "scope": "owned-private-generated-v1",
+    "qualification": "portable-source-delivery-only",
+    "sourcePrerequisites": {
+      "frozenNativeSource": "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24",
+      "standardRecordingSource": "89f601800af6b555386f7c69d037908ad79a5865",
+      "acceptedMain": "b63ccd2ac9e25566364ec179eaf9a2fc1f964bf7",
+      "normalJoin": "c0c9a0291316f00ed6c4100d7c196dfaa13eac1f"
+    },
+    "toolchain": {
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+      "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
+    },
+    "passed": {
+      "rustLibTests": 73,
+      "rustCommand": "cargo test --offline --locked --jobs 1 --lib -- --test-threads=1",
+      "clippyCommand": "cargo clippy --offline --locked --jobs 1 --lib --bin mixyard --bin mixyard-runtime -- -D warnings",
+      "rustBinsBuilt": [
+        "mixyard",
+        "mixyard-runtime"
+      ],
+      "cliHelpExecuted": [
+        "mixyard private-audio --help",
+        "mixyard-runtime --help"
+      ],
+      "portableC": "bash adapters/linux/private-audio/test.sh --owner-only",
+      "formatAndSourceChecks": [
+        "cargo fmt --check",
+        "git diff --check",
+        "bash -n build.sh test.sh",
+        "Python AST parse"
+      ]
+    },
+    "proofLimits": [
+      "Service tests use explicitly labeled native-owner API doubles and real owned child processes; they are not SDK evidence.",
+      "Current source manifest is a delivery record, not an independent fresh SDK/compiler-input attestation.",
+      "Final rustfmt changed only process.rs whitespace after the last semantic test/build run."
+    ],
+    "unrun": [
+      "PipeWire companion SDK compilation/link/run",
+      "json-c helper (development headers/pkg-config absent)",
+      "actual product serve/private R1 and R2 ordinary-recorder PCM",
+      "native fourth-output execution, SDK buffer retirement coverage and callback heap audit",
+      "fresh all-target Cargo/platform checks and independent exact-head final review"
+    ],
+    "resource": {
+      "targetHardCapBytes": 268435456,
+      "combinedAreaCapBytes": 402653184,
+      "largestSampledCountedTargetBytes": 220875340,
+      "initialForecastBytes": 201326592,
+      "initialForecastWasExceeded": true,
+      "blockedInvocation": "A later 256MiB additional-growth preflight failed before Cargo launch; subsequent preflight used verified remaining growth to the unchanged hard256MiB target cap (67303235 bytes), preserving root10GiB+16MiB and continuous cap checks.",
+      "noDownloads": true,
+      "incrementalCompilation": false,
+      "buildJobs": 1,
+      "targetOnRoot": true,
+      "tmpOutputs": false
+    },
+    "holds": [
+      "PR90/115 and both historical native cause/SDK eligibility holds remain separate; no ordinary error waiver.",
+      "Default lifecycle backend/capabilities remain unavailable/false/null.",
+      "No physical, personal-server, application capture, hardware clock or broad SDK support claim."
+    ],
+    "sourceFilesSha256": {
+      "Cargo.lock": "cdddf79a58bdd729f86c307458315d1d07199744752d2ddc7bcd98982bab5f27",
+      "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
+      "adapters/linux/private-audio/README.md": "9f7e8b427013f185d8da2f68df1936f86a5bdd31e12322a9b11bd157acfea785",
+      "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
+      "adapters/linux/private-audio/companion.cpp": "cdb916a5e0d54773991ea5d3d97eccb5400616039b775ced6bcc0ca643e3614e",
+      "adapters/linux/private-audio/json.hpp": "2d4985171a1bbb7fabc323db7fb9d5f125f011a50119c655a2215e7421e24876",
+      "adapters/linux/private-audio/owner.h": "59d65f8143fbb3cb86c7092968037401658ddc81fd1c88c800deafa7ca1869a0",
+      "adapters/linux/private-audio/product-flow.md": "8ec86d414c5b5c94fb3bbc63f9f53ed978c6399f71690a541290a8a2ab205860",
+      "adapters/linux/private-audio/protocol-v1.md": "49b91bf764ff08ef79c0edd37b2c6bb6e1c92afe981b46c996cfd8907064765b",
+      "adapters/linux/private-audio/resource_guard.py": "1053b6e6111533351a8995f46407a0095604ee2dae2d5745c02459abbb55fc5b",
+      "adapters/linux/private-audio/sha256.h": "4366b1629d55205939f4d974402005406c0910b12ce4d7dc0a4a03605b647499",
+      "adapters/linux/private-audio/test.sh": "e3ee70a32f8bdf64d3fc856b429d9306eb30340330e22dedf6cb19078f5036a9",
+      "adapters/linux/private-audio/test_json.cpp": "413b609bc08dae5e7c546ff24ddb3060ce64571206b17df86fcecac0c75de0aa",
+      "adapters/linux/private-audio/test_owner.c": "88cc53f2b4898a4a23152140a02f97fa870d8ab78c2a38e754eec54512ddd48e",
+      "src/bin/mixyard-runtime.rs": "3cfbc9c1c32bfb3aa5e006f5a8ccd8d7468e9e8e5b9390712b42c9989bb65b48",
+      "src/main.rs": "9fab453d2d5fcde26b8e7a31c1aff015ec3f7a19abc86e24732a8a89715a70a5",
+      "src/profiles.rs": "8d5bc6fdc89275d46cdc70dddf68abfc3157c3068613002cd0cfd60d87b17fc3",
+      "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
+      "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
+      "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
+      "src/runtime/private_audio/mod.rs": "85e4c8f0eceaf377f1ddf52a1a24a6b9128121ab20b91477c9e6adf51c5db38b",
+      "src/runtime/private_audio/process.rs": "4ca88840cfa393773cc988c52cf76907af4172a652c6cae367d39bc767eb0564",
+      "src/runtime/private_audio/protocol.rs": "f79cff3b6a324b3981297ceeede996cccb2cbb53db1db0ff690084d5cf9c2031",
+      "src/runtime/private_audio/service_tests.rs": "8d5fbbefdf459dc9d110f83b3b02d7f7a1c29b2a48ca8b9f24f4ab79c6b95f8a",
+      "src/runtime/private_audio/state.rs": "9533f179a6037a270e528fe1d3638b8d457ba0071f4b74947efe5fd0474240b7",
+      "src/runtime/private_audio/state_tests.rs": "500b43297d25f0ea86775bd5a378bb7eec6f063ea3706497dbc214c710bf40a9"
+    }
+  },
+  "currentReviewRepairRecord": "review-repairs.json",
+  "currentSourceFilesSha256": {
+    "Cargo.lock": "cdddf79a58bdd729f86c307458315d1d07199744752d2ddc7bcd98982bab5f27",
+    "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
+    "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
+    "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
+    "adapters/linux/private-audio/companion.cpp": "21be5ef2008325ce08282f3fd5fede9991ef3e12d625f2ac937738449efc740e",
+    "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
+    "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
+    "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
+    "adapters/linux/private-audio/owner.h": "f425f97837160f0ab7f633616788512f93ff7bbbf963381004d8f54fc3e6e04d",
+    "adapters/linux/private-audio/product-flow.md": "8ec86d414c5b5c94fb3bbc63f9f53ed978c6399f71690a541290a8a2ab205860",
+    "adapters/linux/private-audio/protocol-v1.md": "42b7e3fbe16b67444f61e52d17f44fcdeaf19282bd2099f505f1967f87c15628",
+    "adapters/linux/private-audio/resource_guard.py": "1053b6e6111533351a8995f46407a0095604ee2dae2d5745c02459abbb55fc5b",
+    "adapters/linux/private-audio/review-repairs.json": "9f401256f224f5741b5d8e7865322b4be0f915da15f9a6c24f8c0c2b14658c9c",
+    "adapters/linux/private-audio/sha256.h": "4366b1629d55205939f4d974402005406c0910b12ce4d7dc0a4a03605b647499",
+    "adapters/linux/private-audio/test.sh": "e3ee70a32f8bdf64d3fc856b429d9306eb30340330e22dedf6cb19078f5036a9",
+    "adapters/linux/private-audio/test_json.cpp": "78c7fae1f78cdba323f6b8a3a1a72e1f845b170f2612e2ea89bb6bb55cbf3fbf",
+    "adapters/linux/private-audio/test_owner.c": "5f0e229644153ce9e2d64f2c063bd66ba1b6c91683d37f81efd3445d47104b51",
+    "src/bin/mixyard-runtime.rs": "3cfbc9c1c32bfb3aa5e006f5a8ccd8d7468e9e8e5b9390712b42c9989bb65b48",
+    "src/main.rs": "9fab453d2d5fcde26b8e7a31c1aff015ec3f7a19abc86e24732a8a89715a70a5",
+    "src/profiles.rs": "8d5bc6fdc89275d46cdc70dddf68abfc3157c3068613002cd0cfd60d87b17fc3",
+    "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
+    "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
+    "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
+    "src/runtime/private_audio/mod.rs": "b6c3767e7f62a96207c2636500a9b7b1b96e0d91d9c29b61cec1b30538a04dca",
+    "src/runtime/private_audio/process.rs": "8ae0489133c829461fb53384b7b5ef703bae9053986ae591ef23f96b5169c9e9",
+    "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
+    "src/runtime/private_audio/service_tests.rs": "368059e6b4aa63da812d79d44ceae319b154d604b1319d97b8cd846a1558c710",
+    "src/runtime/private_audio/state.rs": "80a77f3b388a172c75e0da9c0f07552a97d1cb4fcfdf67b79e72b698c3e9d9cd",
+    "src/runtime/private_audio/state_tests.rs": "7f70c027c7370befc3bceedc03993f9bc94dd7c7586d0c4bab3d5347e7be51b3"
+  },
+  "rootReviewFollowup": {
+    "reviewedHead": "5ab148108b8e82e0278e0647321c9986adcf0eab",
+    "review": "https://github.com/MGRAFF2006/mixyard/pull/116#pullrequestreview-5714565460",
+    "agent": "mixyard-web-owner",
+    "changes": [
+      "Shutdown travels on the existing priority socket; partially sent normal frames are neither replaced nor resumed during graceful retirement.",
+      "Each accepted Prepare/Link/Apply owns one original2s service budget through Ready/Reserved/Stage/Install; terminal outcome or priority fencing clears it, not peer disconnect.",
+      "Deadline checks precede late child-event acceptance and deferred normal dispatch; Staged does not reset either operation or peer budget."
+    ],
+    "newRegressionSourcesUnrun": [
+      "graceful_shutdown_uses_priority_after_a_partially_written_normal_frame",
+      "ready_child_reservation_deadline_fences_without_a_peer_and_ignores_late_reserved",
+      "late_staged_cannot_acquire_guard_or_restart_an_expired_apply",
+      "staged_preserves_original_apply_and_peer_deadlines"
+    ],
+    "checksPerformed": [
+      "rustfmt edition2021 with skip_children=true (source parsing/formatting only)",
+      "git diff --check",
+      "current source-manifest SHA256 equality"
+    ],
+    "executionLimits": [
+      "No local compiler/build/test or test-helper process was launched for this followup; existing operational hold remains in force.",
+      "The four added Rust regressions are uncompiled and unexecuted at source delivery; source-derived defects were not reproduced against the old binary.",
+      "Historical77/2ignored library and2explicit bridge passes apply to5ab source only; new-head CI/review pending.",
+      "Actual companion SDK compilation, JSON helper, native handlers, four-consumer R1/R2 recordings, heap and SDK scrub remain unrun."
+    ],
+    "followupSourceHead": "7e370f8088321930ba10fb68cc4d3ab8bbe5d21e"
+  },
+  "rootTestFixtureFollowup": {
+    "previousHead": "7e370f8088321930ba10fb68cc4d3ab8bbe5d21e",
+    "review": "https://github.com/MGRAFF2006/mixyard/pull/116#pullrequestreview-5714894836",
+    "agent": "mixyard-web-owner",
+    "productionDisposition": "Prior production framing/deadline findings assessed source-resolved by independent whole review; actual SDK execution remains unrun.",
+    "observedPreviousHeadFailures": {
+      "library": "Six inspected Ubuntu jobs80 passed/1 failed/2ignored; IPC job79 passed/2 failed/2ignored. Duplicate reservation in new test setup failed before deadline assertions; IPC also observed generic retirement error replacing the Ready marker.",
+      "linuxShell": "Push job124156558259 timed out waiting for visible native window; separate current failure/cause unresolved."
+    },
+    "changes": [
+      "Expected generation and exact-frame digest are constructed without reserving the same operation twice; production queue_command remains the single reservation owner.",
+      "Ready regression reads the actual owner-double Fault through production Processes.events before cleanup, instead of asserting a transient marker in the mutable retirement error."
+    ],
+    "newHeadVerification": "Source formatting/parsing, diff and manifest checks only; corrected regressions have not run locally under the compiler hold. New-head CI and fresh independent review pending.",
+    "scope": "Only service_tests.rs plus this verification record change versus7e; production source/guards/protocol/budgets are unchanged.",
+    "holds": [
+      "No local compiler/test/helper process/cloud execution authorized or launched for this followup.",
+      "Actual companion SDK compile/link/native-handler/four-consumer R1/R2/heap/scrub execution remains unrun.",
+      "Historical90/115/SDK/cause/recorder and Linux visibility holds remain."
+    ],
+    "followupSourceHead": "1d56ac4f92f67352b95e78bb2002c0b81fc93521"
+  },
+  "actualSdkCompileFollowup": {
+    "sourceHead": "1d56ac4f92f67352b95e78bb2002c0b81fc93521",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6527817270",
+    "outcome": "First companion compilation failed; link, final size and JSON stages not reached. No native companion/product execution.",
+    "archive": {
+      "kind": "static-ar-archive",
+      "bytes": 26178288,
+      "sha256": "04a3547066acd9e55d77b21e4d971e4b67041530b6720908f31578a9223d0a73",
+      "canonicalRegularNonSymlink": true,
+      "magicHex": "213c617263683e0a",
+      "freshRustBuild": false
+    },
+    "prefix": {
+      "files": 347,
+      "symlinks": 11,
+      "bytes": 10517488,
+      "elfBuildIds": 57,
+      "version": "1.4.8",
+      "librarySha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1",
+      "libraryBuildId": "05f1c03afc6324831bf032ed7274f34f70a16216",
+      "scope": "Compile inputs and identity-only public version query; no companion runtime binding or general SDK eligibility."
+    },
+    "compiler": {
+      "executable": "/usr/bin/x86_64-linux-gnu-g++-13",
+      "exitCode": 1,
+      "stderrBytes": 1435,
+      "stderrSha256": "8a2f9f5dd64fb047fe7f477f934ee09f2dbf60f4a8ff6723b1b88f075388063b",
+      "failure": "companion.cpp1087: const uint32_t* supplied to public pw_port_subscribe_params uint32_t* parameter",
+      "flagsUnchanged": true,
+      "retry": false
+    },
+    "report": {
+      "bytes": 545047,
+      "sha256": "958ec63c644f5f41a8dc8e7990e4f5619018a0e621e6547b0814c1043909833d",
+      "prechecks": 797,
+      "allStartedLeadersReaped": true,
+      "remainingOwnedGroupMembers": 0,
+      "processScanUnavailableEntries": 0
+    },
+    "rootStopVerification": {
+      "state": "stopped",
+      "status": "completed",
+      "forced": false,
+      "stoppedAt": "2026-10-30T16:25:36.525Z",
+      "completedAt": "2026-10-30T16:25:36.575Z",
+      "snapshotVerifiedAt": "2026-10-30T16:25:36.465Z",
+      "note": "Author immediate stop receipt was pending; root independently observed completion afterward."
+    },
+    "currentSourceRepair": [
+      "Mutable local uint32_t parameter agrees with the public API; no const_cast, warning relaxation or lifetime/ownership change.",
+      "Tracked compile-plan now pins the actual static archive04a rather than shared ELF0e8, with explicit artifact kind and evidence provenance."
+    ],
+    "currentValidation": "Source/diff/manifest checks only. No local compiler/test, cloud retry or helper launched for this followup; changed companion remains uncompiled.",
+    "remaining": "Link/size/JSON/native handlers/four consumers/product R1/R2/heap/scrub and all90/115/cause/SDK/recorder holds remain.",
+    "followupSourceHead": "1834dc4f39381668f73a727423e37e8072253c48"
+  },
+  "compiledCompanionJsonFixtureFollowup": {
+    "sourceHead": "1834dc4f39381668f73a727423e37e8072253c48",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6528250798",
+    "overallOutcome": "FAIL at JSON fixture compiler after companion compile/link/size PASS; no retry or helper/native execution.",
+    "companion": {
+      "compileAndLinkPassed": true,
+      "exitCode": 0,
+      "seconds": 2.04478,
+      "stdoutBytes": 0,
+      "stderrBytes": 0,
+      "binaryBytes": 1315640,
+      "binarySha256": "91eada3b9b1b25ce33c61408ddad4939ffa14c5412c7c4348f9f60757f063658",
+      "recipe2MiBLimitPassed": true,
+      "strictFlagsUnchanged": true,
+      "executed": false
+    },
+    "jsonFixture": {
+      "compileExitCode": 1,
+      "seconds": 0.30553,
+      "stderrBytes": 1016,
+      "stderrSha256": "c73bc6e8f4b64470ad0d93fa7a9a3be5424410aef12560681a977099cca853a6",
+      "cause": "test_json.cpp20: length13 requests bytes beyond a const char[12] literal; GCC13 -Werror=array-bounds",
+      "executed": false
+    },
+    "preflight": "Fresh static archive04a,23 scoped host inputs,347 prefix files/11 links/10517488bytes/57ELF build IDs/header/runtime/pkg/compiler checks passed; historical host reuse only.",
+    "report": {
+      "bytes": 543422,
+      "sha256": "c2d41a29b20f318217e7d4beb0654b9be95193b8ca38428e6b754213508c69c9",
+      "prechecks": 798,
+      "allStartedLeadersReaped": true,
+      "remainingOwnedGroupMembers": 0,
+      "processScanUnavailableEntries": 0,
+      "sampledCompileAreaPeakBytes": 1987458
+    },
+    "artifactPreservation": "Not invoked because both stages did not pass; compiled binary was not copied to persistent root or host, future availability UNKNOWN.",
+    "rootStopVerification": {
+      "state": "stopped",
+      "status": "completed",
+      "forced": false,
+      "stoppedAt": "2026-10-30T16:46:43.368Z",
+      "completedAt": "2026-10-30T16:46:43.391Z",
+      "snapshotVerifiedAt": "2026-10-30T16:46:43.325Z",
+      "note": "Author immediate verification remained pending; root independently observed completion afterward."
+    },
+    "currentFixtureRepair": "Use a constexpr char array and sizeof(array)-1 for the embedded-NUL negative, preserving all intended JSON bytes without an out-of-bounds read. No warning suppression or parser weakening.",
+    "sourceApplicability": "Current companion translation unit, headers, build flags and host inputs remain byte-identical to compiled1834; only test_json.cpp plus verification metadata change.",
+    "currentVerification": "Source/diff/manifest checks only; corrected JSON helper is uncompiled/unexecuted locally. Local compiler/test hold active.",
+    "remaining": "JSON helper compile/run and actual native handlers/four consumers/product R1/R2/heap/scrub execution,90/115 and other historical holds remain.",
+    "followupSourceHead": "7f76a8a180b43887b63cdcce5b4f2bce68e6e85e"
+  },
+  "jsonNonFiniteRepair": {
+    "observedAtSource": "7f76a8a180b43887b63cdcce5b4f2bce68e6e85e",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6528561946",
+    "actualPreviousResults": {
+      "companion": "Compile/link/size PASS, exit0, empty diagnostics, ELF1315640B SHA91eada3b9b1b25ce33c61408ddad4939ffa14c5412c7c4348f9f60757f063658; never executed.",
+      "jsonHelperCompile": "PASS, exit0, empty diagnostics,41736B SHA1ed90ac7b382bbfbb0c0fbc9d2dd30db7ae93c78f00c898d6f46e014dcc390e1",
+      "jsonHelperRun": "FAIL SIGABRT(-6) at existing assert rejected({a:NaN}); production wire::parse accepted the input. Subsequent controls including embeddedNUL were not reached.",
+      "runStderrBytes": 166,
+      "runStderrSha256": "0b5911e15a63c7bc4894c634851ab92d1ceb994b6b2d5146bc2918ba61908ef5",
+      "overall": "FAIL; no retry, assertion removal or binary preservation."
+    },
+    "report": {
+      "bytes": 544907,
+      "sha256": "8d34818b54133605daa9205ca90eba5b7dcd48a0b011fbc890778f1ec93e3783",
+      "prechecks": 799,
+      "allStartedLeadersReaped": true,
+      "remainingOwnedGroupMembers": 0,
+      "processScanUnavailableEntries": 0
+    },
+    "rootStopVerification": {
+      "state": "stopped",
+      "status": "completed",
+      "forced": false,
+      "stoppedAt": "2026-10-30T17:01:34.775Z",
+      "completedAt": "2026-10-30T17:01:34.807Z",
+      "snapshotVerifiedAt": "2026-10-30T17:01:34.689Z",
+      "note": "Author immediate verification was pending; root independently observed completion."
+    },
+    "repair": "After existing bounded-depth/size scan and strict json-c parse, recursively reject non-finite double values throughout objects/arrays. Preserve finite numbers, null/booleans and text containing NaN/Infinity. No reserialization or config-byte changes.",
+    "controlsAdded": "Retain original actual-failing NaN assertion; add Infinity, negativeInfinity, nestedNaN, exponent overflow rejection and finite/boolean/null/string positive parsing. Existing duplicate/unknown/size/NUL/exactConfig-byte controls remain.",
+    "executionScope": "wire::parse callers are control/startup/builder paths; no callback JSON traversal or new RT work.",
+    "currentVerification": "Source/diff/manifest checks only. Changed production header and expanded control are UNCOMPILED/UNRUN under local hold; actual earlier NaN failure is RED, no current GREEN claim.",
+    "separateWindowsCiHold": {
+      "head": "7f76a8a180b43887b63cdcce5b4f2bce68e6e85e",
+      "job": 124194391182,
+      "conclusion": "cancelled",
+      "configuredJobBudgetMinutes": 10,
+      "lastLongRunningTest": "cancelled_client_and_shutdown_kill_owned_job_or_process_group",
+      "observed": "Complete35560B log: preceding core/lifecycle tests passed; named test ran over60s then operation was canceled. Cause unresolved; no assertion failure or automatic retry inferred."
+    },
+    "remaining": "Corrected parser/helper/companion compile and full helper run; actual native handlers/four consumers/productR1R2/heap/scrub,90/115 and prior holds."
+  }
+}
