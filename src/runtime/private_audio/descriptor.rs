@@ -147,7 +147,7 @@ impl Qualified {
             || d.limits.max_outputs == 0
             || d.limits.max_outputs > 64
             || d.limits.max_frames != 128
-            || d.limits.max_resident_bytes == 0
+            || d.limits.max_resident_bytes < 8 * 1024 * 1024
             || d.limits.max_resident_bytes > FILE_LIMIT
         {
             return Err(invalid(
@@ -163,7 +163,6 @@ impl Qualified {
                 || !g.right.is_finite()
                 || g.left.abs() > 1.
                 || g.right.abs() > 1.
-                || g.marker_period == 0
             {
                 return Err(invalid("invalid generated source"));
             }

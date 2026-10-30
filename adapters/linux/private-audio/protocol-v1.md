@@ -45,7 +45,7 @@ reserved generation/pending op. Stale Stop rejects a replacement runtime.
 
 Runtime owns two children: private pinned-prefix daemon, and this companion.
 Runtime creates private config/namespace before starting either. Companion argv:
-`--descriptor ABS --instance-nonce HEX64 --cancel-fd FD`.
+`--descriptor ABS --instance-nonce HEX64 --control-epoch E --cancel-fd FD`.
 The runtime supplies sanitized PIPEWIRE_RUNTIME_DIR/CONFIG_DIR and explicit
 prefix library/module/plugin paths; remote is `mixyard-private`, never personal
 or system. The descriptor and all qualified-file hashes are validated by the
@@ -53,7 +53,7 @@ runtime before spawn and observed SDK bindings remain point-scoped evidence.
 
 Descriptor schemaVersion1/scope owned-private-generated-v1 has `sdkPrefix`,
 `prefixManifest`, `prefixManifestSha256`, `companionExecutable`,
-`companionSha256`, `sdkVersion` (experimental1.4.8), `sdkCommit`,
+`companionSha256`, `sdkVersion` (literal `1.4.8`, experimental scope), `sdkCommit`,
 `generators:[{sourceId,left,right,markerPeriod,frameLimit}]`,
 `limits:{maxSources,maxOutputs,maxResidentBytes,maxFrames}`. All paths absolute;
 critical files regular and prefix-contained, generators finite, frameLimit0
@@ -66,3 +66,33 @@ Fence2s, then collective owned TERM1s/KILL1s. Forced/unreaped/unknown ownership
 never implies scrub/StopComplete. Store lock remains on uncertainty; existing
 Store never reclaims it automatically. No new cloud execution or system SDK
 eligibility is granted by this source prototype.
+
+The exact Config wire digest is SHA256 over the compact serde Config bytes
+transmitted as `snapshot.config`. It is not a second JSON canonicalization.
+Stage and Install share the same operation ID; replay defense distinguishes
+the action while binding Install to its exact completed Stage. Initial Ready
+uses operation `startup` and the current epoch. Ready may arrive during Prepare
+and cannot discard its reserved generation or pending operation.
+
+Installed requires `ownerInstallTerminal:true` and `noLateInstall:true`, plus
+all configured output commits. A physical switch alone is not Installed. Fence
+uses the exact coordinator control target, including a pending Stage ticket
+even if a switch or complete Installed reply has raced ahead. A partial switch
+is represented by mandatory-nullable `switchEvidence`; complete `switched` is
+separate. Both nullable keys must be present. A known late complete Installed
+cannot be omitted from the later fence receipt.
+
+The fence reply uses the NEW epoch and the Fence operation ID. Shutdown/Stopped
+use that same operation/current epoch. A valid Fenced receipt permits releasing
+the canonical writer guard but is not StopComplete. StopComplete requires both
+actual registered children normally reaped after the fence; forced termination
+or unknown teardown remains failed and does not claim scrub. Explicit Prepare
+then starts fresh private children and namespace under the same runtime nonce
+and current epoch. This prototype requires Stop between R1 and R2; it does not
+claim in-place endpoint handoff. Link identities must be reacquired.
+
+Default lifecycle status and its typed clients remain unavailable/false/null,
+even when the separate private protocol is enabled. The pinned SDK descriptor
+is an explicit experimental test prerequisite, not a general minimum-version
+or backend-availability decision. PR90/115 and historical native cause holds
+remain separate; portable owner doubles do not qualify native processing.

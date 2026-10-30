@@ -11,8 +11,8 @@ use std::{
             process::CommandExt,
         },
     },
-    path::{Path, PathBuf},
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    path::Path,
+    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
     time::{Duration, Instant},
 };
 fn invalid(message: &str) -> io::Error {
@@ -24,6 +24,19 @@ fn nonblocking(fd: RawFd) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+// Pipes have bounded kernel storage. One unexpected byte invalidates the run;
+// never accumulate unbounded logs or silently discard an SDK warning.
+fn quiet(stderr: &mut ChildStderr) -> io::Result<()> {
+    let mut byte = [0; 1];
+    match stderr.read(&mut byte) {
+        Ok(0) => Ok(()),
+        Ok(_) => Err(invalid(
+            "owned private child emitted unexpected diagnostics",
+        )),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 struct Outbound {
     bytes: Vec<u8>,
@@ -70,6 +83,7 @@ pub struct Processes {
     pub companion: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
+    diagnostics: Vec<ChildStderr>,
     cancel: UnixStream,
     normal: Outbound,
     priority: Outbound,
@@ -136,6 +150,7 @@ impl Processes {
             companion,
             stdin,
             stdout,
+            diagnostics: Vec::new(), // Explicit test doubles, never SDK evidence.
             cancel,
             normal: Outbound::new(),
             priority: Outbound::new(),
@@ -186,14 +201,23 @@ impl Processes {
             .arg(&config)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         parent_death(&mut server, None);
         let (cancel, child_cancel) = UnixStream::pair()?;
         cancel.set_nonblocking(true)?;
         let mut daemon = server.spawn()?;
+        let mut daemon_stderr = daemon.stderr.take().expect("piped daemon stderr");
+        if let Err(error) = nonblocking(daemon_stderr.as_raw_fd()) {
+            terminate_startup(&mut daemon);
+            return Err(error);
+        }
         // Connect only after this owned core publishes its private socket.
         let ready = Instant::now();
         loop {
+            if let Err(error) = quiet(&mut daemon_stderr) {
+                terminate_startup(&mut daemon);
+                return Err(error);
+            }
             use std::os::unix::fs::{FileTypeExt, MetadataExt};
             if let Ok(metadata) = fs::symlink_metadata(namespace.join("mixyard-private")) {
                 if metadata.file_type().is_socket() && metadata.uid() == unsafe { libc::geteuid() }
@@ -230,7 +254,7 @@ impl Processes {
             .arg("3")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         parent_death(&mut command, Some(child_cancel.as_raw_fd()));
         let mut companion = match command.spawn() {
             Ok(child) => child,
@@ -240,6 +264,12 @@ impl Processes {
             }
         };
         drop(child_cancel);
+        let companion_stderr = companion.stderr.take().expect("piped companion stderr");
+        if let Err(error) = nonblocking(companion_stderr.as_raw_fd()) {
+            terminate_startup(&mut companion);
+            terminate_startup(&mut daemon);
+            return Err(error);
+        }
         let handles = companion.stdin.take().zip(companion.stdout.take());
         let Some((stdin, stdout)) = handles else {
             terminate_startup(&mut companion);
@@ -251,6 +281,7 @@ impl Processes {
             companion,
             stdin,
             stdout,
+            diagnostics: vec![daemon_stderr, companion_stderr],
             cancel,
             normal: Outbound::new(),
             priority: Outbound::new(),
@@ -273,6 +304,7 @@ impl Processes {
         }
     }
     pub fn events(&mut self) -> io::Result<Vec<CompanionReply>> {
+        self.check_diagnostics()?;
         self.priority.flush(&mut self.cancel)?;
         self.normal.flush(&mut self.stdin)?;
         let mut events = Vec::new();
@@ -301,6 +333,12 @@ impl Processes {
         }
         Ok(events)
     }
+    fn check_diagnostics(&mut self) -> io::Result<()> {
+        for stderr in &mut self.diagnostics {
+            quiet(stderr)?;
+        }
+        Ok(())
+    }
     pub fn observe(&self) -> io::Result<()> {
         #[cfg(test)]
         if let Some(observer) = self.observer {
@@ -323,6 +361,7 @@ impl Processes {
         Ok(())
     }
     pub fn graceful_progress(&mut self) -> io::Result<bool> {
+        self.check_diagnostics()?;
         if self.companion.try_wait()?.is_none() {
             self.normal.flush(&mut self.stdin)?;
         }
@@ -391,15 +430,30 @@ fn terminate_startup(child: &mut Child) {
 }
 impl Drop for Processes {
     fn drop(&mut self) {
-        if !self.retirement_started {
-            let _ = self.retire();
-        } /* Preserve namespace/evidence: no forced path claims scrub. */
+        let _ = self.retire();
+        // Preserve namespace/evidence: final fallback never claims scrub.
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn actual_success_exit_does_not_hide_owned_child_diagnostics() {
+        for script in ["pass", "import os;os.write(2,b'warning')"] {
+            let mut child = Command::new("/usr/bin/python3")
+                .env_clear()
+                .arg("-c")
+                .arg(script)
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut stderr = child.stderr.take().unwrap();
+            nonblocking(stderr.as_raw_fd()).unwrap();
+            assert!(child.wait().unwrap().success());
+            assert_eq!(quiet(&mut stderr).is_ok(), script == "pass");
+        }
+    }
     /// This is a pipe/cancel transport double, never a native owner proof.
     #[test]
     fn priority_cancel_reaches_owned_child_while_normal_pipe_is_saturated() {

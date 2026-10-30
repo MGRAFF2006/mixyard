@@ -88,7 +88,7 @@ pub struct Request {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Operation {
-    Status,
+    Status {},
     #[serde(rename_all = "camelCase")]
     Prepare {
         instance_nonce: String,
@@ -124,7 +124,7 @@ impl Request {
             return Err("protocol-error");
         }
         let nonce = match &self.operation {
-            Operation::Status => return Ok(()),
+            Operation::Status {} => return Ok(()),
             Operation::Prepare { instance_nonce, .. }
             | Operation::Link { instance_nonce, .. }
             | Operation::Apply { instance_nonce, .. } => instance_nonce,
@@ -392,8 +392,8 @@ pub enum CompanionAction {
         expected: StopTarget,
         new_control_epoch: u64,
     },
-    Snapshot,
-    Shutdown,
+    Snapshot {},
+    Shutdown {},
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -446,5 +446,5 @@ pub enum CompanionEvent {
     Fault {
         error: Failure,
     },
-    Stopped,
+    Stopped {},
 }

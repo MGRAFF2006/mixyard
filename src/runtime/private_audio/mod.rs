@@ -191,6 +191,7 @@ pub(crate) struct Service {
     store: Store,
     prepared: Option<CurrentSnapshot>,
     guard: Option<CurrentSnapshotGuard>,
+    install_started: Option<Instant>,
     fence_started: Option<Instant>,
     failed: bool,
     retired: bool,
@@ -234,6 +235,7 @@ impl Service {
             store,
             prepared: None,
             guard: None,
+            install_started: None,
             fence_started: None,
             failed: false,
             retired: false,
@@ -244,7 +246,7 @@ impl Service {
     }
     fn dispatch(&mut self, operation: Operation) -> Result<Option<CompanionRequest>, Failure> {
         match operation {
-            Operation::Status => Ok(None),
+            Operation::Status {} => Ok(None),
             Operation::Prepare {
                 instance_nonce,
                 expected_store_revision,
@@ -379,6 +381,7 @@ impl Service {
                 self.processes
                     .queue(&install)
                     .map_err(|e| failure(ErrorCode::OwnerFailed, e.to_string()))?;
+                self.install_started = Some(Instant::now());
                 for peer in &mut self.peers {
                     if peer.operation.as_deref() == Some(&operation) {
                         peer.operation = Some(install_operation.clone());
@@ -388,6 +391,7 @@ impl Service {
                 None
             }
             Transition::Installed(permit) => {
+                self.install_started = None;
                 self.processes
                     .observe()
                     .map_err(|e| failure(ErrorCode::UnqualifiedSdk, e.to_string()))?;
@@ -406,6 +410,7 @@ impl Service {
                 }
             }
             Transition::Fenced(permit) => {
+                self.install_started = None;
                 self.release(&permit)?;
                 self.fence_started = None;
                 let CompanionEvent::Fenced { receipt } = event else {
@@ -420,7 +425,7 @@ impl Service {
                     instance_nonce: status.stop_target.instance_nonce,
                     control_epoch: status.stop_target.control_epoch,
                     operation_id: operation.clone(),
-                    action: CompanionAction::Shutdown,
+                    action: CompanionAction::Shutdown {},
                 };
                 self.processes
                     .begin_graceful(&shutdown)
@@ -523,7 +528,12 @@ impl Service {
                             }
                         }
                     }
-                    Err(error) => self.peers[index].reply(Err(error)),
+                    Err(error) => {
+                        if self.coordinator.snapshot().phase == Phase::FailedHeld {
+                            self.fail(error.clone());
+                        }
+                        self.peers[index].reply(Err(error));
+                    }
                 }
             }
             if self.peers[index].started.elapsed() >= Duration::from_millis(INSTALL_MS)
@@ -549,6 +559,25 @@ impl Service {
                 continue;
             }
             index += 1;
+        }
+        // This deadline belongs to the owned install, not to any IPC peer.
+        // A caller may disappear; only a real fence or actual reaps releases it.
+        if self
+            .install_started
+            .is_some_and(|start| start.elapsed() >= Duration::from_millis(INSTALL_MS))
+            && self.fence_started.is_none()
+            && self.retirement.is_none()
+            && !self.retired
+        {
+            self.install_started = None;
+            let target = self.coordinator.snapshot().stop_target;
+            match self.coordinator.begin_stop(&target) {
+                Ok(command) => match self.processes.queue(&command) {
+                    Ok(()) => self.fence_started = Some(Instant::now()),
+                    Err(error) => self.fail(failure(ErrorCode::OwnerFailed, error.to_string())),
+                },
+                Err(error) => self.fail(error),
+            }
         }
         if self
             .fence_started
@@ -587,7 +616,19 @@ impl Service {
             return Ok(());
         };
         let reaped = if retirement.receipt.is_some() && !retirement.killed {
-            self.processes.graceful_progress()?
+            match self.processes.graceful_progress() {
+                Ok(reaped) => reaped,
+                Err(error) => {
+                    self.coordinator
+                        .fail_held(ErrorCode::OwnerFailed, &error.to_string());
+                    self.coordinator.note_forced_termination();
+                    self.failed = true;
+                    retirement.receipt = None;
+                    retirement.operation = None;
+                    self.processes.begin_forced()?;
+                    self.processes.reaped()?
+                }
+            }
         } else {
             self.processes.reaped()?
         };
@@ -701,7 +742,7 @@ mod socket_tests {
         client.write_all(b"{\"privateAudioVersion\":1,\"requestId\":\"exact\",\"operation\":{\"kind\":\"status\"}}\n").unwrap();
         assert!(matches!(
             receive(&mut peer).unwrap().operation,
-            Operation::Status
+            Operation::Status {}
         ));
         let status = Coordinator::new("a".repeat(64)).unwrap().snapshot();
         peer.reply(Ok(ResultValue::Status { status }));

@@ -75,7 +75,7 @@ impl Fixture {
             limits: PrivateLimits {
                 max_sources: 1,
                 max_outputs: 4,
-                max_resident_bytes: 1048576,
+                max_resident_bytes: 16 * 1024 * 1024,
                 max_frames: 128,
             },
         };
@@ -108,6 +108,7 @@ impl Fixture {
                 store,
                 prepared: None,
                 guard: None,
+                install_started: None,
                 fence_started: None,
                 failed: false,
                 retired: false,
@@ -313,7 +314,7 @@ fn stop_during_owned_install_bypasses_guard_and_waits_for_both_actual_child_reap
     drop(abandoned);
     fixture.service().tick().unwrap();
     assert!(fixture.service().guard.is_some());
-    let mut client = fixture.client(Operation::Status);
+    let mut client = fixture.client(Operation::Status {});
     let status = fixture.reply(&mut client);
     let Some(ResultValue::Status { status }) = status.result else {
         panic!("status response expected")
@@ -400,6 +401,32 @@ fn forced_reap_releases_writer_without_promoting_scrub_or_stop_complete() {
         .snapshot()
         .last_error
         .is_some());
+    assert!(fixture.service().guard.is_none());
+    assert!(fixture.service().processes.reaped().unwrap());
+}
+
+#[test]
+fn disconnected_install_deadline_owns_fence_and_retirement_without_a_peer() {
+    let mut fixture = Fixture::new(COMPANION);
+    fixture.staged_install();
+    assert!(fixture.service().peers.is_empty());
+    fixture.service().install_started = Some(Instant::now() - Duration::from_millis(INSTALL_MS));
+    fixture.service().tick().unwrap();
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopping
+    );
+    assert!(fixture.service().guard.is_some()); // Queuing Fence is not proof.
+    let started = Instant::now();
+    while !fixture.service().retired {
+        fixture.service().tick().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopped
+    );
     assert!(fixture.service().guard.is_none());
     assert!(fixture.service().processes.reaped().unwrap());
 }

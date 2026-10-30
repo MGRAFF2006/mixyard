@@ -69,7 +69,7 @@ pub fn parse(args: &[OsString]) -> io::Result<(String, Request)> {
         }
     }
     let operation = match command {
-        "status" => Operation::Status,
+        "status" => Operation::Status {},
         "prepare" => Operation::Prepare {
             instance_nonce: take(&mut flags, "--instance-nonce")?,
             expected_store_revision: number(&mut flags, "--expected-store-revision")?,

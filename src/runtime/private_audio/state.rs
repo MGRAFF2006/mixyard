@@ -598,6 +598,7 @@ impl Coordinator {
         } = &reply.event
         {
             if self.children.is_none()
+                || reply.operation_id != "startup"
                 || !matches!(
                     self.status.phase,
                     Phase::Idle | Phase::Stopped | Phase::FailedStopped | Phase::Preparing
@@ -720,7 +721,7 @@ impl Coordinator {
                 stop_complete: false,
             }));
         }
-        if matches!(&reply.event, CompanionEvent::Stopped)
+        if matches!(&reply.event, CompanionEvent::Stopped {})
             && self.fenced.is_some()
             && self.status.phase == Phase::Stopping
             && self.status.pending_operation.as_deref() == Some(&reply.operation_id)
@@ -771,11 +772,12 @@ impl Coordinator {
                         o.output_id == output_id && o.linked_consumer.as_ref() == Some(&consumer)
                     })
                     || outputs.iter().any(|o| {
-                        !self
-                            .status
-                            .outputs
-                            .iter()
-                            .any(|p| p.output_id == o.output_id && p.endpoint == o.endpoint)
+                        !self.status.outputs.iter().any(|p| {
+                            p.output_id == o.output_id
+                                && p.endpoint == o.endpoint
+                                && (o.output_id == output_id
+                                    || p.linked_consumer == o.linked_consumer)
+                        })
                     })
                 {
                     return self.err(
@@ -868,3 +870,7 @@ pub fn validate_snapshot(snapshot: &DesiredSnapshot) -> Result<(), Failure> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "state_tests.rs"]
+mod tests;
