@@ -5,8 +5,22 @@ import XCTest
         continueAfterFailure = false
         let app = XCUIApplication(); app.launch()
         let web = app.webViews.firstMatch
-        XCTAssertTrue(web.waitForExistence(timeout: 10))
+        // One existing10s startup budget covers actual page/fixture readiness,
+        // rather than treating a created WKWebView as mounted Vue evidence.
+        let readyDeadline = Date().addingTimeInterval(10)
+        XCTAssertTrue(web.waitForExistence(timeout: max(0, readyDeadline.timeIntervalSinceNow)))
         let observed = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Observed gain=")).firstMatch
+        let firstButton = web.buttons["Fixture load example"].firstMatch
+        let status = app.staticTexts["owned-webkit-evidence"]
+        let probe = app.buttons["Read owned page status"]
+        if probe.exists { probe.tap() }
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            observed.exists && firstButton.exists
+        }, object: nil)
+        let readiness = XCTWaiter.wait(for: [ready], timeout: max(0, readyDeadline.timeIntervalSinceNow))
+        XCTAssertEqual(readiness, .completed,
+            "Owned fixture readiness: " + (status.exists ? status.label : "native-evidence-unavailable") +
+            "; accessibleButtons=\(web.buttons.count); accessibleLinks=\(web.links.count)")
         func wait(_ text: String) {
             let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", text), object: observed)
             XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 10), .completed)

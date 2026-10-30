@@ -13,6 +13,74 @@ import MobileCore
     private var root: URL?
     weak var presenter: UIViewController?
     private var documentGeneration: UInt64 = 0
+    #if OWNED_CONFIRMATION_EVIDENCE
+    // Only the disposable UI qualification build enables this read-only probe.
+    // It never starts the app, changes its CSP, answers a dialog or writes data.
+    @Published private(set) var ownedPageEvidence = "Owned page evidence pending"
+    private var ownedNavigation = "created"
+    private static let ownedObservationScript = """
+    (() => {
+      const state = {script: 'none', csp: 'none'};
+      window.__mixyardOwnedEvidence = state;
+      addEventListener('error', event => {
+        state.script = event.target instanceof HTMLScriptElement ? 'script-resource' : 'runtime';
+      }, true);
+      addEventListener('unhandledrejection', () => { state.script = 'rejection'; });
+      addEventListener('securitypolicyviolation', event => {
+        const allowed = ['script-src-elem', 'script-src', 'style-src-elem', 'style-src', 'connect-src', 'default-src'];
+        state.csp = allowed.includes(event.effectiveDirective) ? event.effectiveDirective : 'other';
+      });
+    })();
+    """
+    func sampleOwnedPageEvidence() {
+        let generation = documentGeneration
+        web.evaluateJavaScript("""
+        JSON.stringify({
+          ready: document.readyState,
+          marker: !!document.getElementById('observed'),
+          tools: !!document.querySelector('nav[aria-label="Owned fixture controls"]'),
+          buttons: Math.min(1000, document.querySelectorAll('nav[aria-label="Owned fixture controls"] button').length),
+          appChildren: Math.min(1000, document.getElementById('app')?.childElementCount ?? 0),
+          script: window.__mixyardOwnedEvidence?.script ?? 'unobserved',
+          csp: window.__mixyardOwnedEvidence?.csp ?? 'unobserved'
+        })
+        """) { [weak self] value, _ in
+            let encoded = value as? String
+            Task { @MainActor [weak self] in
+                guard let self, self.documentGeneration == generation else { return }
+                var evidence: [String: Any] = ["navigation": self.ownedNavigation,
+                    "indexPresent": self.root.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) } ?? false,
+                    "loading": self.web.isLoading, "document": "unavailable"]
+                if let root = self.root, let names = try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("assets").path) {
+                    evidence["scriptAssets"] = min(1000, names.filter { $0.hasSuffix(".js") }.count)
+                }
+                if let encoded, let bytes = encoded.data(using: .utf8), bytes.count <= 1024,
+                   let fields = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
+                   Set(fields.keys) == Set(["ready", "marker", "tools", "buttons", "appChildren", "script", "csp"]),
+                   let ready = fields["ready"] as? String, ["loading", "interactive", "complete"].contains(ready),
+                   let marker = fields["marker"] as? Bool, let tools = fields["tools"] as? Bool,
+                   let buttons = fields["buttons"] as? Int, (0...1000).contains(buttons),
+                   let children = fields["appChildren"] as? Int, (0...1000).contains(children),
+                   let script = fields["script"] as? String, ["none", "runtime", "rejection", "script-resource", "unobserved"].contains(script),
+                   let csp = fields["csp"] as? String, ["none", "script-src-elem", "script-src", "style-src-elem", "style-src", "connect-src", "default-src", "other", "unobserved"].contains(csp) {
+                    evidence.merge(["document":ready, "marker":marker, "tools":tools, "buttons":buttons,
+                                    "appChildren":children, "script":script, "csp":csp]) { _, new in new }
+                }
+                if let bytes = try? JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]),
+                   let text = String(data: bytes, encoding: .utf8) { self.ownedPageEvidence = text }
+            }
+        }
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        ownedNavigation = "finished"; sampleOwnedPageEvidence()
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        ownedNavigation = "failed"; sampleOwnedPageEvidence()
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        ownedNavigation = "provisional-failed"; sampleOwnedPageEvidence()
+    }
+    #endif
     private final class Answer {
         private var callback: ((Bool) -> Void)?
         init(_ callback: @escaping (Bool) -> Void) { self.callback = callback }
@@ -51,12 +119,25 @@ import MobileCore
         })
         presenter.present(alert, animated: true)
     }
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { cancelConfirmation(); documentGeneration &+= 1 }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { cancelConfirmation(); documentGeneration &+= 1 }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        cancelConfirmation(); documentGeneration &+= 1
+        #if OWNED_CONFIRMATION_EVIDENCE
+        ownedNavigation = "started"
+        #endif
+    }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        cancelConfirmation(); documentGeneration &+= 1
+        #if OWNED_CONFIRMATION_EVIDENCE
+        ownedNavigation = "content-terminated"; sampleOwnedPageEvidence()
+        #endif
+    }
     override init() {
         super.init()
         do { control = try ControlClient() } catch { status = "Keychain unavailable. Repair native credentials before connecting." }
         let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
+        #if OWNED_CONFIRMATION_EVIDENCE
+        config.userContentController.addUserScript(WKUserScript(source: Self.ownedObservationScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        #endif
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "mixyard")
         web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self; web.uiDelegate = self
         root = Bundle.main.resourceURL?.appendingPathComponent("controller", isDirectory: true)
@@ -145,6 +226,10 @@ struct MobileView: View {
             }.padding(.horizontal)
             Button("Open controller / Refresh connection") { shell.open() }
             Text(shell.status).font(.caption).padding(.horizontal).accessibilityAddTraits(.updatesFrequently)
+            #if OWNED_CONFIRMATION_EVIDENCE
+            Text(shell.ownedPageEvidence).font(.caption2).accessibilityIdentifier("owned-webkit-evidence")
+            Button("Read owned page status") { shell.sampleOwnedPageEvidence() }
+            #endif
             ControllerView(shell: shell)
         }.onChange(of: phase) { next in if next != .active { invitation = ""; shell.suspend(.background) } }
     }
