@@ -401,10 +401,12 @@ fn resync_observes_busy_until_an_actual_event_slot_is_retired() {
         assert_eq!(observer.join().unwrap()["result"]["resync"], true);
     });
     assert_eq!(d.run("status")["result"]["daemonReachable"], true);
-    d.stop();
+    assert_eq!(d.run("shutdown")["result"]["shutdown"], "requested");
+    // Drain before reaping: Windows disconnect discards unread pipe replies.
     for mut subscriber in subscribers {
         assert_eq!(read(&mut subscriber)["result"]["lifecycle"], "stopping");
     }
+    assert!(wait(&mut d.child).success());
 }
 
 #[test]
