@@ -1,0 +1,828 @@
+{
+  "schema": 1,
+  "scope": "short generated-fixture -> actual canonical mixer -> separate standard recording consumers; NOT product end-to-end activation",
+  "sourceBaseHead": "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24",
+  "actualBoatCheckoutHead": "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24",
+  "provider": "Boat",
+  "sandboxId": "bx_t32duk6y",
+  "sandbox": {
+    "sandboxId": "bx_t32duk6y",
+    "state": "stopped",
+    "stopStatus": "completed",
+    "forced": false,
+    "stoppedAt": "2026-10-30T11:52:35.174Z",
+    "snapshotCompletedAt": "2026-10-30T11:52:35.029Z",
+    "snapshotVerifiedAt": "2026-10-30T11:52:35.029Z",
+    "receiptScope": "actual boat info after stop, one start, no resume or TTL extension"
+  },
+  "claims": {
+    "productRuntimeAudio": false,
+    "physicalDevices": false,
+    "nativeApps": false,
+    "hardwareClock": false,
+    "backendAvailable": false
+  },
+  "sampleVerification": "PCM_ORACLE_PASS",
+  "aggregateResult": "failure",
+  "aggregateFailure": "recordings verified, recorder commands returned nonzero: {'call': 1, 'record': 1, 'monitor': 1}",
+  "durationSecondsPerFinalRecording": 4.053333333333334,
+  "sdk": {
+    "schema": 1,
+    "provider": "Boat",
+    "sandboxId": "bx_t32duk6y",
+    "ttlSeconds": 1800,
+    "scope": "experimental-owned-private-recording-not-GitHub-qualification",
+    "sourceHead": "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24",
+    "sdkSource": {
+      "version": "1.4.8",
+      "commit": "8b43ed5c910e892d53de5a96aa01e9280a5b6650",
+      "stableFix": "08dcd3a83a9cc64c71e5b6d2ca89af51219f4a47",
+      "archiveSha256": "6abd8fe4aaf2f435ee1770fc668acebc2e6b69504600861c794d19b2559ba5db",
+      "archiveBytes": 1928742,
+      "archiveUrl": "https://snapshot.debian.org/file/0de10f0d68a9c8c0cc25a6afd482747fd13bc761"
+    },
+    "buildOptions": [
+      "--buildtype=release",
+      "--wrap-mode=nofallback",
+      "--libdir=lib",
+      "--sysconfdir=etc",
+      "-Dauto_features=disabled",
+      "-Ddocs=disabled",
+      "-Dman=disabled",
+      "-Dexamples=disabled",
+      "-Dtests=disabled",
+      "-Dinstalled_tests=disabled",
+      "-Dsession-managers=[]",
+      "-Dsystemd=disabled",
+      "-Dsystemd-system-service=disabled",
+      "-Dsystemd-user-service=disabled",
+      "-Ddbus=disabled",
+      "-Dflatpak=disabled",
+      "-Dlegacy-rtkit=false",
+      "-Dpam-defaults-install=false",
+      "-Drlimits-install=false",
+      "-Dpipewire-alsa=disabled",
+      "-Dpipewire-jack=disabled",
+      "-Dpipewire-v4l2=disabled",
+      "-Dalsa=disabled",
+      "-Dudev=disabled",
+      "-Dspa-plugins=enabled",
+      "-Dsupport=enabled",
+      "-Daudiomixer=enabled",
+      "-Daudioconvert=enabled",
+      "-Dcontrol=disabled",
+      "-Daudiotestsrc=disabled",
+      "-Dvideoconvert=disabled",
+      "-Dvideotestsrc=disabled",
+      "-Dsndfile=enabled",
+      "-Dpw-cat=enabled"
+    ],
+    "sourceManifestSha256": "6be7d63aacc9f1f288fb9fd3daad8dba9293e12115b1dad95d47057207c86d9d",
+    "prefixManifestSha256": "929697e4c0c876facae1091cb342d16249d796036a9973f2643314bd3af0ded6",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "hostLibrarySha256": "0e888406e418ef031d8a43a757df4c94c54efb17f0f58b3531d8aea1f8878824",
+    "platform": "Linux box-node-f9127e27b2c4c5d9 6.8.0-117-generic #117-Ubuntu SMP PREEMPT_DYNAMIC Tue May  5 19:26:24 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+    "runtimeVersion": "/home/user/mixyard-run/prefix/bin/pipewire\nCompiled with libpipewire 1.4.8\nLinked with libpipewire 1.4.8"
+  },
+  "toolchain": {
+    "cc": {
+      "version": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "sha256": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26"
+    },
+    "meson": {
+      "version": "1.3.2\n",
+      "sha256": "86ce39b460ec729602cd68281c44fce77779aaf7fe0bca39a840d73fe63033e0"
+    },
+    "ninja": {
+      "version": "1.11.1\n",
+      "sha256": "5965527e09fe2b3787772aa4f711d6a36b393e7f2fcaa744a7a96c5a4ddf59cb"
+    },
+    "rustc": {
+      "version": "rustc 1.97.1 (8bab26f4f 2026-07-14)\n",
+      "sha256": "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
+    },
+    "cargo": {
+      "version": "cargo 1.97.1 (c980f4866 2026-06-30)\n",
+      "sha256": "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
+    }
+  },
+  "packages": "gcc=4:13.2.0-7ubuntu1\ngettext=0.21-14ubuntu2\nlibc6=2.39-0ubuntu8.8\nlibjson-c-dev=0.17-1build1\nlibsndfile1=1.2.2-1ubuntu5.24.04.1\nlibsndfile1-dev=1.2.2-1ubuntu5.24.04.1\nmeson=1.3.2-1ubuntu1\nninja-build=1.11.1-2\n",
+  "nativeSummary": {
+    "stage": 10,
+    "error": 0,
+    "sampleMismatches": 0,
+    "rendered": 450,
+    "delivered": [
+      450,
+      450,
+      262
+    ],
+    "callbackHeapOperations": 0,
+    "dataLoopRetired": true,
+    "retiredOwnedCopiesZero": true,
+    "sourceStopBeforeDestroy": true,
+    "sourceRemovalObserved": true
+  },
+  "conversion": {
+    "input": {
+      "format": 285,
+      "rate": 48000,
+      "channels": 2,
+      "positions": [
+        3,
+        4
+      ]
+    },
+    "output": "WAV IEEE Float32/stereo/48000 verified from actual header",
+    "owner": "each separate pw-record client-local adapter",
+    "lowBitPreservation": false
+  },
+  "nativeNegotiatedFormats": [
+    {
+      "id": 20,
+      "type": "PipeWire:Interface:Port",
+      "info": {
+        "props": {
+          "object.serial": "21",
+          "object.path": "mixyard-private-engine:input_0",
+          "node.id": "19",
+          "port.id": "0",
+          "port.name": "in-0",
+          "port.direction": "in",
+          "port.alias": "mixyard-private-engine:in-0",
+          "port.group": "stream.0",
+          "object.id": "20"
+        },
+        "negotiatedFormat": {
+          "format": 285,
+          "rate": 48000,
+          "channels": 2,
+          "positions": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "PipeWire:Interface:Port",
+      "info": {
+        "props": {
+          "object.serial": "22",
+          "object.path": "mixyard-private-engine:input_1",
+          "node.id": "19",
+          "port.id": "1",
+          "port.name": "in-1",
+          "port.direction": "in",
+          "port.alias": "mixyard-private-engine:in-1",
+          "port.group": "stream.1",
+          "object.id": "21"
+        },
+        "negotiatedFormat": {
+          "format": 285,
+          "rate": 48000,
+          "channels": 2,
+          "positions": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 22,
+      "type": "PipeWire:Interface:Port",
+      "info": {
+        "props": {
+          "object.serial": "23",
+          "object.path": "mixyard-private-engine:input_2",
+          "node.id": "19",
+          "port.id": "2",
+          "port.name": "in-2",
+          "port.direction": "in",
+          "port.alias": "mixyard-private-engine:in-2",
+          "port.group": "stream.2",
+          "object.id": "22"
+        },
+        "negotiatedFormat": {
+          "format": 285,
+          "rate": 48000,
+          "channels": 2,
+          "positions": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "PipeWire:Interface:Port",
+      "info": {
+        "props": {
+          "object.serial": "24",
+          "object.path": "mixyard-private-engine:output_0",
+          "node.id": "19",
+          "port.id": "0",
+          "port.name": "out-0",
+          "port.direction": "out",
+          "port.alias": "mixyard-private-engine:out-0",
+          "port.group": "stream.0",
+          "object.id": "23"
+        },
+        "negotiatedFormat": {
+          "format": 285,
+          "rate": 48000,
+          "channels": 2,
+          "positions": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "PipeWire:Interface:Port",
+      "info": {
+        "props": {
+          "object.serial": "25",
+          "object.path": "mixyard-private-engine:output_1",
+          "node.id": "19",
+          "port.id": "1",
+          "port.name": "out-1",
+          "port.direction": "out",
+          "port.alias": "mixyard-private-engine:out-1",
+          "port.group": "stream.1",
+          "object.id": "24"
+        },
+        "negotiatedFormat": {
+          "format": 285,
+          "rate": 48000,
+          "channels": 2,
+          "positions": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 25,
+      "type": "PipeWire:Interface:Port",
+      "info": {
+        "props": {
+          "object.serial": "26",
+          "object.path": "mixyard-private-engine:output_2",
+          "node.id": "19",
+          "port.id": "2",
+          "port.name": "out-2",
+          "port.direction": "out",
+          "port.alias": "mixyard-private-engine:out-2",
+          "port.group": "stream.2",
+          "object.id": "25"
+        },
+        "negotiatedFormat": {
+          "format": 285,
+          "rate": 48000,
+          "channels": 2,
+          "positions": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 39,
+      "type": "PipeWire:Interface:Port",
+      "info": {
+        "props": {
+          "object.serial": "40",
+          "object.path": "mixyard-private-standard-call:input_0",
+          "node.id": "38",
+          "port.id": "0",
+          "port.name": "input_1",
+          "port.direction": "in",
+          "port.alias": "mixyard-private-standard-call:input_1",
+          "port.group": "stream.0",
+          "object.id": "39"
+        },
+        "negotiatedFormat": {
+          "format": 285,
+          "rate": 48000,
+          "channels": 2,
+          "positions": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 41,
+      "type": "PipeWire:Interface:Port",
+      "info": {
+        "props": {
+          "object.serial": "42",
+          "object.path": "mixyard-private-standard-record:input_0",
+          "node.id": "40",
+          "port.id": "0",
+          "port.name": "input_1",
+          "port.direction": "in",
+          "port.alias": "mixyard-private-standard-record:input_1",
+          "port.group": "stream.0",
+          "object.id": "41"
+        },
+        "negotiatedFormat": {
+          "format": 285,
+          "rate": 48000,
+          "channels": 2,
+          "positions": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 44,
+      "type": "PipeWire:Interface:Port",
+      "info": {
+        "props": {
+          "object.serial": "46",
+          "object.path": "mixyard-private-standard-monitor:input_0",
+          "node.id": "43",
+          "port.id": "0",
+          "port.name": "input_1",
+          "port.direction": "in",
+          "port.alias": "mixyard-private-standard-monitor:input_1",
+          "port.group": "stream.0",
+          "object.id": "44"
+        },
+        "negotiatedFormat": {
+          "format": 285,
+          "rate": 48000,
+          "channels": 2,
+          "positions": [
+            3,
+            4
+          ]
+        }
+      }
+    }
+  ],
+  "recorderProcesses": {
+    "call": 34475,
+    "record": 34476,
+    "monitor": 34477
+  },
+  "recorderStops": {
+    "call": {
+      "pid": 34475,
+      "requestedSignal": 2,
+      "aliveBeforeRequest": true,
+      "beforeSignalNs": 4093442790568,
+      "signalReturnedNs": 4093442810045,
+      "returncode": 1,
+      "reapedAtMonotonicNs": 4093443926341
+    },
+    "record": {
+      "pid": 34476,
+      "requestedSignal": 2,
+      "aliveBeforeRequest": true,
+      "beforeSignalNs": 4093442814023,
+      "signalReturnedNs": 4093442819423,
+      "returncode": 1,
+      "reapedAtMonotonicNs": 4093445031565
+    },
+    "monitor": {
+      "pid": 34477,
+      "requestedSignal": 2,
+      "aliveBeforeRequest": true,
+      "beforeSignalNs": 4093442821928,
+      "signalReturnedNs": 4093442825545,
+      "returncode": 1,
+      "reapedAtMonotonicNs": 4093445055760
+    }
+  },
+  "recordings": {
+    "call": {
+      "sha256": "71e126a43dd78824d1dd45837cb67c52c3d20e5a8e333218dd1b9a2abe2284ba",
+      "bytes": 1556568,
+      "pcmSha256": "b0a06b83baf7ed4b5af7e902c920c0407b9950c69ea6a476487bd73b86d30042",
+      "frames": 194560,
+      "encoding": "f32-le",
+      "channels": [
+        "FL",
+        "FR"
+      ],
+      "sampleRateHz": 48000,
+      "ordinaryFrame": [
+        0.25,
+        -0.125
+      ],
+      "ordinaryFrames": 55800,
+      "markerFrame": [
+        0.0,
+        0.0
+      ],
+      "markerFrames": 138760,
+      "scope": "file offsets are not native clock/sequence evidence",
+      "verifiedTrailingZeroFramesAtLeast": 1024
+    },
+    "record": {
+      "sha256": "edba9cbbca8243258a2864a59b90b722787a297982f2b1557892b77873ff2a49",
+      "bytes": 1556568,
+      "pcmSha256": "9a16639fce22e4aa30802690c0a723be806625ec25c1cb9cbfd88125e0b10b4b",
+      "frames": 194560,
+      "encoding": "f32-le",
+      "channels": [
+        "FL",
+        "FR"
+      ],
+      "sampleRateHz": 48000,
+      "ordinaryFrame": [
+        0.125,
+        0.015625
+      ],
+      "ordinaryFrames": 55800,
+      "markerFrame": [
+        0.0625,
+        0.046875
+      ],
+      "markerFrames": 1800,
+      "scope": "file offsets are not native clock/sequence evidence",
+      "verifiedTrailingZeroFramesAtLeast": 1024
+    },
+    "monitor": {
+      "sha256": "da7d079b7221f45e3b877a797b5bdcd75aa3564e69ed6c266d1fc6bdc1cbb187",
+      "bytes": 1556568,
+      "pcmSha256": "f5547ff7f6e612d6d7487268df43b15ba0a4b21f22d9ffd5c9ab05b3e1702c4f",
+      "frames": 194560,
+      "encoding": "f32-le",
+      "channels": [
+        "FL",
+        "FR"
+      ],
+      "sampleRateHz": 48000,
+      "ordinaryFrame": [
+        0.125,
+        -0.0625
+      ],
+      "ordinaryFrames": 55800,
+      "markerFrame": [
+        0.0,
+        0.0
+      ],
+      "markerFrames": 138760,
+      "scope": "file offsets are not native clock/sequence evidence",
+      "verifiedTrailingZeroFramesAtLeast": 1024
+    }
+  },
+  "sdkBindings": {
+    "daemon": {
+      "scope": "declared pre-admission point only, not lifetime closure",
+      "pid": 34470,
+      "beforeMonotonicNs": 4089354529279,
+      "afterMonotonicNs": 4089363906092,
+      "objects": {
+        "bin/pipewire": {
+          "sha256": "88cebe80c2ed4f08f8771fc24b65ac6bf67789a5c9eeebb8d4db57ebd056faff",
+          "buildId": "60a484b58011eefd8363e547745776aae2784bea"
+        },
+        "lib/pipewire-0.3/libpipewire-module-client-node.so": {
+          "sha256": "42895392d8b0402b30eb7e0e9924897363ad00cc99931c1ad31f7627dedfa515",
+          "buildId": "e1f4f82ade2ba725b24461d1ca9e77e0c73596ef"
+        },
+        "lib/pipewire-0.3/libpipewire-module-metadata.so": {
+          "sha256": "713697c3883263bd472745311c204afbd06a6d06044c22336e5946a10ba26165",
+          "buildId": "380bbd7ebba958d3c726c2bfcfddd851f74a6205"
+        },
+        "lib/pipewire-0.3/libpipewire-module-link-factory.so": {
+          "sha256": "92c8f33fa9fb1b83f7fa0065ffa94fc51dbc2d1b66500d52d6626c1feeb9c443",
+          "buildId": "0dda6c69a09510f9898b88f24e8fcbdf7aa29cda"
+        },
+        "lib/pipewire-0.3/libpipewire-module-protocol-native.so": {
+          "sha256": "44817f7746886bec021c50d7763b4bbc6ac5f80f210c18d3b53260ba79e13aaf",
+          "buildId": "5f78528e69d9953aa38e3bc93ab09f6ce24bebc8"
+        },
+        "lib/spa-0.2/support/libspa-support.so": {
+          "sha256": "c441ff47f7baa8bfd498d566f89ca6835fc29b9759e9a02dcd784546c5eea583",
+          "buildId": "fd74ef4006af5ece2ef4ef7deef51216d4ed3085"
+        },
+        "lib/pipewire-0.3/libpipewire-module-spa-node-factory.so": {
+          "sha256": "8f23613c9f80693e420a90e9504a08db28c1d4d9772cb15f8f96bf8727e25af6",
+          "buildId": "f4d16f2bde6a48d1e0789b39dd59b0ac5665671f"
+        },
+        "lib/pipewire-0.3/libpipewire-module-access.so": {
+          "sha256": "6c8d5161d8f550f7665394aecceb45933f566c573ec037f34a6b857cba02ff5a",
+          "buildId": "873fc28c20d182396e877915077de9bd854b3f57"
+        },
+        "lib/libpipewire-0.3.so.0.1408.0": {
+          "sha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1",
+          "buildId": "05f1c03afc6324831bf032ed7274f34f70a16216"
+        }
+      }
+    },
+    "graph": {
+      "scope": "declared pre-admission point only, not lifetime closure",
+      "pid": 34473,
+      "beforeMonotonicNs": 4089363925889,
+      "afterMonotonicNs": 4089372541027,
+      "objects": {
+        "lib/spa-0.2/audiomixer/libspa-audiomixer.so": {
+          "sha256": "d6c561a991c4122b2c58595a94147f33c35095f6292351fcc2f26e8b1dda066d",
+          "buildId": "bb77670a9750446cf1466e768db68d0640d1e932"
+        },
+        "lib/pipewire-0.3/libpipewire-module-client-node.so": {
+          "sha256": "42895392d8b0402b30eb7e0e9924897363ad00cc99931c1ad31f7627dedfa515",
+          "buildId": "e1f4f82ade2ba725b24461d1ca9e77e0c73596ef"
+        },
+        "lib/pipewire-0.3/libpipewire-module-protocol-native.so": {
+          "sha256": "44817f7746886bec021c50d7763b4bbc6ac5f80f210c18d3b53260ba79e13aaf",
+          "buildId": "5f78528e69d9953aa38e3bc93ab09f6ce24bebc8"
+        },
+        "lib/pipewire-0.3/libpipewire-module-adapter.so": {
+          "sha256": "ba3c3dcb1add7c54699aaf9ffbe34d925093f34e43e530e71c2d7ec00dcfbbae",
+          "buildId": "0466e3663788539efd867cbdefbad8c276a14104"
+        },
+        "lib/spa-0.2/support/libspa-support.so": {
+          "sha256": "c441ff47f7baa8bfd498d566f89ca6835fc29b9759e9a02dcd784546c5eea583",
+          "buildId": "fd74ef4006af5ece2ef4ef7deef51216d4ed3085"
+        },
+        "lib/pipewire-0.3/libpipewire-module-metadata.so": {
+          "sha256": "713697c3883263bd472745311c204afbd06a6d06044c22336e5946a10ba26165",
+          "buildId": "380bbd7ebba958d3c726c2bfcfddd851f74a6205"
+        },
+        "lib/libpipewire-0.3.so.0.1408.0": {
+          "sha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1",
+          "buildId": "05f1c03afc6324831bf032ed7274f34f70a16216"
+        }
+      }
+    },
+    "call": {
+      "scope": "declared pre-admission point only, not lifetime closure",
+      "pid": 34475,
+      "beforeMonotonicNs": 4089372553510,
+      "afterMonotonicNs": 4089384146252,
+      "objects": {
+        "bin/pw-cat": {
+          "sha256": "704de215918b8e8dd0fedd2b107eb84495a800855e44a433e79539d13197a2fd",
+          "buildId": "c7c5d2b36b79dea51b61ec6bedbe52328477f957"
+        },
+        "lib/spa-0.2/audiomixer/libspa-audiomixer.so": {
+          "sha256": "d6c561a991c4122b2c58595a94147f33c35095f6292351fcc2f26e8b1dda066d",
+          "buildId": "bb77670a9750446cf1466e768db68d0640d1e932"
+        },
+        "lib/spa-0.2/audioconvert/libspa-audioconvert.so": {
+          "sha256": "1432cf27655d428928ab69d94daccd6e9e9e5d92a8af3d64c6d18c1ca4910e83",
+          "buildId": "4ce998c378fc0ffd6c0506a38c21094ef313f004"
+        },
+        "lib/pipewire-0.3/libpipewire-module-adapter.so": {
+          "sha256": "ba3c3dcb1add7c54699aaf9ffbe34d925093f34e43e530e71c2d7ec00dcfbbae",
+          "buildId": "0466e3663788539efd867cbdefbad8c276a14104"
+        },
+        "lib/pipewire-0.3/libpipewire-module-client-node.so": {
+          "sha256": "42895392d8b0402b30eb7e0e9924897363ad00cc99931c1ad31f7627dedfa515",
+          "buildId": "e1f4f82ade2ba725b24461d1ca9e77e0c73596ef"
+        },
+        "lib/pipewire-0.3/libpipewire-module-protocol-native.so": {
+          "sha256": "44817f7746886bec021c50d7763b4bbc6ac5f80f210c18d3b53260ba79e13aaf",
+          "buildId": "5f78528e69d9953aa38e3bc93ab09f6ce24bebc8"
+        },
+        "lib/spa-0.2/support/libspa-support.so": {
+          "sha256": "c441ff47f7baa8bfd498d566f89ca6835fc29b9759e9a02dcd784546c5eea583",
+          "buildId": "fd74ef4006af5ece2ef4ef7deef51216d4ed3085"
+        },
+        "lib/pipewire-0.3/libpipewire-module-metadata.so": {
+          "sha256": "713697c3883263bd472745311c204afbd06a6d06044c22336e5946a10ba26165",
+          "buildId": "380bbd7ebba958d3c726c2bfcfddd851f74a6205"
+        },
+        "lib/libpipewire-0.3.so.0.1408.0": {
+          "sha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1",
+          "buildId": "05f1c03afc6324831bf032ed7274f34f70a16216"
+        }
+      }
+    },
+    "record": {
+      "scope": "declared pre-admission point only, not lifetime closure",
+      "pid": 34476,
+      "beforeMonotonicNs": 4089384158515,
+      "afterMonotonicNs": 4089395733193,
+      "objects": {
+        "bin/pw-cat": {
+          "sha256": "704de215918b8e8dd0fedd2b107eb84495a800855e44a433e79539d13197a2fd",
+          "buildId": "c7c5d2b36b79dea51b61ec6bedbe52328477f957"
+        },
+        "lib/spa-0.2/audiomixer/libspa-audiomixer.so": {
+          "sha256": "d6c561a991c4122b2c58595a94147f33c35095f6292351fcc2f26e8b1dda066d",
+          "buildId": "bb77670a9750446cf1466e768db68d0640d1e932"
+        },
+        "lib/spa-0.2/audioconvert/libspa-audioconvert.so": {
+          "sha256": "1432cf27655d428928ab69d94daccd6e9e9e5d92a8af3d64c6d18c1ca4910e83",
+          "buildId": "4ce998c378fc0ffd6c0506a38c21094ef313f004"
+        },
+        "lib/pipewire-0.3/libpipewire-module-client-node.so": {
+          "sha256": "42895392d8b0402b30eb7e0e9924897363ad00cc99931c1ad31f7627dedfa515",
+          "buildId": "e1f4f82ade2ba725b24461d1ca9e77e0c73596ef"
+        },
+        "lib/pipewire-0.3/libpipewire-module-protocol-native.so": {
+          "sha256": "44817f7746886bec021c50d7763b4bbc6ac5f80f210c18d3b53260ba79e13aaf",
+          "buildId": "5f78528e69d9953aa38e3bc93ab09f6ce24bebc8"
+        },
+        "lib/spa-0.2/support/libspa-support.so": {
+          "sha256": "c441ff47f7baa8bfd498d566f89ca6835fc29b9759e9a02dcd784546c5eea583",
+          "buildId": "fd74ef4006af5ece2ef4ef7deef51216d4ed3085"
+        },
+        "lib/pipewire-0.3/libpipewire-module-adapter.so": {
+          "sha256": "ba3c3dcb1add7c54699aaf9ffbe34d925093f34e43e530e71c2d7ec00dcfbbae",
+          "buildId": "0466e3663788539efd867cbdefbad8c276a14104"
+        },
+        "lib/pipewire-0.3/libpipewire-module-metadata.so": {
+          "sha256": "713697c3883263bd472745311c204afbd06a6d06044c22336e5946a10ba26165",
+          "buildId": "380bbd7ebba958d3c726c2bfcfddd851f74a6205"
+        },
+        "lib/libpipewire-0.3.so.0.1408.0": {
+          "sha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1",
+          "buildId": "05f1c03afc6324831bf032ed7274f34f70a16216"
+        }
+      }
+    },
+    "monitor": {
+      "scope": "declared pre-admission point only, not lifetime closure",
+      "pid": 34477,
+      "beforeMonotonicNs": 4089395745677,
+      "afterMonotonicNs": 4089407422436,
+      "objects": {
+        "bin/pw-cat": {
+          "sha256": "704de215918b8e8dd0fedd2b107eb84495a800855e44a433e79539d13197a2fd",
+          "buildId": "c7c5d2b36b79dea51b61ec6bedbe52328477f957"
+        },
+        "lib/spa-0.2/audiomixer/libspa-audiomixer.so": {
+          "sha256": "d6c561a991c4122b2c58595a94147f33c35095f6292351fcc2f26e8b1dda066d",
+          "buildId": "bb77670a9750446cf1466e768db68d0640d1e932"
+        },
+        "lib/spa-0.2/audioconvert/libspa-audioconvert.so": {
+          "sha256": "1432cf27655d428928ab69d94daccd6e9e9e5d92a8af3d64c6d18c1ca4910e83",
+          "buildId": "4ce998c378fc0ffd6c0506a38c21094ef313f004"
+        },
+        "lib/pipewire-0.3/libpipewire-module-adapter.so": {
+          "sha256": "ba3c3dcb1add7c54699aaf9ffbe34d925093f34e43e530e71c2d7ec00dcfbbae",
+          "buildId": "0466e3663788539efd867cbdefbad8c276a14104"
+        },
+        "lib/pipewire-0.3/libpipewire-module-client-node.so": {
+          "sha256": "42895392d8b0402b30eb7e0e9924897363ad00cc99931c1ad31f7627dedfa515",
+          "buildId": "e1f4f82ade2ba725b24461d1ca9e77e0c73596ef"
+        },
+        "lib/pipewire-0.3/libpipewire-module-protocol-native.so": {
+          "sha256": "44817f7746886bec021c50d7763b4bbc6ac5f80f210c18d3b53260ba79e13aaf",
+          "buildId": "5f78528e69d9953aa38e3bc93ab09f6ce24bebc8"
+        },
+        "lib/spa-0.2/support/libspa-support.so": {
+          "sha256": "c441ff47f7baa8bfd498d566f89ca6835fc29b9759e9a02dcd784546c5eea583",
+          "buildId": "fd74ef4006af5ece2ef4ef7deef51216d4ed3085"
+        },
+        "lib/pipewire-0.3/libpipewire-module-metadata.so": {
+          "sha256": "713697c3883263bd472745311c204afbd06a6d06044c22336e5946a10ba26165",
+          "buildId": "380bbd7ebba958d3c726c2bfcfddd851f74a6205"
+        },
+        "lib/libpipewire-0.3.so.0.1408.0": {
+          "sha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1",
+          "buildId": "05f1c03afc6324831bf032ed7274f34f70a16216"
+        }
+      }
+    }
+  },
+  "staticHostArchiveSha256": "04a3547066acd9e55d77b21e4d971e4b67041530b6720908f31578a9223d0a73",
+  "nativeGraphSha256": "07d6697ee12917ded98bca654984b72cfc5efb4fdd244c847eb792defb9976b4",
+  "diagnosticByteCounts": {
+    "daemon.stdout": 0,
+    "daemon.stderr": 0,
+    "graph.stdout": 27245,
+    "graph.stderr": 0,
+    "call.stdout": 0,
+    "call.stderr": 0,
+    "record.stdout": 0,
+    "record.stderr": 0,
+    "monitor.stdout": 0,
+    "monitor.stderr": 0,
+    "link-call.stdout": 0,
+    "link-call.stderr": 0,
+    "link-record.stdout": 0,
+    "link-record.stderr": 0,
+    "link-monitor.stdout": 0,
+    "link-monitor.stderr": 0
+  },
+  "allOwnedProcessesReaped": true,
+  "productRuntime": {
+    "sourceHead": "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24",
+    "provider": "Boat",
+    "sandboxId": "bx_t32duk6y",
+    "runtimePid": 35171,
+    "statusCommand": [
+      "mixyard",
+      "status",
+      "--instance",
+      "boat-standard-recording"
+    ],
+    "statusExit": 0,
+    "statusStdout": "{\"ipcVersion\":1,\"requestId\":\"cli-35172\",\"result\":{\"appliedRevision\":null,\"audioRevision\":null,\"backend\":\"unavailable\",\"backendAvailable\":false,\"capabilities\":{\"apply\":false,\"mute\":false,\"nativeActionDispatch\":false},\"daemonReachable\":true,\"desiredRevision\":null,\"nativeAudioProof\":\"unverified\"}}\n",
+    "statusStderr": "",
+    "status": {
+      "ipcVersion": 1,
+      "requestId": "cli-35172",
+      "result": {
+        "appliedRevision": null,
+        "audioRevision": null,
+        "backend": "unavailable",
+        "backendAvailable": false,
+        "capabilities": {
+          "apply": false,
+          "mute": false,
+          "nativeActionDispatch": false
+        },
+        "daemonReachable": true,
+        "desiredRevision": null,
+        "nativeAudioProof": "unverified"
+      }
+    },
+    "shutdownExit": 0,
+    "shutdownStdout": "{\"ipcVersion\":1,\"requestId\":\"cli-35173\",\"result\":{\"shutdown\":\"requested\"}}\n",
+    "shutdownStderr": "",
+    "runtimeExit": 0,
+    "reaped": true,
+    "runtimeStderr": "",
+    "binaries": {
+      "mixyard": "e1a2833d458d2c4e9a3dfc194ff7e25d36e44add6bade45d2bd43b5291f9aa5d",
+      "mixyard-runtime": "87b2f74178c9151020a2577c3ff18e9eb8c05ae1154912a61427558af945259a"
+    }
+  },
+  "earlierAttempts": {
+    "1": {
+      "aggregateResult": "failure",
+      "failure": "RuntimeError: private graph observation rejected: reason=exit-or-stderr returncode=0 stdoutBytes=94372 stderrBytes=576 stderrPrefix='[E][11:40:29.157966] default      | [       pw-dump.c: 1460 on_core_error()] error id:40 seq:215 res:-2 (No such file or directory): enum params id:16 (Spa:Enum:ParamId:ProcessLatency) failed\\n[E][11:40:29.157988] default      | [       pw-dump.c: 1460 on_core_error()] error id:42 seq:229 res:-2 (No such file or directory): enum params id:16 (Spa:Enum:ParamId:ProcessLatency) failed\\n[E][11:40:29.157992] default      | [       pw-dump.c: 1460 on_core_error()] error id:45 seq:244 res:-2 (No such file or directory): enum params id:16 (Spa:Enum:ParamId:ProcessLatency) failed\\n'",
+      "allOwnedProcessesReaped": true
+    },
+    "2": {
+      "aggregateResult": "failure",
+      "failure": "CalledProcessError: Command '['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2', '-g0', '/home/user/mixyard/adapters/linux/standard-consumer/registry_snapshot.c', '-I/home/user/mixyard-run/prefix/include/pipewire-0.3', '-I/home/user/mixyard-run/prefix/include/spa-0.2', '-D_REENTRANT', '-I/usr/include/json-c', '-L/home/user/mixyard-run/prefix/lib', '-lpipewire-0.3', '-ljson-c', '-o', '/home/user/mixyard-run/registry-snapshot']' returned non-zero exit status 1.",
+      "allOwnedProcessesReaped": true
+    },
+    "3": {
+      "aggregateResult": "failure",
+      "failure": "KeyError: 'output-node-id'",
+      "allOwnedProcessesReaped": true
+    },
+    "4": {
+      "aggregateResult": "failure",
+      "failure": "RuntimeError: standard recorder exit call: 1",
+      "allOwnedProcessesReaped": true
+    }
+  },
+  "retainedEvidence": {
+    "privateHostDirectory": "/dev/shm/mixyard-standard-consumer-bx_t32duk6y",
+    "volatileRetention": true,
+    "boatStoppedSnapshotRetentionIsFinite": true,
+    "archiveBytes": 185772,
+    "archiveSha256": "b30ce964004fc58aacd3e2f8f23631f4a326dc7111e59031084272c6a5683528",
+    "manifestHashedFiles": 85,
+    "archiveRegularMembersIncludingManifest": 86,
+    "expandedManifestBytes": 9930956,
+    "retainedBytesAtCopyout": 10133160
+  },
+  "openBoundaries": [
+    "ordinary recorder exits1 retained as FAIL; no drained/clean-exit claim",
+    "product runtime native activation/publication absent",
+    "old1.0.5 API RED and both historical ordinary graph causes remain OPEN",
+    "diagnostic-only exact1.4.8 experiment, no system SDK eligibility/product minimum",
+    "no physical input/output, audio preview, hardware timing, native-app or endurance qualification"
+  ],
+  "testSource": {
+    "boat_recording.py": {
+      "executedSha256": "3f256a9406128ffc22d330435a2fd22a55b1c95e65d7ea788b3106ba31f5b7e9",
+      "publishedSha256": "ea2439a7d7a6ca66171c6a32a2eefa4b31ba9dbc988bbf94753a1f4615bf6c8b",
+      "firstPublishedHead": "59b149381f9b83d2e65adf63b91312a89ee706e4",
+      "firstPublishedSha256": "7bfd75d9744517435d2b47478c4a6b072b001ba14af702c4bcc7bca0dc827771"
+    },
+    "registry_snapshot.c": {
+      "executedSha256": "060608170daa72c35a76b8cdb7961d4c7f0578f6ee8e3a33b90406f4654efa02",
+      "publishedSha256": "060608170daa72c35a76b8cdb7961d4c7f0578f6ee8e3a33b90406f4654efa02"
+    }
+  },
+  "interpretation": "File sample offsets do not bind a native epoch or physical clock. Zero marker counts include startup/tail zeros. Return-only positive Record marker count is1800.",
+  "reviewRepair": {
+    "reviewedPredecessorHead": "59b149381f9b83d2e65adf63b91312a89ee706e4",
+    "review": "https://github.com/MGRAFF2006/mixyard/pull/115#pullrequestreview-5712100837",
+    "changes": [
+      "complete RIFF extent, chunk header and odd-padding checks",
+      "existing bounded native-host pipe capture instead of ordinary runtime log files and unbounded retained-log reads",
+      "accept only captured 16-byte format-tag-3 header; reject unsupported extensible or extra format metadata"
+    ],
+    "verification": "six focused pure-file and owned Python-child tests; all six retained WAVs rechecked; no SDK/controller/cloud recording rerun",
+    "historicalEvidenceUnchanged": true,
+    "followupReviewedHead": "9de0d4a24de213c9dae47edf9229439e1caf06d6",
+    "followupReview": "https://github.com/MGRAFF2006/mixyard/pull/115#pullrequestreview-5712262037"
+  }
+}
