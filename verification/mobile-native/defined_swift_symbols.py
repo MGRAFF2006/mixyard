@@ -28,9 +28,9 @@ FUNCTIONS = {
 
 
 class ToolFailure(Exception):
-    def __init__(self, status, value=0, cap=None):
+    def __init__(self, status, value=0, cap=None, shape=None):
         super().__init__('Defined-code tool did not produce complete admissible evidence')
-        self.status, self.value, self.cap = status, value, cap
+        self.status, self.value, self.cap, self.shape = status, value, cap, shape
 
 
 def capture(args, data=b''):
@@ -100,6 +100,23 @@ def capture(args, data=b''):
                     if not stream.closed: stream.close()
 
 
+def record_shape(line, index, why):
+    # Diagnostic classification ONLY. No field below grants parser acceptance.
+    tokens = line.split(None, 8)
+    first = tokens[0] if tokens else ''
+    address = 'HEX' if re.fullmatch(r'[0-9A-Fa-f]+', first) else 'DASH' if re.fullmatch(r'-+', first) else 'NONE'
+    candidate = tokens[1] if address != 'NONE' and len(tokens)>1 else first
+    # A fixed single-letter/question-mark alphabet is safe even for an as-yet
+    # unsupported nm kind; never publish arbitrary token/symbol/header text.
+    kind = candidate if len(candidate)==1 and candidate in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz?' else 'UNKNOWN'
+    return {'why':why,'lineIndex':min(index,MAX_LINES),
+            'tokenCount':len(tokens),'tokenCountCapped':len(tokens)==9,
+            'addressShape':address,'recognisedKind':kind,
+            'swiftPrefix':any(token.startswith(('_$s','$s')) for token in tokens[:8]),
+            'indirectTargetMarker':'(indirect for ' in line,
+            'headerLike':line.endswith(':')}
+
+
 def defined_swift_names(output, counts):
     try:
         lines = output.decode('utf-8', errors='strict').splitlines()
@@ -108,7 +125,7 @@ def defined_swift_names(output, counts):
     if len(lines) > MAX_LINES:
         raise ToolFailure('cap', cap='symbols')
     names = []
-    for line in lines:
+    for index, line in enumerate(lines, 1):
         line = line.strip()
         if not line:
             continue
@@ -117,25 +134,25 @@ def defined_swift_names(output, counts):
             continue
         match = re.fullmatch(r'(?:(?P<address>[0-9A-Fa-f]+)\s+)?(?P<kind>[A-Za-z?])\s+(?P<name>\S+)', line)
         if match is None:
-            raise ToolFailure('nm-shape')
+            raise ToolFailure('nm-shape', shape=record_shape(line,index,'unparsed-columns'))
         kind, name = match['kind'], match['name']
         if kind not in 'ABCDGINPRSTUVWabcdginprstuvw':
-            raise ToolFailure('nm-shape')
+            raise ToolFailure('nm-shape', shape=record_shape(line,index,'unknown-kind'))
         if kind == 'U':
             counts['undefined'] += 1
             continue
         if kind != 'T':
             continue
         if match['address'] is None:
-            raise ToolFailure('nm-shape')
+            raise ToolFailure('nm-shape', shape=record_shape(line,index,'missing-text-address'))
         counts['definedText'] += 1
         if name.startswith(('_$s','$s')):
             if len(name)>4096:
                 raise ToolFailure('cap', cap='inputBytes')
             names.append(name[1:] if name.startswith('_$s') else name)
+            counts['swiftDefined'] += 1
     if len(names)>MAX_SYMBOLS:
         raise ToolFailure('cap', cap='symbols')
-    counts['swiftDefined'] += len(names)
     return names
 
 
@@ -146,6 +163,7 @@ def attest_defined(paths, role, required=('verifier','derParseBytes'), run=captu
     counts = {'artifacts':0,'definedText':0,'undefined':0,'swiftDefined':0,'demangled':0}
     caps = dict.fromkeys(('artifacts','inputBytes','outputBytes','symbols'), False)
     tool, status, value = 'semantic', 'ok', 0
+    shape = None
     try:
         if not paths or len(paths)>4:
             raise ToolFailure('cap', cap='artifacts')
@@ -179,12 +197,12 @@ def attest_defined(paths, role, required=('verifier','derParseBytes'), run=captu
             raise ToolFailure('required-function-missing')
     except (ToolFailure, UnicodeError) as failure:
         if isinstance(failure, ToolFailure):
-            status, value = failure.status, failure.value
+            status, value, shape = failure.status, failure.value, failure.shape
             if failure.cap: caps[failure.cap] = True
         else:
             status = 'decode-error'
     receipt = {'role':role,'functions':availability,'required':list(required),'tool':tool,
-               'status':status,'value':value,'counts':counts,'caps':caps}
+               'status':status,'value':value,'counts':counts,'caps':caps,'recordShape':shape}
     print('Mobile defined-code evidence: '+json.dumps(receipt,sort_keys=True),flush=True)
     if status != 'ok':
         raise RuntimeError('Defined Swift code attestation failed; see bounded role receipt') from None

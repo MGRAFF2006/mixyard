@@ -69,6 +69,49 @@ class DefinedCodeProof(unittest.TestCase):
                    ('00000 T '+VERIFY_NAME+'\n').encode(), b'00000 ? _unknown\n']:
             with self.subTest(nm_shape=True):self.inspect(FakeTools(nm),fails=True)
 
+    def test_shape_diagnostics_are_fixed_redacted_and_never_admit_unknown_records(self):
+        cases=[
+            ('000000000badcafe I _'+VERIFIER+' (indirect for _PRIVATE_TARGET)',
+             'unparsed-columns','HEX','I',True,True,False),
+            ('---------------- T _'+VERIFIER,
+             'unparsed-columns','DASH','T',True,False,False),
+            ('T _'+VERIFIER,
+             'missing-text-address','NONE','T',True,False,False),
+            ('000000000badcafe ? _PRIVATE_SYMBOL',
+             'unknown-kind','HEX','?',False,False,False),
+            ('/PRIVATE/header_$s:',
+             'unparsed-columns','NONE','UNKNOWN',False,False,True),
+            (' '.join(['PRIVATE_TOKEN']*20),
+             'unparsed-columns','NONE','UNKNOWN',False,False,False),
+        ]
+        for line,why,address,kind,swift,indirect,header in cases:
+            with self.subTest(why=why,address=address):
+                tools=FakeTools(nm=(line+'\n').encode())
+                receipt=self.inspect(tools,fails=True)
+                shape=receipt['recordShape']
+                self.assertEqual(shape['why'],why)
+                self.assertEqual(shape['lineIndex'],1)
+                self.assertEqual(shape['addressShape'],address)
+                self.assertEqual(shape['recognisedKind'],kind)
+                self.assertEqual(shape['swiftPrefix'],swift)
+                self.assertEqual(shape['indirectTargetMarker'],indirect)
+                self.assertEqual(shape['headerLike'],header)
+                self.assertLessEqual(shape['tokenCount'],9)
+                self.assertEqual(shape['tokenCountCapped'],line.startswith('PRIVATE_TOKEN'))
+                self.assertFalse(any(receipt['functions'].values()))
+                self.assertEqual(receipt['status'],'nm-shape')
+                self.assertEqual(len(tools.calls),1) # No demangling after an incomplete nm parse.
+                self.assertNotIn('PRIVATE',json.dumps(receipt))
+        # Metadata now counts consumed Swift definitions even if a later record
+        # stops parsing. These counts NEVER establish function availability.
+        tools=FakeTools(nm=NM+b'00000000 ? _PRIVATE_UNKNOWN\n')
+        receipt=self.inspect(tools,fails=True)
+        self.assertEqual(receipt['recordShape']['lineIndex'],4)
+        self.assertEqual(receipt['counts']['definedText'],2)
+        self.assertEqual(receipt['counts']['swiftDefined'],2)
+        self.assertEqual(receipt['counts']['demangled'],0)
+        self.assertFalse(any(receipt['functions'].values()))
+
     def test_wrong_namespace_thunk_overload_and_missing_function_reject(self):
         candidates=[VERIFY_NAME.replace('MobileControlTrust.','OtherModule.'),
                     'function signature specialization of '+VERIFY_NAME,
