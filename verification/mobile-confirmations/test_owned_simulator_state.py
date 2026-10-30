@@ -113,6 +113,38 @@ class BoundedOwnChild(unittest.TestCase):
             raw,receipt=observation.read_devices(time.monotonic()+3,self.command('pass'))
         spawn.assert_not_called();self.assertTrue(receipt['ownedChildRetained'])
         self.assertEqual(receipt['status'],'UNKNOWN')
+    def test_stop_reserve_is_inside_each_total_not_an_extra_wait(self):
+        # Drive the actual reader to its IO deadline without sleeping; the only
+        # remaining stop/reap allowance must end at the caller's original total.
+        for total in (3,30,90):
+            now=[100.0];waits=[]
+            selector=unittest.mock.MagicMock()
+            selector.get_map.return_value={1:object()}
+            def select(timeout):
+                now[0]+=timeout
+                return []
+            selector.select.side_effect=select
+            process=unittest.mock.MagicMock()
+            process.returncode=None;process.poll.return_value=None
+            process.stdout.closed=False;process.stderr.closed=False
+            process.stdout.close.side_effect=lambda:setattr(process.stdout,'closed',True)
+            process.stderr.close.side_effect=lambda:setattr(process.stderr,'closed',True)
+            def wait(timeout):
+                waits.append(timeout);process.returncode=-9
+                self.assertLessEqual(now[0]+timeout,100+total)
+            process.wait.side_effect=wait
+            with patch.object(observation.time,'monotonic',side_effect=lambda:now[0]), \
+                 patch.object(observation.selectors,'DefaultSelector',return_value=selector), \
+                 patch.object(observation.subprocess,'Popen',return_value=process),patch.object(observation.os,'set_blocking'):
+                raw,receipt=observation.read_devices(100+total,['owned-controlled-child'])
+            self.assertIsNone(raw);self.assertEqual(receipt['reason'],'timeout')
+            selector.select.assert_called_once()
+            self.assertAlmostEqual(selector.select.call_args.args[0],total-0.6)
+            self.assertEqual(len(waits),1);self.assertAlmostEqual(waits[0],0.6)
+            process.kill.assert_called_once()
+            self.assertTrue(receipt['directChildReaped']);self.assertTrue(receipt['localPipesClosed'])
+            self.assertFalse(receipt['pipesEof']);self.assertFalse(receipt['ownedChildRetained'])
+
     def test_failed_or_incomplete_capture_cannot_publish_valid_looking_payload(self):
         for reason in ['timeout','tool-exit','stdout-limit','stderr-limit','stop-incomplete']:
             receipt={'status':'UNKNOWN','reason':reason,'directChildReaped':False,'pipesEof':False}
@@ -157,6 +189,18 @@ class RequiredBootedGate(unittest.TestCase):
         read.assert_called_once()
         for secret in [OWNED,RUNTIME,TYPE,'SECRET','/PRIVATE']:self.assertNotIn(secret,output.getvalue())
         return json.loads(output.getvalue().split(': ',1)[1])
+    def test_required_state_has_30s_while_legacy_observation_keeps_3s(self):
+        raw=data([device(state='Booted')]);output=io.StringIO()
+        with patch.object(observation.time,'monotonic',return_value=100), \
+             patch.object(observation,'read_devices',return_value=(raw,complete_receipt(raw))) as read,contextlib.redirect_stdout(output):
+            observation.require_booted_simulator(OWNED,RUNTIME,TYPE)
+            observation.observe_rejection('',OWNED,RUNTIME,TYPE)
+        self.assertEqual([call.args[0] for call in read.call_args_list],[130,103])
+        lines=output.getvalue().splitlines()
+        required=json.loads(lines[0].split(': ',1)[1])
+        self.assertEqual(required['configuredSeconds'],30)
+        self.assertTrue(required['preconditionSatisfied'])
+
     def test_only_complete_exact_owned_available_booted_matching_state_passes(self):
         result=self.exercise(data([device(state='Booted')]))
         self.assertTrue(result['preconditionSatisfied'])

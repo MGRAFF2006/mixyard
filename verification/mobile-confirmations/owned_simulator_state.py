@@ -1,8 +1,12 @@
 """Bounded own-child I/O, required simulator state gate and discovery adapter.
 
 require_booted_simulator is a strict qualification gate, not production trust or
-OS capture authority. Legacy catalogue/rejection helpers remain non-authorizing
-historical diagnostics and are never used by this gate or the normal runner.
+OS capture authority. Required state has a 30s total; cold discovery has a 90s
+total. Both include the same 0.6s stop/reap reserve, never added afterward. The
+legacy observation retains its 3s total. These are preparation budgets, not a
+startup-cause fix or an assurance that a runner will succeed. Legacy catalogue/
+rejection helpers remain non-authorizing historical diagnostics and are never
+used by this gate or the normal runner.
 """
 import json
 import os
@@ -11,8 +15,9 @@ import selectors
 import subprocess
 import time
 
-BUDGET_SECONDS = 3.0
-RUNTIME_SECONDS = 30.0
+BUDGET_SECONDS = 3.0 # Legacy non-authorizing observation only.
+STATE_SECONDS = 30.0
+RUNTIME_SECONDS = 90.0
 RUNTIMES = ('xcrun','simctl','list','runtimes','--json')
 STOP_RESERVE = 0.6
 MAX_STDOUT = 256 * 1024
@@ -206,7 +211,7 @@ def observe_rejection(text, owned, runtime, device_type):
 
 def require_booted_simulator(owned, runtime, device_type):
     """Require one fresh complete exact-owned Booted+available matching record."""
-    deadline=time.monotonic()+BUDGET_SECONDS
+    deadline=time.monotonic()+STATE_SECONDS
     try:
         data,capture=read_devices(deadline)
         complete=complete_capture(data,capture)
@@ -228,7 +233,7 @@ def require_booted_simulator(owned, runtime, device_type):
         else:reason='ok'
     satisfied=state['status']=='OBSERVED' and reason=='ok'
     print('Owned simulator required state: '+json.dumps({'phase':'owned-booted-precondition',
-        'preconditionSatisfied':satisfied,'reason':reason,'capture':capture,'ownedState':state}),flush=True)
+        'configuredSeconds':STATE_SECONDS,'preconditionSatisfied':satisfied,'reason':reason,'capture':capture,'ownedState':state}),flush=True)
     if not satisfied:raise RuntimeError('Owned booted simulator precondition failed') from None
 
 
@@ -242,7 +247,7 @@ def complete_capture(data, receipt):
 
 
 def capture_runtime_catalogue():
-    """Discovery-only adapter: bounded Python waits/output under one30s budget.
+    """Discovery-only adapter: bounded Python waits/output under one 90s budget.
 
     Process creation/kernel scheduling are not hard realtime bounded. Local pipe
     closure is not EOF or descendant completion. A retained direct-child handle

@@ -39,11 +39,12 @@ class RuntimeAdapter(unittest.TestCase):
         self.assertEqual(len(lines),1)
         return text,json.loads(lines[0].split(': ',1)[1]),read.call_args.args[0]
     def test_complete_utf8_feeds_same_legacy_runtime_json_and_selection(self):
-        start=time.monotonic();text,result,deadline=self.run_adapter()
+        with patch.object(state.time,'monotonic',return_value=100):
+            text,result,deadline=self.run_adapter()
         selected=self.runner.select_runtime('18.5',json.loads(text)['runtimes'],'arm64')
         self.assertEqual(selected['identifier'],'com.apple.CoreSimulator.SimRuntime.iOS-18-5')
-        self.assertTrue(result['complete']);self.assertEqual(result['configuredSeconds'],30)
-        self.assertLessEqual(deadline-start,30.01)
+        self.assertTrue(result['complete']);self.assertEqual(result['configuredSeconds'],90)
+        self.assertEqual(deadline,190)
         self.assertTrue(result['capture']['localPipesClosed']);self.assertTrue(result['capture']['pipesEof'])
     def test_unknown_partial_retained_or_localclose_only_output_never_reaches_selector(self):
         changes=[{'status':'UNKNOWN'},{'toolValue':7},{'directChildReaped':False},{'ownedChildRetained':True},

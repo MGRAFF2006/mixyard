@@ -1,5 +1,18 @@
 # Native confirmation qualification
 
+## PR113 explicit preparation budgets
+
+The required exact-owned Booted-state gate has one 30s total; its legacy
+non-authorizing observation helper retains 3s. Single cold runtime discovery has
+one 90s total. Each total includes the existing 0.6s stop/reap reserve; incomplete,
+nonreaped, retained, non-EOF or capped output still fails closed. These explicit
+preparation budgets replace PR113's failed 30s discovery/3s required-state
+configuration, not its historical evidence or unknown startup cause. There is no
+retry or automatic next increase. Boot 30s, bootstatus 180s, shared 900s
+build/artifact/static/UI budget and the 20min workflow ceiling remain unchanged.
+The older diagnostic history below retains its original configured bounds.
+Root decision: https://github.com/MGRAFF2006/mixyard/pull/113#issuecomment-6520466287
+
 The shipping Android WebChromeClient and iOS WKUIDelegate answer confirmation
 requests from the pinned bundled document. Android exposes a requesting URL,
 not frame identity: the shell pins top-level navigation and its controller CSP
@@ -41,7 +54,7 @@ runtime is not selected; no architecture is excluded to hide an unsupported targ
 The SDK/runtime/native-architecture selection is logged. Selection/cleanup units
 are not SDK or dialog proof; fresh hosted execution remains required.
 
-A separate94c738 iOS run timed out in bootstatus180s and both owned cleanup
+A separate94c738 iOS run timed out in bootstatus 180s and both owned cleanup
 commands30s each before any build/test. That is not the observed78/93 module
 architecture failure. Fixed phase/outcome evidence now preserves the first
 boot/build/test failure while independently attempting shutdown and delete.
