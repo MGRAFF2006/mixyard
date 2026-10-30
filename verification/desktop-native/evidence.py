@@ -36,7 +36,7 @@ def binary_info(binary):
 def inventory(binary=None):
     repo = Path(__file__).resolve().parents[2]
     desktop = repo / 'apps/desktop'
-    sources = [*desktop.glob('src/**/*'), *desktop.glob('src-tauri/src/**/*'),
+    sources = [*desktop.glob('src/**/*'), *repo.glob('apps/web/src/**/*'), *desktop.glob('src-tauri/src/**/*'),
                *desktop.glob('src-tauri/capabilities/*'),
                *desktop.glob('src-tauri/permissions/*'),
                desktop / 'package.json', desktop / 'pnpm-lock.yaml',

@@ -1,0 +1,79 @@
+name: Authenticated device control integration
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['control/**', 'src/**', 'apps/web/src/**', 'apps/web/package.json', 'apps/web/pnpm-lock.yaml', 'Cargo.toml', 'Cargo.lock', 'verification/device-control/**', '.github/workflows/device-control-integration.yml']
+  push:
+    paths: ['control/**', 'src/**', 'apps/web/src/**', 'apps/web/package.json', 'apps/web/pnpm-lock.yaml', 'Cargo.toml', 'Cargo.lock', 'verification/device-control/**', '.github/workflows/device-control-integration.yml']
+permissions:
+  contents: read
+jobs:
+  authenticated-control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.1'
+      - uses: pnpm/action-setup@v6
+        with:
+          version: '11.10.0'
+          run_install: false
+      - name: Install locked existing client dependencies
+        run: pnpm --dir apps/web install --frozen-lockfile
+      - name: Build actual TLS control service
+        run: cargo build --locked --manifest-path control/Cargo.toml --bin mixyard-control --jobs 2
+      - name: Shared Vue API against two owned TLS identities and stores
+        env:
+          MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/control/target/debug/mixyard-control
+        run: node --test verification/device-control/*.test.ts
+      - name: Prepare isolated Chromium
+        run: pnpm --dir apps/web exec playwright install --with-deps chromium
+      - name: Rendered shared console against actual owned TLS services
+        env:
+          MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/control/target/debug/mixyard-control
+          MIXYARD_CONTROL_BROWSER: '1'
+        run: node --test verification/device-control/*.test.ts
+      - name: Record exact source and executable evidence
+        env:
+          MIXYARD_CONTROL_BINARY: ${{ github.workspace }}/control/target/debug/mixyard-control
+        run: |
+          mkdir -p evidence
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process'
+          import { createHash } from 'node:crypto'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim()
+          const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex')
+          writeFileSync('evidence/device-control.json', JSON.stringify({
+            sourceHead: git('rev-parse', 'HEAD'),
+            controlTree: git('rev-parse', 'HEAD:control'),
+            apiSha256: hash('apps/web/src/api.ts'),
+            transportHelperSha256: hash('verification/device-control/pinned-fetch.ts'),
+            transportRegressionSha256: hash('verification/device-control/transport.test.ts'),
+            browserClientSha256: hash('verification/device-control/browser-client.ts'),
+            browserHarnessSha256: hash('verification/device-control/browser.ts'),
+            serviceHarnessSha256: hash('verification/device-control/service.test.ts'),
+            controlLockSha256: hash('control/Cargo.lock'),
+            executableSha256: hash(process.env.MIXYARD_CONTROL_BINARY),
+            rustc: execFileSync('rustc', ['--version'], { encoding: 'utf8' }).trim(),
+            node: process.version,
+            openssl: execFileSync('openssl', ['version'], { encoding: 'utf8' }).trim(),
+            scope: 'owned loopback TLS: shared API and rendered App through a test-only pinned transport binding',
+            nativeBridgeQualified: false, physicalNetworkQualified: false, audioQualified: false
+          }, null, 2))
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: device-control-evidence
+          path: evidence/device-control.json
+          if-no-files-found: error
