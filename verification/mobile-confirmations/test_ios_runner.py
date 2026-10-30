@@ -28,7 +28,7 @@ class SimulatorSelection(unittest.TestCase):
 
     def test_failed_actual_test_preserves_single_architecture_and_disposes_only_owned_uuid(self):
         owned = '11111111-2222-3333-4444-555555555555'
-        def capture(*args):
+        def capture(_label, *args):
             if args[:2] == ('xcodebuild', '-version'): return 'Xcode16.4'
             if '--show-sdk-version' in args: return '18.5'
             if 'runtimes' in args: return json.dumps({'runtimes':[runtime('26.2'), runtime('18.5')]})
@@ -39,7 +39,7 @@ class SimulatorSelection(unittest.TestCase):
         def run(args, **kwargs):
             calls.append(args)
             if args[:2] == ['xcodebuild','test']: raise subprocess.CalledProcessError(65, 'owned-xcodebuild')
-        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform, 'machine', return_value='arm64'), patch.object(module, 'capture', side_effect=capture), patch.object(module.subprocess, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
+        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform, 'machine', return_value='arm64'), patch.object(module, 'capture', side_effect=capture), patch.object(module, 'process_evidence'), patch.object(module.subprocess, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(subprocess.CalledProcessError): module.main()
         command=next(args for args in calls if args[:2]==['xcodebuild','test'])
         self.assertIn('ARCHS=arm64', command); self.assertIn('ONLY_ACTIVE_ARCH=YES', command)
@@ -49,7 +49,7 @@ class SimulatorSelection(unittest.TestCase):
     def test_boot_timeout_stays_primary_when_shutdown_and_delete_also_time_out(self):
         calls=[]
         identifier='11111111-2222-3333-4444-555555555555'
-        def capture(*args):
+        def capture(_label, *args):
             if args[:2]==('xcodebuild','-version'): return 'Xcode16.4'
             if '--show-sdk-version' in args: return '18.5'
             if 'runtimes' in args: return json.dumps({'runtimes':[runtime('18.5')]})
@@ -61,7 +61,7 @@ class SimulatorSelection(unittest.TestCase):
             if any(value in args for value in ['bootstatus','shutdown','delete']):
                 raise subprocess.TimeoutExpired(args, kwargs['timeout'])
         evidence=io.StringIO()
-        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform,'machine',return_value='arm64'), patch.object(module,'capture',side_effect=capture), patch.object(module.subprocess,'run',side_effect=run), contextlib.redirect_stdout(evidence):
+        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform,'machine',return_value='arm64'), patch.object(module,'capture',side_effect=capture), patch.object(module,'process_evidence'), patch.object(module.subprocess,'run',side_effect=run), contextlib.redirect_stdout(evidence):
             with self.assertRaises(subprocess.TimeoutExpired) as failure: module.main()
         self.assertEqual(failure.exception.timeout,180)
         self.assertIn('bootstatus',failure.exception.cmd)
@@ -70,3 +70,14 @@ class SimulatorSelection(unittest.TestCase):
         self.assertNotIn('actual-ui-test-start',evidence.getvalue())
         for label in ['bootstatus','cleanup-shutdown','cleanup-delete']:
             self.assertIn('"phase": "'+label+'", "kind": "timeout"',evidence.getvalue())
+
+    def test_discovery_capture_keeps_30s_bound_and_filters_process_evidence_without_retry(self):
+        raw = '7 1 /private/SECRET/CoreSimulatorService\n8 1 /private/SECRET/unrelated-app\n9 1 /usr/bin/simctl\n'
+        evidence=io.StringIO()
+        with patch.object(module.subprocess,'check_output',side_effect=subprocess.TimeoutExpired(['owned-simctl'],30,output='SECRET-OUTPUT')) as run, patch.object(module.subprocess,'run',return_value=subprocess.CompletedProcess([],0,stdout=raw)), contextlib.redirect_stdout(evidence):
+            with self.assertRaises(subprocess.TimeoutExpired): module.capture('runtime-discovery','xcrun','simctl','list','runtimes','--json')
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs['timeout'],30)
+        self.assertIn('"phase": "runtime-discovery", "kind": "timeout", "value": 30',evidence.getvalue())
+        self.assertIn('CoreSimulatorService',evidence.getvalue()); self.assertIn('simctl',evidence.getvalue())
+        self.assertNotIn('SECRET',evidence.getvalue()); self.assertNotIn('unrelated-app',evidence.getvalue())

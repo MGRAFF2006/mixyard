@@ -47,3 +47,14 @@ architecture failure. Fixed phase/outcome evidence now preserves the first
 boot/build/test failure while independently attempting shutdown and delete.
 Those180s/30s/30s limits and all native UI assertions are unchanged; cleanup
 failure never becomes successful qualification.
+
+The new862/2b/a306 family runs also failed at an EARLIER boundary: CoreSimulator
+runtime discovery itself exceeded30s before creating a simulator. These are the
+[78 job](https://github.com/MGRAFF2006/mixyard/actions/runs/40989290922/job/123847664523),
+[92 job](https://github.com/MGRAFF2006/mixyard/actions/runs/40989400914/job/123848008540)
+and [93 job](https://github.com/MGRAFF2006/mixyard/actions/runs/40989429466/job/123848090287).
+No architecture build or native dialog test ran. Labeled capture now records the
+selected toolchain before discovery and bounded read-only CoreSimulator/tool
+process names and IDs on failure. No argv/environment/unrelated process data is
+published; no service is killed/restarted and discovery is not retried or given
+a longer deadline. The actual service-initialization cause remains unknown.
