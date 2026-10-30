@@ -88,6 +88,38 @@ static inline bool mx_private_stamp(struct mx_private_timeline *t,
   return true;
 }
 
+/* Receipt coordinates stay native. The engine stamp remains rebased to zero. */
+static inline bool
+mx_private_processed_native(const struct mx_private_timeline *timeline,
+                            const mx_stamp *stamp, uint64_t native_frame,
+                            uint64_t *receipt_frame) {
+  if (!timeline->started || native_frame < timeline->native_zero ||
+      stamp->first_frame != native_frame - timeline->native_zero ||
+      stamp->clock_id != timeline->clock_id ||
+      stamp->generation != timeline->generation ||
+      stamp->revision != timeline->revision)
+    return false;
+  *receipt_frame = native_frame;
+  return true;
+}
+
+enum mx_private_format_fault {
+  MX_PRIVATE_FORMAT_NONE,
+  MX_PRIVATE_FORMAT_SOURCE,
+  MX_PRIVATE_FORMAT_DESTINATION
+};
+/* Called by the production Format handler. Generator outputs and engine
+ * inputs are source authority; engine outputs and bus ports are destinations.
+ */
+static inline enum mx_private_format_fault
+mx_private_format_scope(unsigned role, bool output, bool exact, bool present,
+                        bool admitted) {
+  if (exact || (!present && !admitted))
+    return MX_PRIVATE_FORMAT_NONE;
+  return role == 2 || (role == 1 && output) ? MX_PRIVATE_FORMAT_DESTINATION
+                                            : MX_PRIVATE_FORMAT_SOURCE;
+}
+
 struct mx_private_stop_tuple {
   uint64_t epoch, active, reserved;
   bool pending;
@@ -112,6 +144,70 @@ mx_private_stop_accept(const struct mx_private_stop_tuple *expected,
   return mx_private_stop_equal(expected, current) ||
          (receipt_emitted && retained &&
           mx_private_stop_equal(expected, retained));
+}
+enum mx_private_action {
+  MX_PRIVATE_PREPARE = 1,
+  MX_PRIVATE_LINK,
+  MX_PRIVATE_STAGE
+};
+struct mx_private_reservation {
+  struct mx_private_stop_tuple target;
+  enum mx_private_action action;
+  char digest[65];
+  bool present, consumed, completed, fenced;
+};
+/* This is an actual received priority reservation, not a Fence echo. One live
+ * command and its exact completed control view are retained until next reserve.
+ * The normal frame cannot mutate anything until its digest is verified. */
+static inline bool
+mx_private_control_reserve(struct mx_private_reservation *r,
+                           const struct mx_private_stop_tuple *target,
+                           enum mx_private_action action, const char *digest) {
+  if (r->fenced || (r->present && !r->completed) || !target->pending ||
+      !target->epoch || !target->reserved || !target->operation[0] ||
+      action < MX_PRIVATE_PREPARE || action > MX_PRIVATE_STAGE ||
+      strlen(digest) != 64)
+    return false;
+  for (unsigned i = 0; i < 64; i++)
+    if (!((digest[i] >= '0' && digest[i] <= '9') ||
+          (digest[i] >= 'a' && digest[i] <= 'f')))
+      return false;
+  r->target = *target;
+  r->action = action;
+  memcpy(r->digest, digest, 65);
+  r->present = true;
+  r->consumed = false;
+  r->completed = false;
+  return true;
+}
+static inline bool
+mx_private_control_matches(const struct mx_private_reservation *r,
+                           uint64_t epoch, const char *operation,
+                           enum mx_private_action action, const char *digest) {
+  return r->present && r->target.epoch == epoch && r->action == action &&
+         !strcmp(r->target.operation, operation) && !strcmp(r->digest, digest);
+}
+static inline bool mx_private_control_consume(struct mx_private_reservation *r,
+                                              uint64_t epoch,
+                                              const char *operation,
+                                              enum mx_private_action action,
+                                              const char *digest) {
+  if (r->fenced || r->consumed ||
+      !mx_private_control_matches(r, epoch, operation, action, digest))
+    return false;
+  r->consumed = true;
+  return true;
+}
+static inline bool
+mx_private_control_fence(struct mx_private_reservation *r,
+                         const struct mx_private_stop_tuple *expected,
+                         const struct mx_private_stop_tuple *current) {
+  if (r->fenced ||
+      !mx_private_stop_accept(expected, current, r->present ? &r->target : NULL,
+                              r->completed))
+    return false;
+  r->fenced = true;
+  return true;
 }
 /* No wraparound and no reuse of a generation, including canceled reservations.
  */

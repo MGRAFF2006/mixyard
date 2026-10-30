@@ -378,6 +378,12 @@ pub struct CompanionRequest {
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum CompanionAction {
     #[serde(rename_all = "camelCase")]
+    Reserve {
+        action_kind: String,
+        reserved_generation: u64,
+        request_digest: String,
+    },
+    #[serde(rename_all = "camelCase")]
     Prepare {
         generation: u64,
         snapshot: DesiredSnapshot,
@@ -419,6 +425,11 @@ pub struct CompanionReply {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum CompanionEvent {
+    #[serde(rename_all = "camelCase")]
+    Reserved {
+        reserved_generation: u64,
+        request_digest: String,
+    },
     #[serde(rename_all = "camelCase")]
     Ready {
         inventory_revision: u64,

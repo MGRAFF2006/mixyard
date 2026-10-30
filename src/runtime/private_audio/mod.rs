@@ -192,6 +192,10 @@ pub(crate) struct Service {
     prepared: Option<CurrentSnapshot>,
     guard: Option<CurrentSnapshotGuard>,
     install_started: Option<Instant>,
+    startup_started: Option<Instant>,
+    child_ready: bool,
+    reservation_ready: bool,
+    deferred_native: Option<CompanionRequest>,
     fence_started: Option<Instant>,
     failed: bool,
     retired: bool,
@@ -218,6 +222,7 @@ impl Service {
         let mut coordinator =
             Coordinator::new(nonce.clone()).map_err(|e| io::Error::other(e.message))?;
         let listener = super::transport::Listener::bind(&client::endpoint(instance)?)?;
+        let startup_started = Instant::now();
         let processes = process::Processes::spawn(
             qualified,
             directory,
@@ -239,6 +244,10 @@ impl Service {
             prepared: None,
             guard: None,
             install_started: None,
+            startup_started: Some(startup_started),
+            child_ready: false,
+            reservation_ready: false,
+            deferred_native: None,
             fence_started: None,
             failed: false,
             retired: false,
@@ -292,6 +301,7 @@ impl Service {
                     let qualified =
                         descriptor::Qualified::load(&self.processes.qualified.descriptor_path)
                             .map_err(|e| failure(ErrorCode::UnqualifiedSdk, e.to_string()))?;
+                    let startup_started = Instant::now();
                     let processes = process::Processes::spawn(
                         qualified,
                         &self.directory,
@@ -304,6 +314,8 @@ impl Service {
                     self.coordinator
                         .register_private_core(processes.connection())?;
                     self.processes = processes;
+                    self.child_ready = false;
+                    self.startup_started = Some(startup_started);
                     self.retired = false;
                     self.failed = false;
                 }
@@ -339,9 +351,44 @@ impl Service {
             Operation::Stop { expected } => {
                 let request = self.coordinator.begin_stop(&expected)?;
                 self.fence_started = Some(Instant::now());
+                self.deferred_native = None;
+                self.startup_started = None;
                 Ok(Some(request))
             }
         }
+    }
+    fn queue_command(&mut self, command: &CompanionRequest) -> Result<(), Failure> {
+        if matches!(
+            command.action,
+            CompanionAction::Prepare { .. }
+                | CompanionAction::Link { .. }
+                | CompanionAction::Stage { .. }
+        ) {
+            if self.deferred_native.is_some() {
+                return Err(failure(ErrorCode::Busy, "native dispatch already pending"));
+            }
+            let reservation = self.coordinator.reserve_request(command)?;
+            self.processes
+                .queue(&reservation)
+                .map_err(|e| failure(ErrorCode::OwnerFailed, e.to_string()))?;
+            self.reservation_ready = false;
+            self.deferred_native = Some(command.clone());
+            Ok(())
+        } else {
+            self.processes
+                .queue(command)
+                .map_err(|e| failure(ErrorCode::OwnerFailed, e.to_string()))
+        }
+    }
+    fn dispatch_reserved(&mut self) -> Result<(), Failure> {
+        if self.child_ready && self.reservation_ready {
+            if let Some(command) = self.deferred_native.take() {
+                self.processes
+                    .queue(&command)
+                    .map_err(|e| failure(ErrorCode::OwnerFailed, e.to_string()))?;
+            }
+        }
+        Ok(())
     }
     fn release(&mut self, permit: &state::ReleasePermit) -> Result<(), Failure> {
         if permit.allows_guard_release() {
@@ -361,6 +408,14 @@ impl Service {
                 self.processes
                     .observe()
                     .map_err(|e| failure(ErrorCode::UnqualifiedSdk, e.to_string()))?;
+                self.child_ready = true;
+                self.startup_started = None;
+                self.dispatch_reserved()?;
+                None
+            }
+            Transition::Reserved => {
+                self.reservation_ready = true;
+                self.dispatch_reserved()?;
                 None
             }
             Transition::Prepared => Some(ResultValue::Prepared {
@@ -474,8 +529,32 @@ impl Service {
             }
         }
     }
+    fn timeout_fence(&mut self) {
+        self.startup_started = None;
+        self.install_started = None;
+        self.deferred_native = None;
+        let target = self.coordinator.snapshot().stop_target;
+        match self.coordinator.begin_stop(&target) {
+            Ok(command) => match self.processes.queue(&command) {
+                Ok(()) => self.fence_started = Some(Instant::now()),
+                Err(error) => self.fail(failure(ErrorCode::OwnerFailed, error.to_string())),
+            },
+            Err(error) => self.fail(error),
+        }
+    }
     pub(crate) fn tick(&mut self) -> io::Result<()> {
         self.listener.owned_directory()?;
+        // One existing2s startup budget includes daemon socket publication.
+        // Fence before consuming a late Ready; it cannot dispatch normal work.
+        if self
+            .startup_started
+            .is_some_and(|s| s.elapsed() >= Duration::from_millis(INSTALL_MS))
+            && self.fence_started.is_none()
+            && self.retirement.is_none()
+            && !self.retired
+        {
+            self.timeout_fence();
+        }
         if !self.shutting_down && self.peers.len() < 16 {
             if let Some(stream) = self.listener.accept()? {
                 self.peers.push(Peer::new(stream));
@@ -521,13 +600,12 @@ impl Service {
                     })),
                     Ok(Some(command)) => {
                         let operation = command.operation_id.clone();
-                        match self.processes.queue(&command) {
+                        match self.queue_command(&command) {
                             Ok(()) => {
                                 self.peers[index].operation = Some(operation);
                                 self.peers[index].started = Instant::now();
                             }
-                            Err(e) => {
-                                let error = failure(ErrorCode::OwnerFailed, e.to_string());
+                            Err(error) => {
                                 self.fail(error.clone());
                                 self.peers[index].reply(Err(error));
                             }
@@ -569,20 +647,12 @@ impl Service {
         // A caller may disappear; only a real fence or actual reaps releases it.
         if self
             .install_started
-            .is_some_and(|start| start.elapsed() >= Duration::from_millis(INSTALL_MS))
+            .is_some_and(|s| s.elapsed() >= Duration::from_millis(INSTALL_MS))
             && self.fence_started.is_none()
             && self.retirement.is_none()
             && !self.retired
         {
-            self.install_started = None;
-            let target = self.coordinator.snapshot().stop_target;
-            match self.coordinator.begin_stop(&target) {
-                Ok(command) => match self.processes.queue(&command) {
-                    Ok(()) => self.fence_started = Some(Instant::now()),
-                    Err(error) => self.fail(failure(ErrorCode::OwnerFailed, error.to_string())),
-                },
-                Err(error) => self.fail(error),
-            }
+            self.timeout_fence();
         }
         if self
             .fence_started
@@ -692,6 +762,8 @@ impl Service {
             let target = self.coordinator.snapshot().stop_target;
             match self.coordinator.begin_stop(&target) {
                 Ok(command) => {
+                    self.deferred_native = None;
+                    self.startup_started = None;
                     self.processes.queue(&command)?;
                     self.fence_started = Some(Instant::now());
                 }

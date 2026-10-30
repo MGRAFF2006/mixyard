@@ -6,6 +6,7 @@
 #endif
 #include "json.hpp"
 #include "owner.h"
+#include "control_transport.h"
 #include "sha256.h"
 #include <array>
 #include <atomic>
@@ -261,6 +262,8 @@ struct App {
   Generation *candidate = nullptr;
   Generation *active = nullptr; // owner ONLY; control reads publication below
   std::atomic<uint64_t> active_generation{0};
+  mx_private_reservation control{}; // received priority reservation, control-only
+  bool fence_pending = false;
   Generation *ticket = nullptr; // retained immutable until owner retirement
   std::atomic<Generation *> pending{nullptr};
   Build build;
@@ -459,6 +462,13 @@ static bool graph_formats(Generation *g) {
   }
   return true;
 }
+static bool source_formats(Generation *g) {
+  for (auto p : g->nodes[0].out)
+    if (!p->format_ok.load(std::memory_order_acquire)) return false;
+  for (auto p : g->nodes[1].in)
+    if (!p->format_ok.load(std::memory_order_acquire)) return false;
+  return true;
+}
 static bool graph_clock(Generation *g, uint64_t clock) {
   for (size_t n = 0; n < 2 + g->no; n++)
     if (g->nodes[n].clock.load(std::memory_order_acquire) != clock)
@@ -585,7 +595,7 @@ static void process(void *userdata, spa_io_position *pos) {
     return;
   }
   bool ready =
-      g->warming.load(std::memory_order_acquire) && graph_formats(g) &&
+      g->warming.load(std::memory_order_acquire) && source_formats(g) &&
       g->generator_clock.load(std::memory_order_acquire) == pos->clock.id;
   for (size_t s = 0; s < g->ns; s++) {
     auto p = e->in[s];
@@ -651,9 +661,15 @@ static void process(void *userdata, spa_io_position *pos) {
       if (mx_host_process(g->host, pos->clock.nsec, stamp, frames,
                           g->inputs.get(), g->ns) == MX_OK) {
         rendered = true;
-        uint64_t unset = UINT64_MAX;
-        g->first_processed.compare_exchange_strong(unset, stamp.first_frame,
-                                                   std::memory_order_release);
+        uint64_t native_processed = 0;
+        if (!mx_private_processed_native(&g->timeline, &stamp,
+                                         pos->clock.position, &native_processed)) {
+          rt_fault(g, 13); revoke(g); rendered = false;
+        } else {
+          uint64_t unset = UINT64_MAX;
+          g->first_processed.compare_exchange_strong(unset, native_processed,
+                                                     std::memory_order_release);
+        }
       } else {
         rt_fault(g, 14);
         revoke(g);
@@ -662,6 +678,9 @@ static void process(void *userdata, spa_io_position *pos) {
   }
   for (size_t o = 0; o < g->no; o++) {
     auto p = e->out[o];
+    if (!p->format_ok.load(std::memory_order_acquire)) {
+      g->outputs[o].closed.store(true, std::memory_order_release);
+    }
     auto b = pw_filter_dequeue_buffer(p);
     if (!b) {
       if (running)
@@ -762,15 +781,14 @@ static void param_changed(void *data, void *port_data, uint32_t id,
   auto p = (Port *)port_data;
   bool ok = exact_format(param);
   p->format_ok.store(ok, std::memory_order_release);
-  if (!ok && e->generation->switched.load(std::memory_order_acquire)) {
-    if (e->role == 2)
-      e->generation->outputs[e->index].closed.store(true,
-                                                    std::memory_order_release);
-    else
-      rt_fault(e->generation, 18);
+  auto scope = mx_private_format_scope(e->role, p->output, ok, param != nullptr,
+      e->generation->switched.load(std::memory_order_acquire));
+  if (scope == MX_PRIVATE_FORMAT_DESTINATION) {
+    auto index = e->role == 2 ? e->index : p->index;
+    e->generation->outputs[index].closed.store(true, std::memory_order_release);
+  } else if (scope == MX_PRIVATE_FORMAT_SOURCE) {
+    rt_fault(e->generation, param ? 19 : 18);
   }
-  if (param && !ok)
-    rt_fault(e->generation, 19);
 }
 static void filter_state(void *data, pw_filter_state old, pw_filter_state state,
                          const char *error) {
@@ -1233,11 +1251,10 @@ static mx_private_stop_tuple stop_tuple(App *a) {
     t.active = 0;
     return t;
   }
-  auto g = a->ticket && !a->ticket->install_replied ? a->ticket : nullptr;
-  if (g) {
+  if (a->control.present && !a->control.completed) {
     t.pending = true;
-    t.reserved = g->generation;
-    memcpy(t.operation, g->install_op.c_str(), g->install_op.size() + 1);
+    t.reserved = a->control.target.reserved;
+    memcpy(t.operation, a->control.target.operation, sizeof(t.operation));
   }
   return t;
 }
@@ -1681,9 +1698,9 @@ static void begin_fence(App *a, const std::string &op, uint64_t epoch,
   a->epoch.store(epoch, std::memory_order_release);
   a->fence_epoch = epoch;
   a->fence_op = op;
-  a->fence_ticket = canceled                                   ? canceled
-                    : a->ticket && !a->ticket->install_replied ? a->ticket
-                                                               : nullptr;
+  a->fence_pending = a->fence_pending || (a->control.present && !a->control.completed);
+  a->control.fenced = true;
+  a->fence_ticket = canceled ? canceled : (a->fence_pending ? a->candidate : nullptr);
   a->fencing = true;
   a->phase = "stopping";
   int r = pw_data_loop_invoke(a->owner, fence_owner, 0, nullptr, 0, false, a);
@@ -1783,7 +1800,7 @@ static void finish_fence(App *a) {
   add(r, "controlEpoch", a->fence_epoch);
   add(r, "operationId", a->fence_op);
   add(r, "outcome",
-      g ? (g->switched.load(std::memory_order_acquire)
+      a->fence_pending ? (g && g->switched.load(std::memory_order_acquire)
                ? "aborted-after-switch"
                : "canceled-before-switch")
         : "no-pending");
@@ -1805,6 +1822,12 @@ static void finish_fence(App *a) {
   a->phase = "stopped";
 }
 
+static mx_private_action reserved_action(const std::string &kind) {
+  if (kind == "prepare") return MX_PRIVATE_PREPARE;
+  if (kind == "link") return MX_PRIVATE_LINK;
+  if (kind == "stage") return MX_PRIVATE_STAGE;
+  return (mx_private_action)0;
+}
 static void handle(App *a, const std::string &line, bool priority) {
   std::string op = "invalid";
   try {
@@ -1821,10 +1844,53 @@ static void handle(App *a, const std::string &line, bool priority) {
     auto action = get(request.get(), "action");
     auto kind = str(get(action, "kind"));
     uint64_t epoch = num(get(request.get(), "controlEpoch"));
+    // Only the exact received reservation's canceled normal bytes may drain
+    // silently after Fence. All other old epochs remain protocol failures.
+    if (epoch != a->epoch.load(std::memory_order_acquire) && a->fencing &&
+        a->control.fenced && epoch == a->control.target.epoch &&
+        op == a->control.target.operation) {
+      if (mx_private_control_matches(&a->control, epoch, op.c_str(),
+                                     reserved_action(kind), digest(line).c_str())) return;
+      if (kind == "install" && a->control.action == MX_PRIVATE_STAGE &&
+          a->control.consumed && a->ticket && !a->ticket->staged.empty()) {
+        keys(action, {"kind", "stagedToken"});
+        if (str(get(action, "stagedToken")) == a->ticket->staged &&
+            op == a->ticket->stage_op) return;
+      }
+    }
     require(epoch == a->epoch.load(std::memory_order_acquire),
             "stale-control-epoch", "control epoch mismatch");
-    require(!priority || kind == "fence" || kind == "shutdown",
-            "protocol-error", "priority pipe only accepts fence/shutdown");
+    require(!priority || kind == "reserve" || kind == "fence" || kind == "shutdown",
+            "protocol-error", "priority socket only accepts reserve/fence/shutdown");
+    if (kind == "reserve") {
+      keys(action, {"kind", "actionKind", "reservedGeneration", "requestDigest"});
+      require(priority && !a->fencing && !a->closing && !a->failed_held,
+              "busy", "private control reservation closed");
+      auto normal_kind = str(get(action, "actionKind"));
+      auto normal_action = reserved_action(normal_kind);
+      auto generation = num(get(action, "reservedGeneration"));
+      auto hash = str(get(action, "requestDigest"));
+      require(normal_action && hex(hash) && !op.empty() &&
+                  a->operations.count(normal_kind + ":" + op) == 0,
+              "protocol-error", "invalid or replayed reservation");
+      if (normal_action == MX_PRIVATE_PREPARE) {
+        require(!a->candidate && generation > a->last_generation && generation < UINT64_MAX,
+                "stale-generation", "invalid Prepare reservation");
+      } else {
+        require(a->candidate && a->candidate->prepare_replied &&
+                    generation == a->candidate->generation && !a->candidate->stage_started,
+                "stale-generation", "reservation has no current prepared graph");
+      }
+      mx_private_stop_tuple target{};
+      target.epoch = epoch; target.active = a->published_generation;
+      target.pending = true; target.reserved = generation;
+      memcpy(target.operation, op.c_str(), op.size() + 1);
+      require(mx_private_control_reserve(&a->control, &target, normal_action, hash.c_str()),
+              "busy", "another control reservation is retained");
+      auto e = event("reserved");
+      add(e, "reservedGeneration", generation); add(e, "requestDigest", hash);
+      emit(a, op, e); return;
+    }
     if (kind == "snapshot") {
       keys(action, {"kind"});
       auto e = event("snapshot");
@@ -1836,11 +1902,9 @@ static void handle(App *a, const std::string &line, bool priority) {
       keys(action, {"kind", "expected", "newControlEpoch"});
       auto expected = parse_stop(a, get(action, "expected"));
       auto actual = stop_tuple(a);
-      require(mx_private_stop_accept(&expected, &actual,
-                                     a->ticket ? &a->ticket->pending_target
-                                               : nullptr,
-                                     a->ticket && a->ticket->install_replied),
-              "stale-generation", "exact active/pending stop tuple changed");
+      require(mx_private_control_fence(&a->control, &expected, &actual),
+              "stale-generation", "exact received reservation/active Stop target changed");
+      a->fence_pending = expected.pending;
       a->settled_fence_ticket = !expected.pending && expected.active &&
                                         a->ticket &&
                                         a->ticket->generation == expected.active
@@ -1868,6 +1932,11 @@ static void handle(App *a, const std::string &line, bool priority) {
     require(a->ready && a->admission.load(std::memory_order_acquire) &&
                 !a->fencing && !a->closing && !a->failed_held,
             "busy", "private owner not admitting mutations");
+    if (kind != "install") {
+      require(mx_private_control_consume(&a->control, epoch, op.c_str(),
+                                         reserved_action(kind), digest(line).c_str()),
+              "protocol-error", "normal bytes differ from received reservation");
+    }
     if (kind == "prepare") {
       prepare(a, op, action, raw_config);
       return;
@@ -1932,10 +2001,7 @@ static void handle(App *a, const std::string &line, bool priority) {
       g->stage_op = op;
       g->install_op = op;
       g->admitted_inventory = g->inventory.load(std::memory_order_acquire);
-      g->pending_target = stop_tuple(a);
-      g->pending_target.pending = true;
-      g->pending_target.reserved = g->generation;
-      memcpy(g->pending_target.operation, op.c_str(), op.size() + 1);
+      g->pending_target = a->control.target;
       a->ticket = g;
       g->stage_started = true;
       canonical_request(g);
@@ -1951,7 +2017,10 @@ static void handle(App *a, const std::string &line, bool priority) {
     }
     if (kind == "install") {
       keys(action, {"kind", "stagedToken"});
-      require(g->staged_host && !g->staged.empty() &&
+      require(a->control.present && a->control.consumed && !a->control.completed &&
+                  a->control.action == MX_PRIVATE_STAGE &&
+                  op == a->control.target.operation &&
+                  g->staged_host && !g->staged.empty() &&
                   str(get(action, "stagedToken")) == g->staged &&
                   op == g->stage_op,
               "stale-generation", "staged token mismatch");
@@ -2089,7 +2158,7 @@ static void tick(void *data, uint64_t expirations) {
   try {
     pump(a, true);
     collect_builder(a);
-    if (!a->ready && !a->fault.load() && a->core_ok && a->modules == 63) {
+    if (!a->ready && !a->fencing && !a->fault.load() && a->core_ok && a->modules == 63) {
       a->ready = true;
       auto e = event("ready");
       add(e, "inventoryRevision", a->inventory);
@@ -2105,6 +2174,7 @@ static void tick(void *data, uint64_t expirations) {
         add(e, "preparedToken", g->prepared);
         add(e, "inventoryRevision", g->inventory.load());
         add(e, "outputs", outputs_json(g));
+        a->control.completed = true;
         emit(a, g->prepare_op, e);
       }
     }
@@ -2120,6 +2190,7 @@ static void tick(void *data, uint64_t expirations) {
           auto e = event("linked");
           add(e, "inventoryRevision", g->inventory.load());
           add(e, "outputs", outputs_json(g));
+          a->control.completed = true;
           emit(a, out.link_op, e);
         }
       }
@@ -2134,6 +2205,7 @@ static void tick(void *data, uint64_t expirations) {
         a->pending.store(nullptr, std::memory_order_release);
         auto e = event("installed");
         add(e, "receipt", installed(g));
+        a->control.completed = true;
         emit(a, g->install_op, e);
         a->phase = "running";
       }
@@ -2325,9 +2397,8 @@ int main(int argc, char **argv) {
     a.epoch.store(epoch);
     a.normal.data.reserve(wire::limit);
     a.cancel.data.reserve(wire::limit);
-    struct stat cancel_stat;
-    require(!fstat(a.cancel_fd, &cancel_stat) && S_ISFIFO(cancel_stat.st_mode),
-            "protocol-error", "separate inherited cancellation pipe required");
+    require(mx_private_cancel_socket(a.cancel_fd, getppid()),
+            "protocol-error", "inherited anonymous parent UnixStream socketpair required");
     nonblocking(STDIN_FILENO);
     nonblocking(STDOUT_FILENO);
     nonblocking(a.cancel_fd);

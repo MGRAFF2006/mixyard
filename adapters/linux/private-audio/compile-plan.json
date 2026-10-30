@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "scope": "future compile-only proposal; no current cloud authorization",
+  "spentAttempt": {
+    "sandboxId": "bx_t32duk6y",
+    "sourceHead": "341dc1e4a9b4a2e58a97eee5d5716a71be3ab317",
+    "failure": "wrong assumed /home/user/mixyard-run/test-source/Cargo.lock path",
+    "compilerStagesStarted": 0,
+    "stoppedAt": "2026-10-30T14:06:19.579Z",
+    "forced": false
+  },
+  "sourceApplicability": {
+    "historicalHead": "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24",
+    "manifestSha256": "6be7d63aacc9f1f288fb9fd3daad8dba9293e12115b1dad95d47057207c86d9d",
+    "method": "Compare these current canonical host input hashes to independently retained historical manifest, then freshly verify actual static archive hash. Do not depend on a mutable historical checkout pathname; no fresh Rust build claim.",
+    "filesSha256": {
+      "Cargo.lock": "cdddf79a58bdd729f86c307458315d1d07199744752d2ddc7bcd98982bab5f27",
+      "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
+      "adapters/engine/Cargo.lock": "6a743ff7adc6d077242374e1d2f195d88447e966b7fb0e504d51babb054afee2",
+      "adapters/engine/Cargo.toml": "4331dd20bb33026bb82a1b389bad4e442361c39a4db71e74c89251d53adece90",
+      "adapters/engine/README.md": "1ac5289aced7bdd95a20807d11a580255d5b45a8733024242a1fe01cb3876db6",
+      "adapters/engine/fixtures/owned-common-clock.json": "fa3073a9f2b821a5d01aec913e26611729baf18ef17bb5330da816c296b0f11b",
+      "adapters/engine/include/mixyard_host.h": "ed609f4038c8ea3a4f08dc07878b2074fd6452fcbda20eccad57d1336c6f6a2a",
+      "adapters/engine/output-attestation.md": "0e083d2040678219919c7753bc55752f26cf7e247d2bb80796346b6879c7ac59",
+      "adapters/engine/src/attestation.rs": "30d73bfaaef0512576514194b6d286ce34c2c7a17164d87c99c321e9b1449700",
+      "adapters/engine/src/lib.rs": "18d261b033e9b4b989918991a9832f706b9a96915424999ae418aa4743e874f2",
+      "adapters/engine/src/tests.rs": "edce23020031f2488673269edcd918c7a1ff5583b84bff073ccf05fc46863877",
+      "adapters/engine/tests/abi_oracle.cpp": "10e4e874781f4544641c48ce6f6e9350242bcad5ce7fff5bbe487abe8aece24d",
+      "src/audio.rs": "e0fef28ff0ede52f8d54db970f6ba28d405cce1f53257cfc2e500772aef790bf",
+      "src/audio/clock.rs": "25cbea05fb566deee2e2cce4d96334561f0f366ad0820bcb3aa93e6907a1b91d",
+      "src/audio/pcm.rs": "9db2dcfd11f23c271822a637a2da6006c3bedf8dde9f82507acffa8894bfffe3",
+      "src/diagnostics.rs": "ede695a1c82587a7803ad54d980823575d14fb4d8d6b5418677ba7de8381fa1e",
+      "src/dsp/filters.rs": "c5d8ac54184aca4df0133db2c87f441973505c8db9257b5e5fae93f43fe180b9",
+      "src/dsp/live.rs": "e111a3c54afd22d92cc712c823d8356556004cf5452a7adfb92239b79ef31f4c",
+      "src/dsp/mod.rs": "19004ab34d3d2dc11f4b400ce9ca1cf82a4a00d8fe757ddf9aabf508db28680e",
+      "src/latency.rs": "bd581a29e75a61af63060ab9689ec9032f3728046b4ac76ebe47ad01ce6ff6b9",
+      "src/lib.rs": "b2682a2c2f739b02d0a59991a683c292f9ffb8255e633ba6b6f6f97639fb6e99",
+      "src/runtime/core.rs": "49a0016f040535bb63c143c37893add29c69023957af3d7cb1c545624da4f744",
+      "src/runtime/worker.rs": "51f60474b4dc86a9b3369eafc35fa25600d633354eb91589f08e819d94221b9c"
+    }
+  },
+  "expectedOwnedPaths": {
+    "runRoot": "/home/user/mixyard-run",
+    "sdkPrefix": "/home/user/mixyard-run/prefix",
+    "prefixManifest": "/home/user/mixyard-run/prefix-manifest.json",
+    "hostArchive": "/home/user/mixyard-run/rust/release/libmixyard_host.a",
+    "jsonCPkgConfig": "/usr/lib/x86_64-linux-gnu/pkgconfig/json-c.pc"
+  },
+  "expectedArtifactPins": {
+    "hostArchiveSha256": "0e888406e418ef031d8a43a757df4c94c54efb17f0f58b3531d8aea1f8878824",
+    "prefixManifestSha256": "929697e4c0c876facae1091cb342d16249d796036a9973f2643314bd3af0ded6",
+    "pipewireVersion": "1.4.8",
+    "pipewireCommit": "8b43ed5c910e892d53de5a96aa01e9280a5b6650",
+    "pipewireBuildId": "05f1c03afc6324831bf032ed7274f34f70a16216",
+    "pipewireLibrarySha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1"
+  },
+  "boundedDiscoveryFirst": [
+    "Validate explicit owned runRoot and each expected artifact path before any compiler; emit one bounded path/pin report.",
+    "Only if an expected archive path is absent, inspect at most the two previously observed rust/release and rust/release/deps candidate files; require unique hash match or STOP. No recursive/global search.",
+    "Verify source-scope manifest applicability, actual archive SHA256, full prefix files/symlinks/manifest, resolved compiler/pkg-config identities and exact public header inputs.",
+    "Only a new explicit root budget may compile the JSON helper and companion, stopping on the first setup/compiler/link boundary with bounded diagnostics. No SDK/Rust rebuild, install, runtime or retry."
+  ]
+}

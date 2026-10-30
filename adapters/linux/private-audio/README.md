@@ -37,7 +37,7 @@ availability or physical/application capture claims.
 Stage requires all links, exact formats, fresh source headers and one observed
 SPA graph clock. A dedicated owned pthread constructs the actual host and checks
 the compiled `source_info`/`output_info` against every binding. Control remains
-available while the builder runs. Graph construction checks the priority pipe
+available while the builder runs. Graph construction checks the priority socket
 between native construction steps. Config SHA256 covers the **exact transmitted
 compact serde Config bytes**, not a C++ reserialization. The request digest is
 the exact bytes supplied to `mx_host_create`. The endpoint-set digest covers a
@@ -55,7 +55,7 @@ and never retained. Callback code allocates/frees nothing and takes no locks,
 waits, JSON, logging or I/O. Wrong owner is fatal. Destination failure is local
 and cannot create a successful per-output install receipt.
 
-Fence uses the separate priority pipe even during Stage. It closes admission,
+Fence uses the separate priority socket even during Stage. It closes admission,
 advances the epoch and queues a nonblocking exclusive-owner retirement barrier.
 The exact retained pending control tuple remains stoppable after a physical
 switch or queued Installed reply; the exact settled control tuple is also
@@ -161,3 +161,12 @@ The separate product launcher/private CLI/Store ownership flow and still-unrun
 R1/R2 ordinary-recorder acceptance are documented in
 [product-flow.md](product-flow.md). Parent private status exposes only the
 registered owned connection paths; this is not native admission/provenance.
+
+The six findings in review5713498177 are addressed by exact UnixStream fd3
+validation, native/engine coordinate separation, received priority reservations,
+Ready-gated dispatch, non-retransmitting Busy on repeated Stop, and source-side
+ongoing formats with destination-local format failure. These are source/portable
+repairs, not executed SDK-handler or four-recorder qualification. The corrected
+compile applicability/discovery proposal is [compile-plan.json](compile-plan.json);
+the prior compile-only budget stopped before every compiler at its wrong
+historical checkout path and is spent. No new cloud execution is implied.

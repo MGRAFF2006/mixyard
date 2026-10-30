@@ -8,7 +8,7 @@ legacy lifecycle status stays unavailable/false/null.
 Public private endpoint: same-user0600 `private-audio.sock` in the owned0700
 runtime instance directory. Requests8KiB/results64KiB, newline-delimited JSON.
 Companion control: stdin/stdout newline JSON <=1MiB, with a separate priority
-cancel pipe passed by `--cancel-fd`. No PCM on either channel. Native callbacks
+cancel socket passed by `--cancel-fd`. No PCM on either channel. Native callbacks
 publish only preallocated scalar receipt state; control serializes off callback.
 
 Companion command:
@@ -30,7 +30,7 @@ the Rust enums; do not introduce independently named alias fields.
   per-output first commit receipts. The parent now holds the canonical Store
   current-snapshot guard, not before Prepare/Stage.
 - `fence {expected:StopTarget,newControlEpoch}` is accepted on the priority
-  cancel pipe even when the mutator is occupied. Advance epoch, reject old
+  cancel socket even when the mutator is occupied. Advance epoch, reject old
   tickets permanently, revoke/clear owned state on the actual DataLoop owner.
   Reply `fenced {receipt}` distinguishes canceled-before-switch and actual
   aborted-after-switch. No late queued install is allowed after fence proof.
@@ -109,3 +109,37 @@ adapter factory, not the six-module daemon or native mixer graph.
 
 The concrete unrun product acceptance and command sequence is in
 [product-flow.md](product-flow.md).
+
+Review repair: the inherited cancellation transport is the anonymous connected
+AF_UNIX SOCK_STREAM pair created by the real Rust launcher, not a FIFO. Native
+startup validates that exact socket kind, anonymous addresses and same-owner
+parent peer credentials before reading the closed nonce/epoch wire.
+
+Before Prepare, Link or Stage, the supervisor sends a bounded priority
+`reserve {actionKind,reservedGeneration,requestDigest}` using the SAME operation
+ID. requestDigest is SHA256 of the exact normal CompanionRequest bytes without
+its newline. Native returns matching `reserved {reservedGeneration,requestDigest}`
+and retains the exact control tuple/digest before normal bytes can execute.
+Normal mutation dispatch requires BOTH this acknowledgement and the current
+registered child's Ready. Reserve is inert control metadata and may precede
+Ready; it creates no native graph/host. One bounded reservation plus one Fence
+may share the priority writer, preserving their socket order under backpressure.
+
+Stop can therefore fence a pending Prepare/Link whose normal bytes were never
+consumed. It never manufactures a reservation from the expected Stop tuple.
+After the epoch/owner barrier, only the exact canceled normal digest (or exact
+known staged Install token) may drain inertly; all other stale requests reject.
+A repeated Stop using the now-current tuple returns Busy without retransmission
+or resetting the first operation's deadline. Startup remains bounded by the
+existing 2s budget and cannot dispatch a deferred mutation after Stop.
+
+firstProcessedFrame and nativeSwitchFrame are NATIVE positions; engineFirstFrame
+is rebased zero. The native production helper checks their mapping. Full graph
+formats remain mandatory at Stage/Install; ongoing engine/source readiness
+checks source-side formats only. A bus or engine-output Format loss closes that
+destination, while source input corruption/format/clock faults remain global.
+
+The startup budget starts before owned child spawning, including daemon socket
+publication; Ready and Reserved waits do not reset any peer/operation deadline.
+An expired startup queues the same priority fence before a late Ready can be
+consumed. These sequencing checks are portable owner-double evidence only.

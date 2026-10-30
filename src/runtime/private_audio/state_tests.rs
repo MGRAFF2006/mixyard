@@ -41,6 +41,51 @@ fn endpoint(i: u32) -> Endpoint {
         port_serial: u64::from(i) + 200,
     }
 }
+fn reserve(c: &mut Coordinator, request: &CompanionRequest) {
+    let reservation = c.reserve_request(request).unwrap();
+    let CompanionAction::Reserve {
+        reserved_generation,
+        request_digest,
+        ..
+    } = reservation.action
+    else {
+        panic!()
+    };
+    c.accept(reply(
+        request,
+        CompanionEvent::Reserved {
+            reserved_generation,
+            request_digest,
+        },
+    ))
+    .unwrap();
+}
+
+#[test]
+#[ignore = "requires explicitly precompiled owned portable C helper; no SDK"]
+fn review_native_contract_native_positions_pass_real_parent_validator() {
+    let helper = std::env::var_os("MIXYARD_PRIVATE_OWNER_CHECK").expect("owned C helper path");
+    for (mode, valid) in [("--positions-old-assignment", false), ("--positions", true)] {
+        let output = std::process::Command::new(&helper)
+            .arg(mode)
+            .output()
+            .unwrap();
+        assert!(output.status.success() && output.stderr.is_empty());
+        let positions: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let (mut c, install, mut receipt) = installing();
+        receipt.native_switch_frame = positions["nativeSwitchFrame"].as_u64().unwrap();
+        receipt.engine_first_frame = positions["engineFirstFrame"].as_u64().unwrap();
+        receipt.first_processed_frame = positions["firstProcessedFrame"].as_u64().unwrap();
+        for commit in &mut receipt.output_commits {
+            commit.native_frame = receipt.native_switch_frame;
+        }
+        assert_eq!(
+            c.accept(reply(&install, CompanionEvent::Installed { receipt }))
+                .is_ok(),
+            valid
+        );
+    }
+}
 fn prepared(c: &mut Coordinator) -> (DesiredSnapshot, Vec<PublishedOutput>) {
     let desired = snapshot();
     let prepare = c.begin_prepare(desired.clone()).unwrap();
@@ -63,6 +108,7 @@ fn prepared(c: &mut Coordinator) -> (DesiredSnapshot, Vec<PublishedOutput>) {
             linked_consumer: None,
         })
         .collect::<Vec<_>>();
+    reserve(c, &prepare);
     c.accept(reply(
         &prepare,
         CompanionEvent::Prepared {
@@ -88,6 +134,7 @@ fn installing() -> (Coordinator, CompanionRequest, Installed) {
             )
             .unwrap();
         outputs[i].linked_consumer = Some(consumer);
+        reserve(&mut c, &request);
         c.accept(reply(
             &request,
             CompanionEvent::Linked {
@@ -100,6 +147,7 @@ fn installing() -> (Coordinator, CompanionRequest, Installed) {
     let request = c
         .begin_stage(&"a".repeat(64), &"b".repeat(64), 3, 1, 5)
         .unwrap();
+    reserve(&mut c, &request);
     c.accept(reply(
         &request,
         CompanionEvent::Staged {
@@ -283,6 +331,7 @@ fn linked_reply_cannot_erase_another_approved_consumer() {
         if i == 1 {
             outputs[0].linked_consumer = None;
         }
+        reserve(&mut c, &request);
         let result = c.accept(reply(
             &request,
             CompanionEvent::Linked {

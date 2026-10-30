@@ -1,8 +1,136 @@
 /* SPDX-License-Identifier: MIT */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include "control_transport.h"
 #include "owner.h"
 #include "sha256.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+
+static void exact_transport(const char *self) {
+  int s[2], pipefd[2];
+  struct stat st;
+  assert(!socketpair(AF_UNIX, SOCK_STREAM, 0, s));
+  assert(!fstat(s[1], &st) && !S_ISFIFO(st.st_mode)); /* old341 startup RED */
+  assert(mx_private_cancel_socket(s[1], getpid()));
+  pid_t child = fork();
+  assert(child >= 0);
+  if (child == 0) {
+    if (dup2(s[1], 3) < 0)
+      _exit(90);
+    if (s[0] != 3)
+      close(s[0]);
+    if (s[1] != 3)
+      close(s[1]);
+    execl(self, self, "--validate-fd3", (char *)NULL);
+    _exit(91);
+  }
+  int status = 0;
+  assert(waitpid(child, &status, 0) == child);
+  assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+  assert(!mx_private_cancel_socket(s[1], getpid() + 1));
+  close(s[0]);
+  close(s[1]);
+  assert(!socketpair(AF_UNIX, SOCK_DGRAM, 0, s));
+  assert(!mx_private_cancel_socket(s[1], getpid()));
+  close(s[0]);
+  close(s[1]);
+  assert(!socketpair(AF_UNIX, SOCK_SEQPACKET, 0, s));
+  assert(!mx_private_cancel_socket(s[1], getpid()));
+  close(s[0]);
+  close(s[1]);
+  assert(!pipe(pipefd));
+  assert(!mx_private_cancel_socket(pipefd[0], getpid()));
+  close(pipefd[0]);
+  close(pipefd[1]);
+  int fd = open("/dev/null", O_RDWR);
+  assert(fd >= 0);
+  assert(!mx_private_cancel_socket(fd, getpid()));
+  close(fd);
+}
+
+static void reservations_before_normal_read(void) {
+  for (unsigned action = MX_PRIVATE_PREPARE; action <= MX_PRIVATE_STAGE;
+       action++) {
+    struct mx_private_reservation r = {0};
+    struct mx_private_stop_tuple pending = {
+        .epoch = 7, .reserved = 9, .pending = true, .operation = "op-1"};
+    char hash[65];
+    memset(hash, 'a', 64);
+    hash[64] = 0;
+    struct mx_private_stop_tuple absent = {.epoch = 7};
+    assert(!mx_private_control_fence(&r, &pending,
+                                     &absent)); /* arbitrary echo rejected */
+    assert(mx_private_control_reserve(&r, &pending,
+                                      (enum mx_private_action)action, hash));
+    assert(!mx_private_control_reserve(&r, &pending,
+                                       (enum mx_private_action)action, hash));
+    assert(mx_private_control_fence(&r, &pending,
+                                    &pending)); /* normal bytes not consumed */
+    assert(!mx_private_control_consume(&r, 7, "op-1",
+                                       (enum mx_private_action)action, hash));
+    assert(mx_private_control_matches(&r, 7, "op-1",
+                                      (enum mx_private_action)action, hash));
+    assert(!mx_private_control_matches(&r, 7, "op-2",
+                                       (enum mx_private_action)action, hash));
+    assert(!mx_private_control_matches(&r, 8, "op-1",
+                                       (enum mx_private_action)action, hash));
+    assert(!mx_private_control_reserve(&r, &pending,
+                                       (enum mx_private_action)action, hash));
+  }
+  struct mx_private_reservation r = {0};
+  char hash[65];
+  memset(hash, 'b', 64);
+  hash[64] = 0;
+  struct mx_private_stop_tuple pending = {.epoch = 2,
+                                          .reserved = 3,
+                                          .pending = true,
+                                          .operation = "op-3"},
+                               settled = {.epoch = 2};
+  assert(mx_private_control_reserve(&r, &pending, MX_PRIVATE_LINK, hash));
+  assert(!mx_private_control_consume(&r, 2, "op-3", MX_PRIVATE_PREPARE, hash));
+  assert(mx_private_control_consume(&r, 2, "op-3", MX_PRIVATE_LINK, hash));
+  r.completed = true;
+  assert(mx_private_control_fence(
+      &r, &pending, &settled)); /* reply queued before parent saw it */
+}
+
+static void destination_format_isolation(void) {
+  bool closed[4] = {false};
+  unsigned scope = mx_private_format_scope(2, true, false, true, true);
+  assert(scope == MX_PRIVATE_FORMAT_DESTINATION);
+  closed[1] = true;
+  for (unsigned i = 0; i < 4; i++)
+    assert(closed[i] == (i == 1));
+  assert(mx_private_format_scope(2, false, false, false, true) ==
+         MX_PRIVATE_FORMAT_DESTINATION);
+  assert(mx_private_format_scope(1, true, false, true, true) ==
+         MX_PRIVATE_FORMAT_DESTINATION);
+  assert(mx_private_format_scope(1, false, false, true, true) ==
+         MX_PRIVATE_FORMAT_SOURCE);
+  assert(mx_private_format_scope(0, true, false, false, true) ==
+         MX_PRIVATE_FORMAT_SOURCE);
+  assert(mx_private_format_scope(0, true, false, false, false) ==
+         MX_PRIVATE_FORMAT_NONE);
+}
+
+static void positions(bool old_assignment) {
+  struct mx_private_timeline t = {
+      .clock_id = 11, .generation = 1, .revision = 1};
+  mx_stamp stamp;
+  uint64_t native = 0;
+  assert(mx_private_stamp(&t, 11, 16384, 1000000000, &stamp));
+  assert(stamp.first_frame == 0);
+  assert(mx_private_processed_native(&t, &stamp, 16384, &native));
+  assert(native == 16384);
+  printf("{\"nativeSwitchFrame\":16384,\"engineFirstFrame\":%llu,"
+         "\"firstProcessedFrame\":%llu}\n",
+         (unsigned long long)stamp.first_frame,
+         (unsigned long long)(old_assignment ? stamp.first_frame : native));
+}
 
 static void revision_and_clock(void) {
   struct mx_private_timeline t = {
@@ -185,7 +313,25 @@ static void every_borrow_returns(void) {
   for (unsigned i = 0; i < 256; i++)
     assert(copy[i] == 0.0);
 }
-int main(void) {
+int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--positions")) {
+    positions(false);
+    return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--positions-old-assignment")) {
+    positions(true);
+    return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--validate-fd3"))
+    return mx_private_cancel_socket(3, getppid()) ? 0 : 1;
+  if (argc == 2 && !strcmp(argv[1], "--old-fifo-fd3")) {
+    struct stat st;
+    return !fstat(3, &st) && S_ISFIFO(st.st_mode) ? 0 : 1;
+  }
+  assert(argc == 1);
+  exact_transport(argv[0]);
+  reservations_before_normal_read();
+  destination_format_isolation();
   revision_and_clock();
   exact_pending_fence();
   native_failure_classification();

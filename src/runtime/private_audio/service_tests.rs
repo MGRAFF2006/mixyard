@@ -24,7 +24,9 @@ while True:
   while b'\n' in buffers[fd]:
    line,buffers[fd]=buffers[fd].split(b'\n',1)
    r=json.loads(line); a=r['action']; kind=a['kind']
-   if kind=='fence':
+   if kind=='reserve':
+    print(json.dumps({'companionVersion':1,'instanceNonce':r['instanceNonce'],'controlEpoch':r['controlEpoch'],'operationId':r['operationId'],'event':{'kind':'reserved','reservedGeneration':a['reservedGeneration'],'requestDigest':a['requestDigest']}}),flush=True)
+   elif kind=='fence':
     receipt={'instanceNonce':r['instanceNonce'],'controlEpoch':a['newControlEpoch'],'operationId':r['operationId'],'outcome':'canceled-before-switch' if a['expected']['pendingInstall'] else 'no-pending','switched':None,'switchEvidence':None,'ownerQuiesced':True,'pendingPcmZero':True,'noLateInstall':True}
     print(json.dumps({'companionVersion':1,'instanceNonce':r['instanceNonce'],'controlEpoch':a['newControlEpoch'],'operationId':r['operationId'],'event':{'kind':'fenced','receipt':receipt}}),flush=True)
    elif kind=='shutdown': sys.exit(0)
@@ -112,6 +114,10 @@ impl Fixture {
                 prepared: None,
                 guard: None,
                 install_started: None,
+                startup_started: None,
+                child_ready: true, // Explicit owner API-double startup.
+                reservation_ready: false,
+                deferred_native: None,
                 fence_started: None,
                 failed: false,
                 retired: false,
@@ -195,6 +201,7 @@ impl Fixture {
                 linked_consumer: None,
             })
             .collect::<Vec<_>>();
+        accept_reservation(service, &prepare);
         service
             .event(reply(
                 &prepare,
@@ -222,6 +229,7 @@ impl Fixture {
                 .unwrap()
                 .unwrap();
             outputs[i].linked_consumer = Some(consumer);
+            accept_reservation(service, &link);
             service
                 .event(reply(
                     &link,
@@ -250,6 +258,7 @@ impl Fixture {
             .pending_install
             .unwrap()
             .reserved_generation;
+        accept_reservation(service, &stage);
         service
             .event(reply(
                 &stage,
@@ -266,6 +275,26 @@ impl Fixture {
         assert!(service.guard.is_some());
         assert_eq!(service.coordinator.snapshot().phase, Phase::Installing);
     }
+}
+fn accept_reservation(service: &mut Service, request: &CompanionRequest) {
+    let reserve = service.coordinator.reserve_request(request).unwrap();
+    let CompanionAction::Reserve {
+        reserved_generation,
+        request_digest,
+        ..
+    } = reserve.action
+    else {
+        panic!()
+    };
+    service
+        .event(reply(
+            request,
+            CompanionEvent::Reserved {
+                reserved_generation,
+                request_digest,
+            },
+        ))
+        .unwrap();
 }
 fn reply(request: &CompanionRequest, event: CompanionEvent) -> CompanionReply {
     CompanionReply {
@@ -433,4 +462,155 @@ fn disconnected_install_deadline_owns_fence_and_retirement_without_a_peer() {
     );
     assert!(fixture.service().guard.is_none());
     assert!(fixture.service().processes.reaped().unwrap());
+}
+
+const READY_GATE: &str = "NORMAL_DISPATCH_OBSERVED";
+fn gated_companion() -> String {
+    COMPANION.replace("   elif kind=='shutdown': sys.exit(0)",
+        "   elif kind=='prepare':\n    print(json.dumps({'companionVersion':1,'instanceNonce':r['instanceNonce'],'controlEpoch':r['controlEpoch'],'operationId':r['operationId'],'event':{'kind':'fault','error':{'code':'owner-failed','message':'NORMAL_DISPATCH_OBSERVED'}}}),flush=True)\n   elif kind=='shutdown': sys.exit(0)")
+}
+fn waiting_prepare(fixture: &mut Fixture) -> UnixStream {
+    fixture.service().child_ready = false;
+    fixture.service().startup_started = Some(Instant::now());
+    let nonce = fixture
+        .service()
+        .coordinator
+        .snapshot()
+        .stop_target
+        .instance_nonce;
+    let client = fixture.client(Operation::Prepare {
+        instance_nonce: nonce,
+        expected_store_revision: 1,
+        expected_config_revision: 1,
+    });
+    let started = Instant::now();
+    while !fixture.service().reservation_ready {
+        fixture.service().tick().unwrap();
+        assert!(!fixture.service().failed);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        std::thread::yield_now();
+    }
+    assert!(fixture.service().deferred_native.is_some());
+    client
+}
+#[test]
+fn normal_prepare_waits_for_current_ready_after_exact_reservation() {
+    let mut fixture = Fixture::new(&gated_companion());
+    let _waiting = waiting_prepare(&mut fixture);
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Preparing
+    );
+    let status = fixture.service().coordinator.snapshot();
+    fixture
+        .service()
+        .event(CompanionReply {
+            companion_version: VERSION,
+            instance_nonce: status.stop_target.instance_nonce,
+            control_epoch: status.stop_target.control_epoch,
+            operation_id: "startup".into(),
+            event: CompanionEvent::Ready {
+                inventory_revision: 1,
+                endpoint_set_digest: "a".repeat(64),
+            },
+        })
+        .unwrap();
+    let started = Instant::now();
+    while !fixture.service().failed {
+        fixture.service().tick().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        fixture
+            .service()
+            .coordinator
+            .snapshot()
+            .last_error
+            .unwrap()
+            .message,
+        READY_GATE
+    );
+}
+#[test]
+fn pending_prepare_stop_fences_without_sending_unready_normal_command() {
+    let mut fixture = Fixture::new(&gated_companion());
+    let _waiting = waiting_prepare(&mut fixture);
+    let expected = fixture.service().coordinator.snapshot().stop_target;
+    assert!(expected.pending_install.is_some());
+    let mut stop = fixture.client(Operation::Stop { expected });
+    let reply = fixture.reply(&mut stop);
+    let Some(ResultValue::StopComplete {
+        receipt, status, ..
+    }) = reply.result
+    else {
+        panic!("{reply:?}")
+    };
+    assert_eq!(receipt.outcome, FenceOutcome::CanceledBeforeSwitch);
+    assert_eq!(status.phase, Phase::Stopped);
+    assert!(fixture.service().deferred_native.is_none());
+}
+#[test]
+fn two_current_stop_peers_do_not_retransmit_or_reset_blocked_fence() {
+    let mut fixture = Fixture::new("import time;time.sleep(60)");
+    fixture.staged_install();
+    assert!(fixture.service().processes.block_priority_for_test() > 0);
+    let expected = fixture.service().coordinator.snapshot().stop_target;
+    let _first = fixture.client(Operation::Stop { expected });
+    fixture.service().tick().unwrap();
+    let deadline = fixture.service().fence_started.unwrap();
+    let pending = fixture.service().processes.priority_pending_bytes();
+    assert!(pending > 0);
+    let expected = fixture.service().coordinator.snapshot().stop_target;
+    let mut second = fixture.client(Operation::Stop { expected });
+    let reply = fixture.reply(&mut second);
+    assert_eq!(reply.error.unwrap().code, ErrorCode::Busy);
+    assert_eq!(fixture.service().fence_started, Some(deadline));
+    assert_eq!(
+        fixture.service().processes.priority_pending_bytes(),
+        pending
+    );
+    assert!(!fixture.service().failed);
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopping
+    );
+}
+
+#[test]
+fn expired_startup_fences_pending_prepare_and_late_ready_cannot_dispatch() {
+    let mut fixture = Fixture::new(&gated_companion());
+    let _waiting = waiting_prepare(&mut fixture);
+    let before = fixture.service().coordinator.snapshot().stop_target;
+    fixture.service().startup_started = Some(Instant::now() - Duration::from_millis(INSTALL_MS));
+    fixture.service().tick().unwrap();
+    fixture
+        .service()
+        .event(CompanionReply {
+            companion_version: VERSION,
+            instance_nonce: before.instance_nonce,
+            control_epoch: before.control_epoch,
+            operation_id: "startup".into(),
+            event: CompanionEvent::Ready {
+                inventory_revision: 1,
+                endpoint_set_digest: "a".repeat(64),
+            },
+        })
+        .unwrap();
+    assert!(!fixture.service().child_ready);
+    assert!(fixture.service().deferred_native.is_none());
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopping
+    );
+    let started = Instant::now();
+    while !fixture.service().retired {
+        fixture.service().tick().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3));
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopped
+    );
 }

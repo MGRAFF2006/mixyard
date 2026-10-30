@@ -43,6 +43,24 @@ struct Outbound {
     at: usize,
 }
 impl Outbound {
+    fn append_priority(&mut self, request: &CompanionRequest) -> io::Result<()> {
+        let mut frame = serde_json::to_vec(request)?;
+        if frame.len() > COMPANION_LIMIT {
+            return Err(invalid("priority frame too large"));
+        }
+        frame.push(b'\n');
+        if self.bytes.len() - self.at + frame.len() > 2 * COMPANION_LIMIT {
+            return Err(invalid(
+                "one reservation plus one fence exceeds priority bound",
+            ));
+        }
+        if self.at > 0 {
+            self.bytes.drain(..self.at);
+            self.at = 0;
+        }
+        self.bytes.extend(frame);
+        Ok(())
+    }
     fn new() -> Self {
         Self {
             bytes: Vec::new(),
@@ -133,6 +151,21 @@ pub(super) fn parent_death(command: &mut Command, cancel: Option<RawFd>) {
     }
 }
 impl Processes {
+    #[cfg(test)]
+    pub(super) fn block_priority_for_test(&mut self) -> usize {
+        let mut total = 0;
+        loop {
+            match self.cancel.write(&[b'x'; 4096]) {
+                Ok(n) => total += n,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return total,
+                result => panic!("unexpected owned socket result: {result:?}"),
+            }
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn priority_pending_bytes(&self) -> usize {
+        self.priority.bytes.len() - self.priority.at
+    }
     #[cfg(test)]
     pub(super) fn test_owned(
         qualified: Qualified,
@@ -309,8 +342,11 @@ impl Processes {
         Ok(processes)
     }
     pub fn queue(&mut self, request: &CompanionRequest) -> io::Result<()> {
-        if matches!(request.action, CompanionAction::Fence { .. }) {
-            self.priority.queue(request)
+        if matches!(
+            request.action,
+            CompanionAction::Fence { .. } | CompanionAction::Reserve { .. }
+        ) {
+            self.priority.append_priority(request)
         } else {
             self.normal.queue(request)
         }
@@ -463,6 +499,25 @@ impl Drop for Processes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires explicitly precompiled owned portable C helper; no SDK"]
+    fn review_native_contract_launcher_fd3_reaches_production_validator() {
+        let helper = std::env::var_os("MIXYARD_PRIVATE_OWNER_CHECK").expect("owned C helper path");
+        for (mode, success) in [("--old-fifo-fd3", false), ("--validate-fd3", true)] {
+            let (_parent, child) = UnixStream::pair().unwrap();
+            let mut command = Command::new(&helper);
+            command
+                .env_clear()
+                .arg(mode)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            parent_death(&mut command, Some(child.as_raw_fd()));
+            let mut process = command.spawn().unwrap();
+            drop(child);
+            assert_eq!(process.wait().unwrap().success(), success);
+        }
+    }
     #[test]
     fn actual_success_exit_does_not_hide_owned_child_diagnostics() {
         for script in ["pass", "import os;os.write(2,b'warning')"] {

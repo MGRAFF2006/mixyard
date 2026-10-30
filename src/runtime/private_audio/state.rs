@@ -35,6 +35,7 @@ impl ReleasePermit {
 #[derive(Debug)]
 pub enum Transition {
     Ready,
+    Reserved,
     Prepared,
     Linked,
     Staged,
@@ -61,6 +62,8 @@ pub struct Coordinator {
     snapshot: Option<DesiredSnapshot>,
     reserved_generation: Option<u64>,
     expected_native: Option<CompanionRequest>,
+    reservation_digest: Option<String>,
+    native_reserved: bool,
     stage: Option<Stage>,
     native_stage_token: Option<String>,
     stopping: Option<(StopTarget, CompanionRequest)>,
@@ -100,6 +103,8 @@ impl Coordinator {
             snapshot: None,
             reserved_generation: None,
             expected_native: None,
+            reservation_digest: None,
+            native_reserved: false,
             stage: None,
             native_stage_token: None,
             stopping: None,
@@ -111,6 +116,51 @@ impl Coordinator {
     }
     pub fn snapshot(&self) -> Status {
         self.status.clone()
+    }
+    pub fn reserve_request(
+        &mut self,
+        request: &CompanionRequest,
+    ) -> Result<CompanionRequest, Failure> {
+        let expected = self
+            .expected_native
+            .as_ref()
+            .ok_or_else(|| failure(ErrorCode::ProtocolError, "no pending native command"))?;
+        if request.operation_id != expected.operation_id || self.reservation_digest.is_some() {
+            return Err(failure(ErrorCode::Busy, "native reservation already owned"));
+        }
+        let action_kind = match &request.action {
+            CompanionAction::Prepare { .. } => "prepare",
+            CompanionAction::Link { .. } => "link",
+            CompanionAction::Stage { .. } => "stage",
+            _ => {
+                return Err(failure(
+                    ErrorCode::ProtocolError,
+                    "action does not use a reservation",
+                ))
+            }
+        };
+        let bytes = serde_json::to_vec(request)
+            .map_err(|_| failure(ErrorCode::ProtocolError, "request encoding failed"))?;
+        if bytes
+            != serde_json::to_vec(expected)
+                .map_err(|_| failure(ErrorCode::ProtocolError, "request encoding failed"))?
+        {
+            return Err(failure(
+                ErrorCode::ProtocolError,
+                "request differs from owned operation",
+            ));
+        }
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        self.reservation_digest = Some(digest.clone());
+        self.native_reserved = false;
+        Ok(self.request(
+            request.operation_id.clone(),
+            CompanionAction::Reserve {
+                action_kind: action_kind.into(),
+                reserved_generation: self.reserved_generation.unwrap(),
+                request_digest: digest,
+            },
+        ))
     }
     pub fn register_private_core(&mut self, core: PrivateCore) -> Result<(), Failure> {
         if self.children.is_none()
@@ -375,8 +425,8 @@ impl Coordinator {
         if &self.status.stop_target != expected {
             return Err(failure(ErrorCode::StaleControlEpoch, "Stop target changed"));
         }
-        if let Some((_, request)) = &self.stopping {
-            return Ok(request.clone());
+        if self.stopping.is_some() {
+            return Err(failure(ErrorCode::Busy, "the exact Stop is already owned"));
         }
         let Some(epoch) = expected.control_epoch.checked_add(1) else {
             return self.err(ErrorCode::ResourceLimit, "control epoch exhausted");
@@ -475,6 +525,8 @@ impl Coordinator {
         self.status.inventory_revision = None;
         self.expected_native = None;
         self.stage = None;
+        self.reservation_digest = None;
+        self.native_reserved = false;
         self.native_stage_token = None;
         self.stopping = None;
         self.reserved_generation = None;
@@ -598,6 +650,7 @@ impl Coordinator {
                         return Ok(Transition::Snapshot);
                     }
                     CompanionEvent::Prepared { .. }
+                    | CompanionEvent::Reserved { .. }
                     | CompanionEvent::Linked { .. }
                     | CompanionEvent::Staged { .. } => return Ok(Transition::Snapshot),
                     _ => {
@@ -608,6 +661,27 @@ impl Coordinator {
         }
         if reply.control_epoch != self.status.stop_target.control_epoch {
             return self.err(ErrorCode::StaleControlEpoch, "native reply epoch mismatch");
+        }
+        if let CompanionEvent::Reserved {
+            reserved_generation,
+            request_digest,
+        } = &reply.event
+        {
+            if self.native_reserved
+                || self.reservation_digest.as_ref() != Some(request_digest)
+                || Some(*reserved_generation) != self.reserved_generation
+                || self
+                    .expected_native
+                    .as_ref()
+                    .is_none_or(|r| r.operation_id != reply.operation_id)
+            {
+                return self.err(
+                    ErrorCode::ProtocolError,
+                    "native reservation binding changed",
+                );
+            }
+            self.native_reserved = true;
+            return Ok(Transition::Reserved);
         }
         if let CompanionEvent::Ready {
             inventory_revision,
@@ -752,6 +826,12 @@ impl Coordinator {
         if expected.operation_id != reply.operation_id {
             return self.err(ErrorCode::ProtocolError, "native operation mismatch");
         }
+        if !self.native_reserved {
+            return self.err(
+                ErrorCode::ProtocolError,
+                "native command completed without reservation",
+            );
+        }
         match (expected.action, reply.event) {
             (
                 CompanionAction::Prepare { .. },
@@ -858,6 +938,8 @@ impl Coordinator {
         self.status.pending_operation = None;
         self.status.stop_target.pending_install = None;
         self.expected_native = None;
+        self.reservation_digest = None;
+        self.native_reserved = false;
     }
 }
 

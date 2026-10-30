@@ -1,93 +1,130 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "scope": "owned-private-generated-v1",
-  "qualification": "portable-source-delivery-only",
-  "sourcePrerequisites": {
-    "frozenNativeSource": "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24",
-    "standardRecordingSource": "89f601800af6b555386f7c69d037908ad79a5865",
-    "acceptedMain": "b63ccd2ac9e25566364ec179eaf9a2fc1f964bf7",
-    "normalJoin": "c0c9a0291316f00ed6c4100d7c196dfaa13eac1f"
-  },
-  "toolchain": {
-    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
-    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
-  },
-  "passed": {
-    "rustLibTests": 73,
-    "rustCommand": "cargo test --offline --locked --jobs 1 --lib -- --test-threads=1",
-    "clippyCommand": "cargo clippy --offline --locked --jobs 1 --lib --bin mixyard --bin mixyard-runtime -- -D warnings",
-    "rustBinsBuilt": [
-      "mixyard",
-      "mixyard-runtime"
+  "qualification": "portable source repair only; no SDK qualification",
+  "historical341Delivery": {
+    "schemaVersion": 1,
+    "scope": "owned-private-generated-v1",
+    "qualification": "portable-source-delivery-only",
+    "sourcePrerequisites": {
+      "frozenNativeSource": "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24",
+      "standardRecordingSource": "89f601800af6b555386f7c69d037908ad79a5865",
+      "acceptedMain": "b63ccd2ac9e25566364ec179eaf9a2fc1f964bf7",
+      "normalJoin": "c0c9a0291316f00ed6c4100d7c196dfaa13eac1f"
+    },
+    "toolchain": {
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+      "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
+    },
+    "passed": {
+      "rustLibTests": 73,
+      "rustCommand": "cargo test --offline --locked --jobs 1 --lib -- --test-threads=1",
+      "clippyCommand": "cargo clippy --offline --locked --jobs 1 --lib --bin mixyard --bin mixyard-runtime -- -D warnings",
+      "rustBinsBuilt": [
+        "mixyard",
+        "mixyard-runtime"
+      ],
+      "cliHelpExecuted": [
+        "mixyard private-audio --help",
+        "mixyard-runtime --help"
+      ],
+      "portableC": "bash adapters/linux/private-audio/test.sh --owner-only",
+      "formatAndSourceChecks": [
+        "cargo fmt --check",
+        "git diff --check",
+        "bash -n build.sh test.sh",
+        "Python AST parse"
+      ]
+    },
+    "proofLimits": [
+      "Service tests use explicitly labeled native-owner API doubles and real owned child processes; they are not SDK evidence.",
+      "Current source manifest is a delivery record, not an independent fresh SDK/compiler-input attestation.",
+      "Final rustfmt changed only process.rs whitespace after the last semantic test/build run."
     ],
-    "cliHelpExecuted": [
-      "mixyard private-audio --help",
-      "mixyard-runtime --help"
+    "unrun": [
+      "PipeWire companion SDK compilation/link/run",
+      "json-c helper (development headers/pkg-config absent)",
+      "actual product serve/private R1 and R2 ordinary-recorder PCM",
+      "native fourth-output execution, SDK buffer retirement coverage and callback heap audit",
+      "fresh all-target Cargo/platform checks and independent exact-head final review"
     ],
-    "portableC": "bash adapters/linux/private-audio/test.sh --owner-only",
-    "formatAndSourceChecks": [
-      "cargo fmt --check",
-      "git diff --check",
-      "bash -n build.sh test.sh",
-      "Python AST parse"
-    ]
+    "resource": {
+      "targetHardCapBytes": 268435456,
+      "combinedAreaCapBytes": 402653184,
+      "largestSampledCountedTargetBytes": 220875340,
+      "initialForecastBytes": 201326592,
+      "initialForecastWasExceeded": true,
+      "blockedInvocation": "A later 256MiB additional-growth preflight failed before Cargo launch; subsequent preflight used verified remaining growth to the unchanged hard256MiB target cap (67303235 bytes), preserving root10GiB+16MiB and continuous cap checks.",
+      "noDownloads": true,
+      "incrementalCompilation": false,
+      "buildJobs": 1,
+      "targetOnRoot": true,
+      "tmpOutputs": false
+    },
+    "holds": [
+      "PR90/115 and both historical native cause/SDK eligibility holds remain separate; no ordinary error waiver.",
+      "Default lifecycle backend/capabilities remain unavailable/false/null.",
+      "No physical, personal-server, application capture, hardware clock or broad SDK support claim."
+    ],
+    "sourceFilesSha256": {
+      "Cargo.lock": "cdddf79a58bdd729f86c307458315d1d07199744752d2ddc7bcd98982bab5f27",
+      "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
+      "adapters/linux/private-audio/README.md": "9f7e8b427013f185d8da2f68df1936f86a5bdd31e12322a9b11bd157acfea785",
+      "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
+      "adapters/linux/private-audio/companion.cpp": "cdb916a5e0d54773991ea5d3d97eccb5400616039b775ced6bcc0ca643e3614e",
+      "adapters/linux/private-audio/json.hpp": "2d4985171a1bbb7fabc323db7fb9d5f125f011a50119c655a2215e7421e24876",
+      "adapters/linux/private-audio/owner.h": "59d65f8143fbb3cb86c7092968037401658ddc81fd1c88c800deafa7ca1869a0",
+      "adapters/linux/private-audio/product-flow.md": "8ec86d414c5b5c94fb3bbc63f9f53ed978c6399f71690a541290a8a2ab205860",
+      "adapters/linux/private-audio/protocol-v1.md": "49b91bf764ff08ef79c0edd37b2c6bb6e1c92afe981b46c996cfd8907064765b",
+      "adapters/linux/private-audio/resource_guard.py": "1053b6e6111533351a8995f46407a0095604ee2dae2d5745c02459abbb55fc5b",
+      "adapters/linux/private-audio/sha256.h": "4366b1629d55205939f4d974402005406c0910b12ce4d7dc0a4a03605b647499",
+      "adapters/linux/private-audio/test.sh": "e3ee70a32f8bdf64d3fc856b429d9306eb30340330e22dedf6cb19078f5036a9",
+      "adapters/linux/private-audio/test_json.cpp": "413b609bc08dae5e7c546ff24ddb3060ce64571206b17df86fcecac0c75de0aa",
+      "adapters/linux/private-audio/test_owner.c": "88cc53f2b4898a4a23152140a02f97fa870d8ab78c2a38e754eec54512ddd48e",
+      "src/bin/mixyard-runtime.rs": "3cfbc9c1c32bfb3aa5e006f5a8ccd8d7468e9e8e5b9390712b42c9989bb65b48",
+      "src/main.rs": "9fab453d2d5fcde26b8e7a31c1aff015ec3f7a19abc86e24732a8a89715a70a5",
+      "src/profiles.rs": "8d5bc6fdc89275d46cdc70dddf68abfc3157c3068613002cd0cfd60d87b17fc3",
+      "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
+      "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
+      "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
+      "src/runtime/private_audio/mod.rs": "85e4c8f0eceaf377f1ddf52a1a24a6b9128121ab20b91477c9e6adf51c5db38b",
+      "src/runtime/private_audio/process.rs": "4ca88840cfa393773cc988c52cf76907af4172a652c6cae367d39bc767eb0564",
+      "src/runtime/private_audio/protocol.rs": "f79cff3b6a324b3981297ceeede996cccb2cbb53db1db0ff690084d5cf9c2031",
+      "src/runtime/private_audio/service_tests.rs": "8d5fbbefdf459dc9d110f83b3b02d7f7a1c29b2a48ca8b9f24f4ab79c6b95f8a",
+      "src/runtime/private_audio/state.rs": "9533f179a6037a270e528fe1d3638b8d457ba0071f4b74947efe5fd0474240b7",
+      "src/runtime/private_audio/state_tests.rs": "500b43297d25f0ea86775bd5a378bb7eec6f063ea3706497dbc214c710bf40a9"
+    }
   },
-  "proofLimits": [
-    "Service tests use explicitly labeled native-owner API doubles and real owned child processes; they are not SDK evidence.",
-    "Current source manifest is a delivery record, not an independent fresh SDK/compiler-input attestation.",
-    "Final rustfmt changed only process.rs whitespace after the last semantic test/build run."
-  ],
-  "unrun": [
-    "PipeWire companion SDK compilation/link/run",
-    "json-c helper (development headers/pkg-config absent)",
-    "actual product serve/private R1 and R2 ordinary-recorder PCM",
-    "native fourth-output execution, SDK buffer retirement coverage and callback heap audit",
-    "fresh all-target Cargo/platform checks and independent exact-head final review"
-  ],
-  "resource": {
-    "targetHardCapBytes": 268435456,
-    "combinedAreaCapBytes": 402653184,
-    "largestSampledCountedTargetBytes": 220875340,
-    "initialForecastBytes": 201326592,
-    "initialForecastWasExceeded": true,
-    "blockedInvocation": "A later 256MiB additional-growth preflight failed before Cargo launch; subsequent preflight used verified remaining growth to the unchanged hard256MiB target cap (67303235 bytes), preserving root10GiB+16MiB and continuous cap checks.",
-    "noDownloads": true,
-    "incrementalCompilation": false,
-    "buildJobs": 1,
-    "targetOnRoot": true,
-    "tmpOutputs": false
-  },
-  "holds": [
-    "PR90/115 and both historical native cause/SDK eligibility holds remain separate; no ordinary error waiver.",
-    "Default lifecycle backend/capabilities remain unavailable/false/null.",
-    "No physical, personal-server, application capture, hardware clock or broad SDK support claim."
-  ],
-  "sourceFilesSha256": {
+  "currentReviewRepairRecord": "review-repairs.json",
+  "currentSourceFilesSha256": {
     "Cargo.lock": "cdddf79a58bdd729f86c307458315d1d07199744752d2ddc7bcd98982bab5f27",
     "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
-    "adapters/linux/private-audio/README.md": "9f7e8b427013f185d8da2f68df1936f86a5bdd31e12322a9b11bd157acfea785",
+    "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
     "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
-    "adapters/linux/private-audio/companion.cpp": "cdb916a5e0d54773991ea5d3d97eccb5400616039b775ced6bcc0ca643e3614e",
+    "adapters/linux/private-audio/companion.cpp": "c0813ae7e890384bbc171b722e0b5b282a37a3d54f50a2d386c74cbdcb38894c",
+    "adapters/linux/private-audio/compile-plan.json": "960b04107969177df814992d4f02cb394cbe73d3856d909c7462badce1e45e53",
+    "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "2d4985171a1bbb7fabc323db7fb9d5f125f011a50119c655a2215e7421e24876",
-    "adapters/linux/private-audio/owner.h": "59d65f8143fbb3cb86c7092968037401658ddc81fd1c88c800deafa7ca1869a0",
+    "adapters/linux/private-audio/owner.h": "f425f97837160f0ab7f633616788512f93ff7bbbf963381004d8f54fc3e6e04d",
     "adapters/linux/private-audio/product-flow.md": "8ec86d414c5b5c94fb3bbc63f9f53ed978c6399f71690a541290a8a2ab205860",
-    "adapters/linux/private-audio/protocol-v1.md": "49b91bf764ff08ef79c0edd37b2c6bb6e1c92afe981b46c996cfd8907064765b",
+    "adapters/linux/private-audio/protocol-v1.md": "42b7e3fbe16b67444f61e52d17f44fcdeaf19282bd2099f505f1967f87c15628",
     "adapters/linux/private-audio/resource_guard.py": "1053b6e6111533351a8995f46407a0095604ee2dae2d5745c02459abbb55fc5b",
+    "adapters/linux/private-audio/review-repairs.json": "9f401256f224f5741b5d8e7865322b4be0f915da15f9a6c24f8c0c2b14658c9c",
     "adapters/linux/private-audio/sha256.h": "4366b1629d55205939f4d974402005406c0910b12ce4d7dc0a4a03605b647499",
     "adapters/linux/private-audio/test.sh": "e3ee70a32f8bdf64d3fc856b429d9306eb30340330e22dedf6cb19078f5036a9",
     "adapters/linux/private-audio/test_json.cpp": "413b609bc08dae5e7c546ff24ddb3060ce64571206b17df86fcecac0c75de0aa",
-    "adapters/linux/private-audio/test_owner.c": "88cc53f2b4898a4a23152140a02f97fa870d8ab78c2a38e754eec54512ddd48e",
+    "adapters/linux/private-audio/test_owner.c": "5f0e229644153ce9e2d64f2c063bd66ba1b6c91683d37f81efd3445d47104b51",
     "src/bin/mixyard-runtime.rs": "3cfbc9c1c32bfb3aa5e006f5a8ccd8d7468e9e8e5b9390712b42c9989bb65b48",
     "src/main.rs": "9fab453d2d5fcde26b8e7a31c1aff015ec3f7a19abc86e24732a8a89715a70a5",
     "src/profiles.rs": "8d5bc6fdc89275d46cdc70dddf68abfc3157c3068613002cd0cfd60d87b17fc3",
     "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
     "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
     "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
-    "src/runtime/private_audio/mod.rs": "85e4c8f0eceaf377f1ddf52a1a24a6b9128121ab20b91477c9e6adf51c5db38b",
-    "src/runtime/private_audio/process.rs": "4ca88840cfa393773cc988c52cf76907af4172a652c6cae367d39bc767eb0564",
-    "src/runtime/private_audio/protocol.rs": "f79cff3b6a324b3981297ceeede996cccb2cbb53db1db0ff690084d5cf9c2031",
-    "src/runtime/private_audio/service_tests.rs": "8d5fbbefdf459dc9d110f83b3b02d7f7a1c29b2a48ca8b9f24f4ab79c6b95f8a",
-    "src/runtime/private_audio/state.rs": "9533f179a6037a270e528fe1d3638b8d457ba0071f4b74947efe5fd0474240b7",
-    "src/runtime/private_audio/state_tests.rs": "500b43297d25f0ea86775bd5a378bb7eec6f063ea3706497dbc214c710bf40a9"
+    "src/runtime/private_audio/mod.rs": "58ae4fed71fd5e425a057798fe7bd1141eb73fc67b4c0027c9fba3b1d1fc1e39",
+    "src/runtime/private_audio/process.rs": "ad51eb47ea19240907a2205b13bb4f1715f5ec854908f4e1894c7e1c6d1aeefb",
+    "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
+    "src/runtime/private_audio/service_tests.rs": "d71bb6b72cc0c5fa29a06457e6b04e0a7d27a5f5517a03aac0684d1356fb5735",
+    "src/runtime/private_audio/state.rs": "80a77f3b388a172c75e0da9c0f07552a97d1cb4fcfdf67b79e72b698c3e9d9cd",
+    "src/runtime/private_audio/state_tests.rs": "7f70c027c7370befc3bceedc03993f9bc94dd7c7586d0c4bab3d5347e7be51b3"
   }
 }
