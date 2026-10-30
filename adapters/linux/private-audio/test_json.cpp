@@ -16,6 +16,13 @@ int main() {
   assert(rejected("{\"action\":1,\"\\u0061ction\":2}"));
   assert(rejected("{\"a\":1} {\"a\":2}"));
   assert(rejected("{\"a\":NaN}"));
+  assert(rejected("{\"a\":Infinity}"));
+  assert(rejected("{\"a\":-Infinity}"));
+  assert(rejected("{\"a\":[{\"b\":NaN}]}"));
+  assert(rejected("{\"a\":1e999}"));
+  auto finite = wire::parse(
+      "{\"text\":\"NaN/Infinity\",\"values\":[0,-0.25,1e20,true,null]}");
+  assert(wire::str(wire::get(finite.get(), "text")) == "NaN/Infinity");
   assert(rejected(std::string(wire::limit + 1, ' ')));
   constexpr char embedded_nul[] = "{\"a\":\"x\0y\"}";
   assert(rejected(std::string(embedded_nul, sizeof(embedded_nul) - 1)));

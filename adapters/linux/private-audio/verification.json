@@ -104,7 +104,7 @@
     "adapters/linux/private-audio/companion.cpp": "21be5ef2008325ce08282f3fd5fede9991ef3e12d625f2ac937738449efc740e",
     "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
-    "adapters/linux/private-audio/json.hpp": "2d4985171a1bbb7fabc323db7fb9d5f125f011a50119c655a2215e7421e24876",
+    "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
     "adapters/linux/private-audio/owner.h": "f425f97837160f0ab7f633616788512f93ff7bbbf963381004d8f54fc3e6e04d",
     "adapters/linux/private-audio/product-flow.md": "8ec86d414c5b5c94fb3bbc63f9f53ed978c6399f71690a541290a8a2ab205860",
     "adapters/linux/private-audio/protocol-v1.md": "42b7e3fbe16b67444f61e52d17f44fcdeaf19282bd2099f505f1967f87c15628",
@@ -112,7 +112,7 @@
     "adapters/linux/private-audio/review-repairs.json": "9f401256f224f5741b5d8e7865322b4be0f915da15f9a6c24f8c0c2b14658c9c",
     "adapters/linux/private-audio/sha256.h": "4366b1629d55205939f4d974402005406c0910b12ce4d7dc0a4a03605b647499",
     "adapters/linux/private-audio/test.sh": "e3ee70a32f8bdf64d3fc856b429d9306eb30340330e22dedf6cb19078f5036a9",
-    "adapters/linux/private-audio/test_json.cpp": "0ceb4d00b0b4d05d5bdce28c463af10239c23975238ae2f68326dc80ccb8821a",
+    "adapters/linux/private-audio/test_json.cpp": "78c7fae1f78cdba323f6b8a3a1a72e1f845b170f2612e2ea89bb6bb55cbf3fbf",
     "adapters/linux/private-audio/test_owner.c": "5f0e229644153ce9e2d64f2c063bd66ba1b6c91683d37f81efd3445d47104b51",
     "src/bin/mixyard-runtime.rs": "3cfbc9c1c32bfb3aa5e006f5a8ccd8d7468e9e8e5b9390712b42c9989bb65b48",
     "src/main.rs": "9fab453d2d5fcde26b8e7a31c1aff015ec3f7a19abc86e24732a8a89715a70a5",
@@ -152,7 +152,8 @@
       "The four added Rust regressions are uncompiled and unexecuted at source delivery; source-derived defects were not reproduced against the old binary.",
       "Historical77/2ignored library and2explicit bridge passes apply to5ab source only; new-head CI/review pending.",
       "Actual companion SDK compilation, JSON helper, native handlers, four-consumer R1/R2 recordings, heap and SDK scrub remain unrun."
-    ]
+    ],
+    "followupSourceHead": "7e370f8088321930ba10fb68cc4d3ab8bbe5d21e"
   },
   "rootTestFixtureFollowup": {
     "previousHead": "7e370f8088321930ba10fb68cc4d3ab8bbe5d21e",
@@ -173,7 +174,8 @@
       "No local compiler/test/helper process/cloud execution authorized or launched for this followup.",
       "Actual companion SDK compile/link/native-handler/four-consumer R1/R2/heap/scrub execution remains unrun.",
       "Historical90/115/SDK/cause/recorder and Linux visibility holds remain."
-    ]
+    ],
+    "followupSourceHead": "1d56ac4f92f67352b95e78bb2002c0b81fc93521"
   },
   "actualSdkCompileFollowup": {
     "sourceHead": "1d56ac4f92f67352b95e78bb2002c0b81fc93521",
@@ -228,7 +230,8 @@
       "Tracked compile-plan now pins the actual static archive04a rather than shared ELF0e8, with explicit artifact kind and evidence provenance."
     ],
     "currentValidation": "Source/diff/manifest checks only. No local compiler/test, cloud retry or helper launched for this followup; changed companion remains uncompiled.",
-    "remaining": "Link/size/JSON/native handlers/four consumers/product R1/R2/heap/scrub and all90/115/cause/SDK/recorder holds remain."
+    "remaining": "Link/size/JSON/native handlers/four consumers/product R1/R2/heap/scrub and all90/115/cause/SDK/recorder holds remain.",
+    "followupSourceHead": "1834dc4f39381668f73a727423e37e8072253c48"
   },
   "compiledCompanionJsonFixtureFollowup": {
     "sourceHead": "1834dc4f39381668f73a727423e37e8072253c48",
@@ -277,6 +280,49 @@
     "currentFixtureRepair": "Use a constexpr char array and sizeof(array)-1 for the embedded-NUL negative, preserving all intended JSON bytes without an out-of-bounds read. No warning suppression or parser weakening.",
     "sourceApplicability": "Current companion translation unit, headers, build flags and host inputs remain byte-identical to compiled1834; only test_json.cpp plus verification metadata change.",
     "currentVerification": "Source/diff/manifest checks only; corrected JSON helper is uncompiled/unexecuted locally. Local compiler/test hold active.",
-    "remaining": "JSON helper compile/run and actual native handlers/four consumers/product R1/R2/heap/scrub execution,90/115 and other historical holds remain."
+    "remaining": "JSON helper compile/run and actual native handlers/four consumers/product R1/R2/heap/scrub execution,90/115 and other historical holds remain.",
+    "followupSourceHead": "7f76a8a180b43887b63cdcce5b4f2bce68e6e85e"
+  },
+  "jsonNonFiniteRepair": {
+    "observedAtSource": "7f76a8a180b43887b63cdcce5b4f2bce68e6e85e",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6528561946",
+    "actualPreviousResults": {
+      "companion": "Compile/link/size PASS, exit0, empty diagnostics, ELF1315640B SHA91eada3b9b1b25ce33c61408ddad4939ffa14c5412c7c4348f9f60757f063658; never executed.",
+      "jsonHelperCompile": "PASS, exit0, empty diagnostics,41736B SHA1ed90ac7b382bbfbb0c0fbc9d2dd30db7ae93c78f00c898d6f46e014dcc390e1",
+      "jsonHelperRun": "FAIL SIGABRT(-6) at existing assert rejected({a:NaN}); production wire::parse accepted the input. Subsequent controls including embeddedNUL were not reached.",
+      "runStderrBytes": 166,
+      "runStderrSha256": "0b5911e15a63c7bc4894c634851ab92d1ceb994b6b2d5146bc2918ba61908ef5",
+      "overall": "FAIL; no retry, assertion removal or binary preservation."
+    },
+    "report": {
+      "bytes": 544907,
+      "sha256": "8d34818b54133605daa9205ca90eba5b7dcd48a0b011fbc890778f1ec93e3783",
+      "prechecks": 799,
+      "allStartedLeadersReaped": true,
+      "remainingOwnedGroupMembers": 0,
+      "processScanUnavailableEntries": 0
+    },
+    "rootStopVerification": {
+      "state": "stopped",
+      "status": "completed",
+      "forced": false,
+      "stoppedAt": "2026-10-30T17:01:34.775Z",
+      "completedAt": "2026-10-30T17:01:34.807Z",
+      "snapshotVerifiedAt": "2026-10-30T17:01:34.689Z",
+      "note": "Author immediate verification was pending; root independently observed completion."
+    },
+    "repair": "After existing bounded-depth/size scan and strict json-c parse, recursively reject non-finite double values throughout objects/arrays. Preserve finite numbers, null/booleans and text containing NaN/Infinity. No reserialization or config-byte changes.",
+    "controlsAdded": "Retain original actual-failing NaN assertion; add Infinity, negativeInfinity, nestedNaN, exponent overflow rejection and finite/boolean/null/string positive parsing. Existing duplicate/unknown/size/NUL/exactConfig-byte controls remain.",
+    "executionScope": "wire::parse callers are control/startup/builder paths; no callback JSON traversal or new RT work.",
+    "currentVerification": "Source/diff/manifest checks only. Changed production header and expanded control are UNCOMPILED/UNRUN under local hold; actual earlier NaN failure is RED, no current GREEN claim.",
+    "separateWindowsCiHold": {
+      "head": "7f76a8a180b43887b63cdcce5b4f2bce68e6e85e",
+      "job": 124194391182,
+      "conclusion": "cancelled",
+      "configuredJobBudgetMinutes": 10,
+      "lastLongRunningTest": "cancelled_client_and_shutdown_kill_owned_job_or_process_group",
+      "observed": "Complete35560B log: preceding core/lifecycle tests passed; named test ran over60s then operation was canceled. Cause unresolved; no assertion failure or automatic retry inferred."
+    },
+    "remaining": "Corrected parser/helper/companion compile and full helper run; actual native handlers/four consumers/productR1R2/heap/scrub,90/115 and prior holds."
   }
 }

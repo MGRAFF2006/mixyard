@@ -2,6 +2,7 @@
 #pragma once
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <json-c/json.h>
@@ -94,7 +95,7 @@ inline json_object *at(json_object *p, size_t i) {
   return json_object_array_get_idx(p, i);
 }
 
-/* json-c validates UTF-8/numbers/escapes; this first bounded scan additionally
+/* json-c validates UTF-8/syntax/escapes; this first bounded scan additionally
  * rejects duplicate DECODED keys. It records exact Config bytes before any
  * reserialization, including float spelling, escaping and field order. */
 struct Scan {
@@ -189,6 +190,32 @@ struct Scan {
     }
   }
 };
+// json-c's STRICT mode can still produce non-finite doubles. Walk the parsed
+// tree without changing it; Scan already bounds the input and nesting depth.
+inline bool finite_numbers(json_object *p) {
+  if (!p)
+    return true;
+  switch (json_object_get_type(p)) {
+  case json_type_double:
+    return std::isfinite(json_object_get_double(p));
+  case json_type_array:
+    for (size_t i = 0; i < json_object_array_length(p); ++i)
+      if (!finite_numbers(json_object_array_get_idx(p, i)))
+        return false;
+    break;
+  case json_type_object: {
+    json_object_object_foreach(p, key, value) {
+      (void)key;
+      if (!finite_numbers(value))
+        return false;
+    }
+    break;
+  }
+  default:
+    break;
+  }
+  return true;
+}
 inline Json parse(const std::string &s, std::string *config = nullptr,
                   size_t bound = limit) {
   require(!s.empty() && s.size() <= bound && s.find('\0') == std::string::npos,
@@ -204,6 +231,8 @@ inline Json parse(const std::string &s, std::string *config = nullptr,
   Json result(json_tokener_parse_ex(t.get(), s.data(), (int)s.size()));
   require(json_tokener_get_error(t.get()) == json_tokener_success && result,
           "protocol-error", "invalid JSON");
+  require(finite_numbers(result.get()), "protocol-error",
+          "non-finite JSON number");
   if (config && scan.config_end > scan.config_begin)
     *config = s.substr(scan.config_begin, scan.config_end - scan.config_begin);
   return result;
