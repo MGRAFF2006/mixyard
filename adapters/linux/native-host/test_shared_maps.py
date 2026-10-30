@@ -10,6 +10,32 @@ import unittest
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "own Linux /proc mapping diagnostic")
 class SharedMaps(unittest.TestCase):
+    def test_nonzero_offset_and_selected_pair_cap(self):
+        base = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory(prefix="mixyard-map-offset-check-", dir="/dev/shm") as root:
+            binary = Path(root) / "check"
+            subprocess.run(["cc", "-D_GNU_SOURCE", "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                            str(base / "shared_map_check.c"), "-o", str(binary)],
+                           env=dict(os.environ, TMPDIR=root), check=True, capture_output=True)
+            report = subprocess.run([str(binary), "nonzero-offset"], check=True, capture_output=True, timeout=5)
+            self.assertEqual(report.stderr, b"")
+            self.assertEqual(json.loads(report.stdout), {"mode": "nonzero-offset", "preadMatches": True,
+                "fileOffsetIncludesMapOrigin": True, "privateUnknown": True})
+            selected = subprocess.run([str(binary), "selected-pairs"], check=True, capture_output=True, timeout=5)
+            self.assertEqual(selected.stderr, b"")
+            candidate = json.loads(selected.stdout)
+            self.assertFalse(candidate["candidateOverflow"])
+            self.assertTrue(candidate["sharedFilePairScanComplete"])
+            self.assertEqual(len(candidate["crossBufferCandidates"]), 1)
+            self.assertEqual(candidate["crossBufferCandidates"][0]["metadataRegistrationId"], 2)
+            self.assertEqual(candidate["laterCallbackBacking"], "unknown")
+            # The selected set can itself exceed the unchanged limit: UNKNOWN, not truncation.
+            serialized = subprocess.run([str(binary), "serialization"], check=True, capture_output=True, timeout=5)
+            overflow = json.loads(serialized.stdout.splitlines()[-1])
+            self.assertTrue(overflow["candidateOverflow"])
+            self.assertFalse(overflow["sharedFilePairScanComplete"])
+            self.assertEqual(overflow["crossBufferCandidates"], [])
+
     def test_bounded_parser_and_own_shared_private_lifetimes(self):
         base = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix="mixyard-shared-map-check-", dir="/dev/shm") as root:

@@ -14,6 +14,20 @@ cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
   "$root/adapters/linux/native-host/native_format_check.c" \
   -o "$MIXYARD_NATIVE_BUILD/native-format-check"
 "$MIXYARD_NATIVE_BUILD/native-format-check"
+# Public mapping offset contract: fresh owned file, read-only mappings, pread oracle.
+# An offset mismatch fails visibly before graph execution; it is never skipped.
+cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
+  $(pkg-config --cflags libpipewire-0.3) \
+  "$root/adapters/linux/native-host/native_map_check.c" \
+  $(pkg-config --libs libpipewire-0.3) -ldl \
+  -o "$MIXYARD_NATIVE_BUILD/native-map-check"
+if "$MIXYARD_NATIVE_BUILD/native-map-check" >"$MIXYARD_NATIVE_BUILD/native-map-check.json"; then
+  cat "$MIXYARD_NATIVE_BUILD/native-map-check.json"
+else
+  result=$?
+  cat "$MIXYARD_NATIVE_BUILD/native-map-check.json"
+  exit "$result"
+fi
 # Real plugin pool/alias counterexample; no context, server connection or devices.
 cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \
   $(pkg-config --cflags libpipewire-0.3) \

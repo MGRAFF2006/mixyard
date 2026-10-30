@@ -36,5 +36,7 @@ jobs:
         if: always()
         with:
           name: linux-native-private-graph-evidence
-          path: ${{ runner.temp }}/native-evidence.json
+          path: |
+            ${{ runner.temp }}/native-evidence.json
+            ${{ runner.temp }}/mixyard-native-build/native-map-check.json
           if-no-files-found: warn

@@ -400,3 +400,38 @@ are diagnostic-method checks, not PipeWire SDK or root-cause qualification. Clea
 b443 hosted runs exercised ingress serialization but reproduced neither the10c
 malformed admitted descriptor nor the7d ordinary zero-byte EMPTY; both outcomes
 remain open. No ordinary EMPTY acceptance rule is changed here.
+
+
+The public mapping API diagnostic is a hosted-only **readback**, separate from
+native graph qualification. It creates only a fresh synthetic memory-pool block,
+prefills fixed marker tags through normal file I/O, and compares read-only mapped
+regions with independent `pread` results. Cases cover fresh maps, retained larger
+covering maps, zero and nonzero covering origins, page-derived offsets and the
+observed4224 shape only when the actual page size is4096. Every requested range
+is inside the owned allocation; no writes through mappings, context, daemon,
+hardware, interposition or SDK patch is involved. A readback mismatch exits1 and
+fails the build gate; the JSON is printed and retained even then. It cannot be
+skipped into successful graph qualification.
+
+The report identifies compile/runtime versions and the GNU build ID of the loaded
+library containing the actually resolved public `pw_memblock_map` API. Identity
+inspection is off RT using loader-provided ELF identity metadata, with bounded
+headers/notes. No library paths, addresses, file identifiers or marker bytes are
+reported. Missing identity/setup is a failure, not implementation proof from a
+version string. Local SDK is absent: this probe has not run locally.
+
+The source-contract hypothesis concerns a reused mapping origin: public1.0.5
+`pw_map_range_init` calculates a page-relative offset, while `pw_memblock_map`
+can reuse a larger covering mapping with a different origin. The published ed2
+push failure reproduced malformed admitted metadata; its post-fatal coordinates
+match a possible offset-origin discrepancy. That remains a hypothesis about the
+graph: a public-API mismatch alone cannot establish its actual call parameters
+or backing at the earlier fault. The PR run was clean, but that does not close
+the malformed or ordinary zero-byte EMPTY outcomes.
+
+Snapshot candidate generation now filters BOTH PCM and metadata registrations to
+the selected first-fault/last-writer IDs **before** the unchanged16-pair limit.
+The report names that selection scope. A complete selected scan is not a scan of
+unselected registrations; selected overflow remains explicitly unknown with no
+truncated relation set. CPU controls verify this distinction and independently
+check nonzero file offsets using read-only owned views plus a `pread` oracle.

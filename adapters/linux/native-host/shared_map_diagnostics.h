@@ -152,14 +152,20 @@ static inline bool mx_map_target_matches(const struct mx_map_target *a, const st
     return a->registration == b->registration && a->region == b->region && a->revision == b->revision &&
         a->address == b->address && a->length == b->length;
 }
+static inline bool mx_map_selected(uint64_t id, const uint64_t *selected, unsigned count) {
+    if (!id || count > 7) return false;
+    for (unsigned i = 0; i < count; ++i) if (selected[i] == id) return true;
+    return false;
+}
 static inline void mx_print_map_snapshot(const struct mx_map_snapshot *s, const uint64_t *selected, unsigned selected_count) {
     bool eligible = mx_map_eligible(s);
     unsigned pairs = 0, covered = 0;
     if (eligible) for (unsigned i = 0; i < s->count; ++i) {
         if (s->coordinates[i].covered) ++covered;
-        if (s->targets[i].region != 0) continue;
+        if (s->targets[i].region != 0 || !mx_map_selected(s->targets[i].registration, selected, selected_count)) continue;
         for (unsigned j = 0; j < s->count; ++j)
-            if (s->targets[j].region && s->targets[i].registration != s->targets[j].registration &&
+            if (s->targets[j].region && mx_map_selected(s->targets[j].registration, selected, selected_count) &&
+                s->targets[i].registration != s->targets[j].registration &&
                 mx_snapshot_overlap(&s->coordinates[i], &s->coordinates[j])) ++pairs;
     }
     bool pair_overflow = pairs > MX_MAP_PAIR_LIMIT;
@@ -167,6 +173,7 @@ static inline void mx_print_map_snapshot(const struct mx_map_snapshot *s, const 
            "\"state\":\"%s\",\"eventEpoch\":%" PRIu64 ",\"captureBeforeNs\":%" PRIu64 ",\"captureAfterNs\":%" PRIu64
            ",\"mapsBeforeNs\":%" PRIu64 ",\"mapsAfterNs\":%" PRIu64 ",\"applyAfterRecheckNs\":%" PRIu64
            ",\"actualMapsEof\":%s,\"targetAssociationRechecked\":%s,\"mapsBytes\":%u,\"mapsRecords\":%u,\"targetRanges\":%u,\"coveredRanges\":%u,"
+           "\"candidateSelection\":\"selected-fault-or-last-writer-pcm-versus-selected-metadata\","
            "\"candidateOverflow\":%s,\"sharedFilePairScanComplete\":%s,\"selectedCoverage\":[",
            s->id, mx_map_reason_name(s->reason), s->event_epoch, s->capture_before_ns, s->capture_after_ns,
            s->maps_before_ns, s->maps_after_ns, s->applied_after_ns, s->maps_complete ? "true" : "false",
@@ -193,10 +200,11 @@ static inline void mx_print_map_snapshot(const struct mx_map_snapshot *s, const 
     // Overflow returns unknown instead of emitting a truncated complete relation.
     if (eligible && !pair_overflow) for (unsigned i = 0; i < s->count; ++i) {
         const struct mx_backing_coordinate *a = &s->coordinates[i];
-        if (s->targets[i].region != 0) continue;
+        if (s->targets[i].region != 0 || !mx_map_selected(s->targets[i].registration, selected, selected_count)) continue;
         for (unsigned j = 0; j < s->count; ++j) {
             const struct mx_backing_coordinate *b = &s->coordinates[j];
-            if (!s->targets[j].region || s->targets[i].registration == s->targets[j].registration || !mx_snapshot_overlap(a, b)) continue;
+            if (!s->targets[j].region || !mx_map_selected(s->targets[j].registration, selected, selected_count) ||
+                s->targets[i].registration == s->targets[j].registration || !mx_snapshot_overlap(a, b)) continue;
             uint64_t start = a->offset > b->offset ? a->offset : b->offset;
             uint64_t end = a->offset+a->length < b->offset+b->length ? a->offset+a->length : b->offset+b->length;
             printf("%s{\"pcmRegistrationId\":%" PRIu64 ",\"metadataRegistrationId\":%" PRIu64 ",\"metadataRegion\":%u,\"cookie\":%u,\"fileOffset\":%" PRIu64 ",\"length\":%" PRIu64 "}",

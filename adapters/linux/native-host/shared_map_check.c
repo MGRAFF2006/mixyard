@@ -104,18 +104,56 @@ static void check_serialization(void) {
     mx_print_map_snapshot(&s, selected, 4); putchar('\n');
     mx_map_unknown(&s, MX_MAP_CHANGED);
     mx_print_map_snapshot(&s, selected, 4); putchar('\n');
-    s = (struct mx_map_snapshot){ .id = 2, .count = MX_MAP_PAIR_LIMIT+2,
+    s = (struct mx_map_snapshot){ .id = 2, .count = 21,
         .reason = MX_MAP_OK, .maps_complete = true, .targets_stable = true };
+    for (unsigned i = 0; i < s.count; ++i) {
+        s.targets[i] = (struct mx_map_target){ .registration = i/3+1, .region = i%3, .revision = 1 };
+        s.coordinates[i] = (struct mx_backing_coordinate){ .snapshot = s.id, .offset = 64,
+            .length = 16, .cookie = 1, .kind = MX_BACKING_SHARED_FILE, .covered = true };
+    }
+    uint64_t all_selected[] = {1,2,3,4,5,6,7};
+    mx_print_map_snapshot(&s, all_selected, 7); putchar('\n');
+}
+static void check_selected_pairs(void) {
+    struct mx_map_snapshot s = { .id = 3, .count = 64, .reason = MX_MAP_OK,
+        .maps_complete = true, .targets_stable = true };
     for (unsigned i = 0; i < s.count; ++i) {
         s.targets[i] = (struct mx_map_target){ .registration = i+1, .region = i ? 1 : 0, .revision = 1 };
         s.coordinates[i] = (struct mx_backing_coordinate){ .snapshot = s.id, .offset = 64,
             .length = 16, .cookie = 1, .kind = MX_BACKING_SHARED_FILE, .covered = true };
     }
-    mx_print_map_snapshot(&s, selected, 4); putchar('\n');
+    uint64_t selected[] = {1,2};
+    mx_print_map_snapshot(&s, selected, 2); putchar('\n');
+}
+static void check_nonzero_offset(void) {
+    long page = sysconf(_SC_PAGESIZE); assert(page >= 256 && page <= 65536);
+    int fd = memfd_create("mixyard-owned-coordinate-readback", MFD_CLOEXEC); assert(fd >= 0);
+    assert(ftruncate(fd, 3*page) == 0);
+    unsigned char expected[16], oracle[16]; memset(expected, 0x35, sizeof(expected));
+    assert(pwrite(fd, expected, sizeof(expected), page+64) == (ssize_t)sizeof(expected));
+    assert(pread(fd, oracle, sizeof(oracle), page+64) == (ssize_t)sizeof(oracle));
+    unsigned char *a = mmap(NULL, (size_t)page, PROT_READ, MAP_SHARED, fd, page);
+    unsigned char *b = mmap(NULL, (size_t)page, PROT_READ, MAP_SHARED, fd, page);
+    unsigned char *p = mmap(NULL, (size_t)page, PROT_READ, MAP_PRIVATE, fd, page);
+    assert(a != MAP_FAILED && b != MAP_FAILED && p != MAP_FAILED && a != b);
+    assert(!memcmp(a+64, oracle, sizeof(oracle)) && !memcmp(b+64, oracle, sizeof(oracle)));
+    struct mx_map_snapshot s = { .id = 12, .count = 3 };
+    void *views[] = {a+64,b+64,p+64};
+    for (unsigned i = 0; i < 3; ++i) s.targets[i] = (struct mx_map_target){
+        .address = (uintptr_t)views[i], .length = 16, .registration = i+1, .revision = 1, .region = i ? 1 : 0 };
+    observe_self(&s);
+    assert(s.coordinates[0].offset == (uint64_t)page+64 && s.coordinates[1].offset == (uint64_t)page+64);
+    assert(mx_snapshot_overlap(&s.coordinates[0], &s.coordinates[1]));
+    assert(s.coordinates[2].kind == MX_BACKING_PRIVATE && !mx_snapshot_overlap(&s.coordinates[0], &s.coordinates[2]));
+    assert(munmap(a,(size_t)page) == 0 && munmap(b,(size_t)page) == 0 && munmap(p,(size_t)page) == 0);
+    assert(close(fd) == 0);
+    puts("{\"mode\":\"nonzero-offset\",\"preadMatches\":true,\"fileOffsetIncludesMapOrigin\":true,\"privateUnknown\":true}");
 }
 int main(int argc, char **argv) {
     assert(argc == 2);
-    if (!strcmp(argv[1], "serialization")) check_serialization();
+    if (!strcmp(argv[1], "selected-pairs")) check_selected_pairs();
+    else if (!strcmp(argv[1], "nonzero-offset")) check_nonzero_offset();
+    else if (!strcmp(argv[1], "serialization")) check_serialization();
     else if (!strcmp(argv[1], "model")) check_model();
     else { assert(!strcmp(argv[1], "own-maps")); check_own_maps(); }
     return 0;
