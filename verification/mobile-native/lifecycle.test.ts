@@ -65,6 +65,8 @@ test('stderr accepts only fixed typed Security classifications and suppresses ra
     process.stderr.write('SECRET-RAW\\n');
     process.stderr.write('MIXYARD_TRUST_STATE {"phase":"admin-after","absent":true,"statuses":[-25300,-25300,-25263],"resolvedAdminCertificateCount":null,"adminCertificateStatus":-25263}\\n');
     process.stderr.write('MIXYARD_TRUST_STATE {"phase":"admin-after","absent":true,"statuses":[-25300,-25300,-25263],"certificate":"SECRET"}\\n');
+    process.stderr.write('MIXYARD_OWNED_RECEIPT {"phase":"privileged-timeout-reaped","pid":42,"returncode":-15,"directChildReaped":true,"pipesEof":true,"descendants":"unproved"}\\n');
+    process.stderr.write('MIXYARD_OWNED_RECEIPT {"phase":"privileged-timeout-reaped","pid":42,"returncode":-15,"directChildReaped":true,"pipesEof":true,"descendants":"SECRET"}\\n');
     process.stderr.write('MIXYARD_OWNED_SIGNAL {"phase":"before-privileged-term","pid":42,"result":"os-error","errno":1}\\n');
     process.stderr.write('MIXYARD_OWNED_SIGNAL {"phase":"before-privileged-term","pid":42,"result":"os-error","errno":1,"message":"SECRET"}\\n');
     process.stderr.write('MIXYARD_SECURITY {"phase":"trust-a","kind":"timeout","value":4000}\\n');
@@ -81,6 +83,8 @@ test('stderr accepts only fixed typed Security classifications and suppresses ra
   assert.match(output.join(''), /Owned admin trust readback: admin-after absent=true statuses=-25300,-25300,-25263/)
   assert.match(output.join(''), /Owned terminate syscall result \(NOT completion\):/ )
   assert.match(output.join(''), /"errno":1/)
+  assert.match(output.join(''), /Owned direct wait\/EOF receipt/)
+  assert.match(output.join(''), /"descendants":"unproved"/)
   assert.match(output.join(''), /resolvedAdminCertificateCount=unknown/)
   assert.doesNotMatch(output.join(''), /SECRET|stderr/)
 })

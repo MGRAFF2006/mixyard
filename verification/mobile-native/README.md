@@ -187,3 +187,13 @@ before and default termination after. That proves the launcher mechanism locally
 not actual macOS privileged cleanup or the last trust-removal cause. Stop/drain
 AND owned trust absence still must pass; stopping an authorization wait is not
 removal. Actual runner qualification is still held pending that evidence.
+
+Actual2a/744 execution now reports timeout2000 rather than stop-incomplete, with
+no later drain failure, while A STILL remains trusted. Source-path inspection
+means communicate() returned (direct-child wait and captured-pipe EOF) before the
+timeout was reported; it does not census privileged descendants. A fixed receipt
+now exposes that exact returncode/wait/EOF evidence while explicitly marking
+remaining descendants unproved. No global-quiescence or trust-removal claim is
+inferred. When owned ADMIN cleanup is not confirmed, the owned recovery keychain
+is retained alongside immutable fingerprint-bound DER/fixture data; qualification
+still fails and independent service shutdown remains attempted.
