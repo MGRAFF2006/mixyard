@@ -284,13 +284,10 @@ impl Fixture {
 
 #[test]
 fn ready_child_reservation_deadline_fences_without_a_peer_and_ignores_late_reserved() {
+    use sha2::{Digest, Sha256};
     let mut fixture = Fixture::new("import time;time.sleep(60)");
-    let (stage, _, _) = fixture.stage_request();
-    let reservation = fixture
-        .service()
-        .coordinator
-        .reserve_request(&stage)
-        .unwrap();
+    let (stage, reserved_generation, _) = fixture.stage_request();
+    let request_digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&stage).unwrap()));
     fixture.service().queue_command(&stage).unwrap();
     assert!(fixture.service().child_ready);
     assert!(fixture.service().startup_started.is_none());
@@ -303,14 +300,6 @@ fn ready_child_reservation_deadline_fences_without_a_peer_and_ignores_late_reser
     );
     assert!(fixture.service().deferred_native.is_none());
     assert!(fixture.service().guard.is_none());
-    let CompanionAction::Reserve {
-        reserved_generation,
-        request_digest,
-        ..
-    } = reservation.action
-    else {
-        panic!("expected reservation")
-    };
     fixture
         .service()
         .event(reply(
@@ -633,21 +622,20 @@ fn normal_prepare_waits_for_current_ready_after_exact_reservation() {
         })
         .unwrap();
     let started = Instant::now();
-    while !fixture.service().failed {
-        fixture.service().tick().unwrap();
+    loop {
+        let events = fixture.service().processes.events().unwrap();
+        if !events.is_empty() {
+            assert_eq!(events.len(), 1);
+            let CompanionEvent::Fault { error } = &events[0].event else {
+                panic!("expected the double's normal-dispatch witness")
+            };
+            assert_eq!(error.code, ErrorCode::OwnerFailed);
+            assert_eq!(error.message, READY_GATE);
+            break;
+        }
         assert!(started.elapsed() < Duration::from_secs(2));
         std::thread::yield_now();
     }
-    assert_eq!(
-        fixture
-            .service()
-            .coordinator
-            .snapshot()
-            .last_error
-            .unwrap()
-            .message,
-        READY_GATE
-    );
 }
 #[test]
 fn pending_prepare_stop_fences_without_sending_unready_normal_command() {
