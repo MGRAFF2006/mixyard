@@ -301,3 +301,30 @@ or EMPTY data remain fatal. The actual SDK allocator and SPA-plugin regressions
 exercise these states and rejection boundaries; local SDK execution remains
 unavailable. `startupUnavailable` accurately names their diagnostic counters.
 The strict server-loss first-error/code-46 gate remains unchanged.
+
+
+Native layout diagnosis preserves bounded registration and write evidence for
+malformed admitted buffers. The public add/remove callbacks publish up to eight
+opaque token IDs per port and 128 registration records per process; capacity or
+registration inconsistencies fail rather than truncate into success. Token keys
+are never dereferenced outside a live SDK borrow or serialized. Registration
+records contain only role/port, removal state and relative virtual chunk/header
+ranges against that buffer's PCM capacity. These offsets are not raw addresses,
+physical-memory identity, payload authority or provenance.
+
+The exclusive DataLoop captures the most recent pre-write and post-write scalar
+observations for each of six output ports, before returning its token. After the
+first fatal error it stops replacing these records. The first invalid borrow
+gets the same registration ID and relative-layout fields. Serialization occurs
+only after teardown; no callback formatting/logging/allocation, wait or lock is
+added. Missing/in-flight identity or range evidence is explicitly unknown, not a
+new admission allowance. First-fault records precede the larger trace so bounded
+failure capture retains them. Existing report/diagnostic byte caps stay strict.
+
+The observed 10c Record-pattern metadata is a lead, not proof of use-after-free
+or a particular alias mechanism. This diagnostic does not repair the unknown
+mapping/ownership cause or reinterpret malformed bytes, change geometry/GAP,
+first error, warning, cancellation or server-loss gates. Portable controls check
+ID retirement/reuse/capacity, relative overlap/overflow/unknown handling and
+serialization size. Actual new SDK compilation and full hosted evidence remain
+required before drawing a production-layout conclusion.

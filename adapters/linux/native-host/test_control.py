@@ -29,6 +29,74 @@ def private_snapshot():
 
 
 class Isolation(unittest.TestCase):
+    def test_native_relative_layout_and_registration_diagnostics_are_bounded(self):
+        base = Path(__file__).resolve().parent
+        program = r'''#include <assert.h>
+#include <stdint.h>
+#include "native_diagnostics.h"
+int main(void) {
+    unsigned char storage[4096] = {0};
+    void *pcm = storage + 128;
+    struct mx_buffer_layout layout = { .capacity = 2048,
+        .chunk = mx_relative_region(pcm, 2048, storage+16, 16),
+        .header = mx_relative_region(pcm, 2048, storage+64, 32) };
+    assert(layout.chunk.known && layout.chunk.offset == -112 && !layout.chunk.overlap);
+    assert(layout.header.known && layout.header.offset == -64 && !layout.header.overlap);
+    struct mx_relative_region alias = mx_relative_region(pcm, 2048, pcm, 32);
+    assert(alias.known && alias.offset == 0 && alias.overlap);
+    struct mx_relative_region adjacent = mx_relative_region(pcm, 2048, storage+2176, 32);
+    assert(adjacent.known && adjacent.offset == 2048 && !adjacent.overlap);
+    assert(!mx_relative_region((void *)(UINTPTR_MAX-7), 16, pcm, 16).known);
+    assert(!mx_relative_region(pcm, 2048, (void *)(UINTPTR_MAX-7), 16).known);
+    assert(!mx_relative_region(pcm, 2048, NULL, 16).known);
+    struct mx_buffer_ids ids = {0};
+    int tokens[MX_NATIVE_POOL_SLOTS+1] = {0};
+    for (unsigned i = 0; i < MX_NATIVE_POOL_SLOTS; ++i) {
+        assert(mx_buffer_register(&ids, &tokens[i], i+1));
+        assert(mx_buffer_identity(&ids, &tokens[i]) == i+1);
+    }
+    assert(!mx_buffer_register(&ids, &tokens[0], 55));
+    assert(!mx_buffer_register(&ids, &tokens[MX_NATIVE_POOL_SLOTS], 55));
+    assert(mx_buffer_unregister(&ids, &tokens[0]) == 1);
+    assert(mx_buffer_identity(&ids, &tokens[0]) == 0);
+    assert(mx_buffer_register(&ids, &tokens[0], 99)); // Same address, fresh registration.
+    assert(mx_buffer_identity(&ids, &tokens[0]) == 99);
+    assert(mx_buffer_unregister(&ids, &tokens[0]) == 99);
+    assert(mx_buffer_unregister(&ids, &tokens[0]) == 0);
+    for (unsigned i = 1; i < MX_NATIVE_POOL_SLOTS; ++i) assert(mx_buffer_unregister(&ids, &tokens[i]) == i+1);
+    printf("{\"registrations\":[");
+    for (unsigned i = 0; i < MX_NATIVE_REGISTRATIONS; ++i) {
+        printf("%s{\"id\":%u,\"role\":2,\"direction\":1,\"port\":2,\"removed\":true,\"layout\":", i ? "," : "", i+1);
+        mx_print_buffer_layout(&layout); printf("}");
+    }
+    printf("],\"writes\":[");
+    struct mx_native_observation observation = { .registration_id = MX_NATIVE_REGISTRATIONS,
+        .layout = layout, .clock_frame = UINT64_MAX, .clock_ns = UINT64_MAX,
+        .callback_monotonic_ns = UINT64_MAX, .header_seq = UINT64_MAX, .header_pts = INT64_MIN,
+        .offset = UINT32_MAX, .size = UINT32_MAX, .stride = INT32_MIN, .flags = UINT32_MAX };
+    for (unsigned i = 0; i < 12; ++i) {
+        if (i) printf(",");
+        mx_native_print_observation(&observation);
+    }
+    printf("]}\n");
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="mixyard-buffer-layout-", dir="/dev/shm") as root:
+            source, binary = Path(root) / "layout.c", Path(root) / "layout"
+            source.write_text(program)
+            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                            "-I", str(base), str(source), "-o", str(binary)],
+                           env=dict(os.environ, TMPDIR=root), check=True, capture_output=True)
+            observed = subprocess.run([str(binary)], check=True, capture_output=True)
+            self.assertEqual(observed.stderr, b"")
+            self.assertLess(len(observed.stdout), 48 * 1024)  # Existing 64 KiB report limit unchanged.
+            parsed = qualify.json.loads(observed.stdout)
+            self.assertEqual(len(parsed["registrations"]), 128)
+            self.assertEqual(len(parsed["writes"]), 12)
+            self.assertEqual(parsed["writes"][0]["layout"]["header"]["offsetFromPcm"], -64)
+            self.assertNotIn(b"0x", observed.stdout)  # No raw pointer serialization.
+
     def test_actual_c_and_python_os_clock_share_the_recorded_namespace(self):
         base = Path(__file__).resolve().parent
         program = r'''#include <assert.h>

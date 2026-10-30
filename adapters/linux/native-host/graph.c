@@ -51,7 +51,20 @@ struct format_report {
     int media_parse, raw_parse;
     struct spa_audio_info_raw raw;
 };
-struct port { _Atomic bool format_ok; struct format_report *report; };
+struct port {
+    _Atomic bool format_ok; struct format_report *report;
+    unsigned direction, index;
+    struct mx_buffer_ids identities; // Opaque diagnostic keys only, no payload ownership.
+};
+struct buffer_registration {
+    unsigned role, direction, port;
+    struct mx_buffer_layout layout;
+    _Atomic bool removed;
+};
+struct buffer_write_report {
+    bool pending, written;
+    struct mx_native_observation before, after;
+};
 struct global { uint32_t id, node; uint64_t serial; char type[32], name[96], direction[8]; };
 struct app {
     struct pw_main_loop *loop;
@@ -64,6 +77,9 @@ struct app {
     struct endpoint nodes[3];
     struct format_report formats[3][2][ROUTES];
     struct mx_native_first_failure chunk_failure, mismatch_failure;
+    _Atomic unsigned registration_count;
+    struct buffer_registration registrations[MX_NATIVE_REGISTRATIONS];
+    struct buffer_write_report writes[2][ROUTES]; // Exclusive DataLoop; freeze after first fatal error.
     struct mx_consumer_copy consumers[ROUTES]; // exclusive DataLoop, never native pointers
     char bound_outputs[ROUTES][192]; // control-prepared immutable compiled endpoint IDs
     uint64_t native_frame, warming_generation, control_generation;
@@ -157,12 +173,39 @@ static void fail(struct app *a, unsigned error) {
 static struct spa_meta_header *header(struct pw_buffer *b) {
     return spa_buffer_find_meta_data(b->buffer, SPA_META_Header, sizeof(struct spa_meta_header));
 }
-static void observe_failure(struct endpoint *e, unsigned port, bool input,
+static struct mx_buffer_layout buffer_layout(struct pw_buffer *b) {
+    struct mx_buffer_layout layout = {0};
+    if (!b || !b->buffer || b->buffer->n_datas != 1 || !b->buffer->datas) return layout;
+    const struct spa_data *data = &b->buffer->datas[0];
+    layout.capacity = data->maxsize;
+    layout.chunk = mx_relative_region(data->data, data->maxsize, data->chunk, sizeof(struct spa_chunk));
+    layout.header = mx_relative_region(data->data, data->maxsize, header(b), sizeof(struct spa_meta_header));
+    return layout;
+}
+// Public add/remove notifications register only opaque keys and scalar layout.
+// Atomic ID publication permits RT lookup without logging, allocation or waits;
+// metadata/payload pointers are inspected only while the SDK grants that borrow.
+static void buffer_added(void *userdata, void *port_data, struct pw_buffer *buffer) {
+    struct endpoint *e = userdata; struct port *port = port_data;
+    if (!port || !buffer) { fail(e->app, 97); return; }
+    unsigned index = atomic_fetch_add(&e->app->registration_count, 1);
+    if (index >= MX_NATIVE_REGISTRATIONS) { fail(e->app, 97); return; }
+    e->app->registrations[index] = (struct buffer_registration){
+        .role = e->role, .direction = port->direction, .port = port->index,
+        .layout = buffer_layout(buffer) };
+    if (!mx_buffer_register(&port->identities, buffer, index+1)) fail(e->app, 97);
+}
+static void buffer_removed(void *userdata, void *port_data, struct pw_buffer *buffer) {
+    struct endpoint *e = userdata; struct port *port = port_data;
+    if (!port || !buffer) { fail(e->app, 97); return; }
+    uint64_t id = mx_buffer_unregister(&port->identities, buffer);
+    if (!id || id > MX_NATIVE_REGISTRATIONS) fail(e->app, 97);
+    else atomic_store(&e->app->registrations[id-1].removed, true);
+}
+static struct mx_native_observation describe_buffer(struct endpoint *e, unsigned port, bool input,
                             struct pw_buffer *b, uint32_t frames,
                             const struct spa_io_position *pos, unsigned error,
-                            struct mx_native_first_failure *failure,
                             uint32_t sample_index, double actual, double expected) {
-    if (atomic_load_explicit(&failure->state, memory_order_relaxed)) return;
     struct mx_native_observation value = { .error = error, .role = e->role, .port = port,
         .direction = input ? PW_DIRECTION_INPUT : PW_DIRECTION_OUTPUT, .frames = frames,
         .phase = atomic_load_explicit(&e->app->phase, memory_order_relaxed),
@@ -171,7 +214,9 @@ static void observe_failure(struct endpoint *e, unsigned port, bool input,
         .clock_id = pos->clock.id, .clock_frame = pos->clock.position,
         .clock_ns = pos->clock.nsec, .clock_duration = pos->clock.duration,
         .rate_num = pos->clock.rate.num, .rate_denom = pos->clock.rate.denom,
-        .sample_index = sample_index, .callback_monotonic_ns = callback_monotonic_ns };
+        .sample_index = sample_index, .callback_monotonic_ns = callback_monotonic_ns,
+        .registration_id = mx_buffer_identity(&((struct port *)(input ? e->in[port] : e->out[port]))->identities, b),
+        .layout = buffer_layout(b) };
     memcpy(&value.actual_bits, &actual, sizeof(actual));
     memcpy(&value.expected_bits, &expected, sizeof(expected));
     if (b->buffer->n_datas) {
@@ -187,7 +232,25 @@ static void observe_failure(struct endpoint *e, unsigned port, bool input,
     const struct spa_meta_header *h = header(b);
     value.header_present = h != NULL;
     if (h) { value.header_flags = h->flags; value.header_seq = h->seq; value.header_pts = h->pts; }
+    return value;
+}
+static void observe_failure(struct endpoint *e, unsigned port, bool input,
+                            struct pw_buffer *b, uint32_t frames,
+                            const struct spa_io_position *pos, unsigned error,
+                            struct mx_native_first_failure *failure,
+                            uint32_t sample_index, double actual, double expected) {
+    if (atomic_load_explicit(&failure->state, memory_order_relaxed)) return;
+    struct mx_native_observation value = describe_buffer(e, port, input, b, frames, pos, error,
+        sample_index, actual, expected);
     mx_native_record_first(failure, &value);
+}
+static void begin_write_report(struct endpoint *e, unsigned route, struct pw_buffer *buffer,
+                               uint32_t frames, const struct spa_io_position *pos) {
+    struct buffer_write_report *r = &e->app->writes[e->role][route];
+    r->pending = false;
+    if (atomic_load_explicit(&e->app->error, memory_order_acquire)) return;
+    r->before = describe_buffer(e, route, false, buffer, frames, pos, 0, 0, 0.0, 0.0);
+    r->pending = true;
 }
 static double *samples(struct endpoint *e, unsigned port, struct pw_buffer *b,
                        bool input, uint32_t frames, const struct spa_io_position *pos) {
@@ -318,7 +381,7 @@ static void receive_consumer(struct endpoint *e, const struct spa_io_position *p
             consume_owned(e, r, pos);
     }
 }
-static void submit(void *port, struct pw_buffer *b, uint32_t frames,
+static void submit(struct endpoint *e, unsigned route, struct pw_buffer *b, uint32_t frames,
                    const struct spa_io_position *pos, bool silent) {
     struct spa_data *d = &b->buffer->datas[0];
     d->chunk->offset = 0; d->chunk->stride = STRIDE;
@@ -327,7 +390,13 @@ static void submit(void *port, struct pw_buffer *b, uint32_t frames,
     if (h) *h = (struct spa_meta_header){ .pts = (int64_t)pos->clock.nsec,
         .seq = pos->clock.position, .flags = silent ? SPA_META_HEADER_FLAG_GAP : 0 };
     b->size = frames;
-    pw_filter_queue_buffer(port, b);
+    struct buffer_write_report *record = &e->app->writes[e->role][route];
+    if (record->pending) {
+        // Still borrowed here: never inspect a buffer after handing it back.
+        record->after = describe_buffer(e, route, false, b, frames, pos, 0, 0, 0.0, 0.0);
+        record->written = true; record->pending = false;
+    }
+    pw_filter_queue_buffer(e->out[route], b);
 }
 static void process_inner(void *userdata, struct spa_io_position *pos) {
     struct endpoint *e = userdata;
@@ -347,10 +416,11 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
             if (!b) continue;
             double *p = samples(e, s, b, false, n, pos);
             if (!p) { pw_filter_queue_buffer(e->out[s], b); continue; }
+            begin_write_report(e, s, b, n, pos);
             if (p) for (unsigned f = 0; f < n; ++f)
                 for (unsigned ch = 0; ch < 2; ++ch) p[2*f+ch] = s == 0 && atomic_load_explicit(&a->phase, memory_order_relaxed) == 2 ? NAN : s == 0 ? program_value(a, pos->clock.position+f, ch) : source_value(s, pos->clock.position+f, ch);
             if (!header(b)) fail(a, 21);
-            submit(e->out[s], b, n, pos, !p);
+            submit(e, s, b, n, pos, !p);
         }
         return;
     }
@@ -421,12 +491,13 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
         if (!b) { atomic_fetch_add_explicit(&a->dropped, 1, memory_order_relaxed); continue; }
         double *p = samples(e, r, b, false, n, pos);
         if (!p) { pw_filter_queue_buffer(e->out[r], b); continue; }
+        begin_write_report(e, r, b, n, pos);
         bool silent;
         int result = mx_destination_copy(a->host, r, rendered, p, 2*n, &silent);
         if (result == MX_INACTIVE) atomic_fetch_add_explicit(&a->inactive[r], 1, memory_order_relaxed);
         else if (result != MX_OK) fail(a, 24);
         if (!header(b)) fail(a, 21);
-        submit(e->out[r], b, n, pos, silent);
+        submit(e, r, b, n, pos, silent);
     }
     for (unsigned s = 0; s < ROUTES; ++s) if (input[s]) return_input(a, e->in[s], input[s]);
 }
@@ -468,7 +539,8 @@ static void state_changed(void *userdata, enum pw_filter_state old, enum pw_filt
     if (state == PW_FILTER_STATE_ERROR) fail(e->app, 31);
 }
 static const struct pw_filter_events filter_events = {
-    PW_VERSION_FILTER_EVENTS, .process = process, .param_changed = param_changed, .state_changed = state_changed
+    PW_VERSION_FILTER_EVENTS, .process = process, .param_changed = param_changed, .state_changed = state_changed,
+    .add_buffer = buffer_added, .remove_buffer = buffer_removed
 };
 static void *add_port(struct endpoint *e, enum pw_direction dir, unsigned index) {
     char name[32]; snprintf(name, sizeof(name), "%s-%u", dir == PW_DIRECTION_INPUT ? "in" : "out", index);
@@ -489,7 +561,11 @@ static void *add_port(struct endpoint *e, enum pw_direction dir, unsigned index)
     if (port) {
         struct format_report *r = &e->app->formats[e->role][dir == PW_DIRECTION_OUTPUT][index];
         *r = (struct format_report){ .used = true, .role = e->role, .direction = dir, .index = index };
-        port->report = r;
+        port->report = r; port->direction = dir; port->index = index;
+        for (unsigned slot = 0; slot < MX_NATIVE_POOL_SLOTS; ++slot) {
+            atomic_init(&port->identities.slots[slot].token, 0);
+            atomic_init(&port->identities.slots[slot].id, 0);
+        }
         atomic_init(&port->format_ok, false);
     }
     return port;
@@ -994,8 +1070,27 @@ static void print_format_reports(const struct app *a) {
         printf("%s", json_object_to_json_string_ext(event, JSON_C_TO_STRING_PLAIN));
         json_object_put(event);
     } else printf("null");
+    // Preserve first-fault evidence before the larger optional layout trace.
     mx_native_print_first_failure("firstChunkFailure", &a->chunk_failure);
     mx_native_print_first_failure("firstSampleMismatch", &a->mismatch_failure);
+    unsigned registered = atomic_load(&a->registration_count);
+    printf(",\"bufferRegistrationOverflow\":%s,\"bufferRegistrations\":[", registered > MX_NATIVE_REGISTRATIONS ? "true" : "false");
+    for (unsigned i = 0; i < registered && i < MX_NATIVE_REGISTRATIONS; ++i) {
+        const struct buffer_registration *r = &a->registrations[i];
+        printf("%s{\"id\":%u,\"role\":%u,\"direction\":%u,\"port\":%u,\"removed\":%s,\"layout\":",
+            i ? "," : "", i+1, r->role, r->direction, r->port, atomic_load(&r->removed) ? "true" : "false");
+        mx_print_buffer_layout(&r->layout); printf("}");
+    }
+    printf("],\"lastNativeWrites\":[");
+    bool write_comma = false;
+    for (unsigned role = 0; role < 2; ++role) for (unsigned route = 0; route < ROUTES; ++route) {
+        const struct buffer_write_report *r = &a->writes[role][route];
+        if (!r->written) continue;
+        printf("%s{\"before\":", write_comma ? "," : ""); write_comma = true;
+        mx_native_print_observation(&r->before); printf(",\"after\":");
+        mx_native_print_observation(&r->after); printf("}");
+    }
+    printf("]");
     printf("}\n");
 }
 static void quit(void *userdata, int signal) {
