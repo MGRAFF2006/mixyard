@@ -6,6 +6,12 @@ use std::{
     io::{self, Read, Write},
     time::{Duration, Instant},
 };
+pub const USAGE:&str = "Usage: mixyard private-audio status --instance I
+       mixyard private-audio prepare --instance I --instance-nonce HEX64 --expected-store-revision N --expected-config-revision N
+       mixyard private-audio link --instance I --instance-nonce HEX64 --prepared-token TOKEN --output-id ID --node-id N --node-serial N --port-id N --port-serial N
+       mixyard private-audio apply --instance I --instance-nonce HEX64 --prepared-token TOKEN --expected-store-revision N --expected-config-revision N --expected-inventory-revision N
+       mixyard private-audio stop --instance I --instance-nonce HEX64 --control-epoch N --active-generation N|null --pending-operation-id ID|null --reserved-generation N|null
+Linux owned-private-generated-v1 only. Start the runtime explicitly with an owned descriptor and canonical profiles directory. Prepare publishes endpoints; link uses observed private consumer IDs/serials. Apply requires native commit receipts. Stop requires the exact cached stopTarget and normal child reaping. A request timeout/disconnect leaves the operation owned; inspect status. After Stop, Prepare explicitly starts fresh private children for the next revision.";
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.into())
 }
@@ -134,6 +140,9 @@ pub fn parse(args: &[OsString]) -> io::Result<(String, Request)> {
     Ok((instance, request))
 }
 pub fn run(args: &[OsString], output: &mut impl Write) -> io::Result<()> {
+    if args.len() == 1 && (args[0] == "--help" || args[0] == "-h") {
+        return writeln!(output, "{USAGE}");
+    }
     let (instance, request) = parse(args)?;
     exchange(&instance, &request, output)
 }

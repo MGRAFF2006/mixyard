@@ -249,6 +249,11 @@ impl Qualified {
             if !hashes.contains_key(&file) {
                 return Err(invalid("required SDK path missing from verified manifest"));
             }
+            if file == fs::canonicalize(d.sdk_prefix.join("bin/pipewire"))?
+                && fs::metadata(&file)?.mode() & 0o111 == 0
+            {
+                return Err(invalid("private daemon is not executable"));
+            }
         }
         Ok(Self {
             descriptor,
@@ -266,14 +271,51 @@ impl Qualified {
         let mut observed = BTreeSet::new();
         for line in maps.lines() {
             let mut fields = line.split_whitespace();
-            let Some(path) = fields.nth(5) else { continue };
+            let (
+                Some(_address),
+                Some(_permissions),
+                Some(_offset),
+                Some(device),
+                Some(inode),
+                Some(path),
+            ) = (
+                fields.next(),
+                fields.next(),
+                fields.next(),
+                fields.next(),
+                fields.next(),
+                fields.next(),
+            )
+            else {
+                continue;
+            };
             let file = PathBuf::from(path);
             let name = file.file_name().and_then(|s| s.to_str()).unwrap_or("");
             if name.contains("libpipewire")
                 || name.contains("libspa-")
                 || file.starts_with(&self.descriptor.sdk_prefix)
             {
+                if fields.next().is_some() {
+                    return Err(invalid("critical mapping has unknown/deleted identity"));
+                }
                 let canonical = fs::canonicalize(&file)?;
+                let metadata = owned(&canonical, false)?;
+                let (major, minor) = device
+                    .split_once(':')
+                    .ok_or_else(|| invalid("critical mapping device invalid"))?;
+                let major = u64::from_str_radix(major, 16)
+                    .map_err(|_| invalid("critical mapping device invalid"))?;
+                let minor = u64::from_str_radix(minor, 16)
+                    .map_err(|_| invalid("critical mapping device invalid"))?;
+                let inode = inode
+                    .parse::<u64>()
+                    .map_err(|_| invalid("critical mapping inode invalid"))?;
+                if metadata.ino() != inode
+                    || libc::major(metadata.dev()) as u64 != major
+                    || libc::minor(metadata.dev()) as u64 != minor
+                {
+                    return Err(invalid("critical mapping file identity changed"));
+                }
                 let expected = self
                     .hashes
                     .get(&canonical)
@@ -301,5 +343,124 @@ impl Qualified {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::os::unix::fs::{symlink, DirBuilderExt, OpenOptionsExt};
+    struct Fixture {
+        root: PathBuf,
+        path: PathBuf,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let mut entropy = [0; 16];
+            getrandom::fill(&mut entropy).unwrap();
+            let root = PathBuf::from("/dev/shm").join(format!(
+                "mixyard-descriptor-{:x}",
+                u128::from_ne_bytes(entropy)
+            ));
+            fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+            let prefix = root.join("sdk");
+            fs::DirBuilder::new().mode(0o700).create(&prefix).unwrap();
+            let mut names = vec![
+                "bin/pipewire".to_string(),
+                "lib/libpipewire-0.3.so.0".to_string(),
+                "lib/spa-0.2/support/libspa-support.so".to_string(),
+            ];
+            names.extend(
+                MODULES
+                    .iter()
+                    .map(|name| format!("lib/pipewire-0.3/libpipewire-module-{name}.so")),
+            );
+            let mut files = serde_json::Map::new();
+            let mut total = 0;
+            for name in names {
+                let file = prefix.join(&name);
+                fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(file.parent().unwrap())
+                    .unwrap();
+                let mut output = fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .mode(if name == "bin/pipewire" { 0o700 } else { 0o600 })
+                    .open(&file)
+                    .unwrap();
+                use std::io::Write;
+                output
+                    .write_all(b"descriptor hash fixture, not an SDK")
+                    .unwrap();
+                drop(output);
+                let metadata = fs::metadata(&file).unwrap();
+                total += metadata.len();
+                files.insert(name,json!({"sha256":digest(&file).unwrap(),"bytes":metadata.len(),"mode":metadata.mode()&0o7777,"buildId":null}));
+            }
+            let manifest = root.join("manifest.json");
+            put(
+                &manifest,
+                &serde_json::to_vec(&json!({"files":files,"symlinks":{},"totalBytes":total}))
+                    .unwrap(),
+                0o600,
+            );
+            let companion = root.join("companion");
+            put(&companion, b"descriptor fixture, never executed", 0o700);
+            let path = root.join("descriptor.json");
+            put(&path,&serde_json::to_vec(&json!({"schemaVersion":1,"scope":"owned-private-generated-v1","sdkPrefix":prefix,"prefixManifest":manifest,"prefixManifestSha256":digest(&root.join("manifest.json")).unwrap(),"companionExecutable":companion,"companionSha256":digest(&root.join("companion")).unwrap(),"sdkVersion":"1.4.8","sdkCommit":"8b43ed5c910e892d53de5a96aa01e9280a5b6650","generators":[{"sourceId":"generated","left":0.25,"right":-0.25,"markerPeriod":128,"frameLimit":0}],"limits":{"maxSources":4,"maxOutputs":4,"maxResidentBytes":1048576,"maxFrames":128}})).unwrap(),0o600);
+            Self { root, path }
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).unwrap();
+        }
+    }
+    fn put(path: &Path, bytes: &[u8], mode: u32) {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .open(path)
+            .unwrap();
+        file.write_all(bytes).unwrap();
+    }
+    #[test]
+    fn full_manifest_qualification_allows_four_outputs_but_never_claims_bindings() {
+        let fixture = Fixture::new();
+        let qualified = Qualified::load(&fixture.path).unwrap();
+        assert_eq!(qualified.descriptor.limits.max_outputs, 4);
+        assert!(qualified
+            .observe_bindings(std::process::id(), true)
+            .is_err());
+        fs::write(
+            fixture.root.join("sdk/lib/libpipewire-0.3.so.0"),
+            b"tampered",
+        )
+        .unwrap();
+        assert!(Qualified::load(&fixture.path).is_err());
+    }
+    #[test]
+    fn unmanifested_objects_and_descriptor_symlinks_fail_closed() {
+        let fixture = Fixture::new();
+        put(
+            &fixture.root.join("sdk/unqualified-plugin"),
+            b"extra",
+            0o600,
+        );
+        assert!(Qualified::load(&fixture.path).is_err());
+        fs::remove_file(fixture.root.join("sdk/unqualified-plugin")).unwrap();
+        let link = fixture.root.join("descriptor-link.json");
+        symlink(&fixture.path, &link).unwrap();
+        assert!(Qualified::load(&link).is_err());
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&fixture.path).unwrap()).unwrap();
+        value["systemFallback"] = json!(true);
+        fs::write(&fixture.path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(Qualified::load(&fixture.path).is_err());
     }
 }

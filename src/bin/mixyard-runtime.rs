@@ -2,7 +2,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["-h"] {
-        println!("Usage: mixyard-runtime serve|inventory [--instance NAME]\n       mixyard-runtime serve [--instance NAME] --inventory-fixture-helper /ABSOLUTE/HELPER\nRead-only PipeWire/installed Windows/CoreAudio discovery; fixture helpers always produce simulated evidence. No audio backend or automatic startup.");
+        println!("Usage: mixyard-runtime serve|inventory [--instance NAME]\n       mixyard-runtime serve [--instance NAME] --inventory-fixture-helper /ABSOLUTE/HELPER\n       mixyard-runtime serve [--instance NAME] --owned-private-audio-descriptor /ABS/DESCRIPTOR.json --profiles /ABS/PROFILES\nRead-only PipeWire/installed Windows/CoreAudio discovery by default; fixture helpers produce simulated evidence. Linux private flags enable only the owned private generated scope, with an existing pinned SDK. No automatic startup or SDK installation.");
         return ExitCode::SUCCESS;
     }
     let mut instance = "default";

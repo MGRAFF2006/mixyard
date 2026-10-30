@@ -361,7 +361,7 @@ mod tests {
         let (mut cancel, child_cancel) = UnixStream::pair().unwrap();
         cancel.set_nonblocking(true).unwrap();
         let mut command = Command::new("/usr/bin/python3");
-        command.env_clear().arg("-c").arg("import os,json,sys\nb=b''\nwhile not b.endswith(b'\\n'): b+=os.read(3,8192)\nr=json.loads(b)\nprint(json.dumps(r),flush=True)\n").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        command.env_clear().env("PYTHONDONTWRITEBYTECODE","1").arg("-c").arg("import os,json,sys\nb=b''\nwhile not b.endswith(b'\\n'): b+=os.read(3,8192)\nr=json.loads(b)\nprint(json.dumps(r),flush=True)\n").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
         parent_death(&mut command, Some(child_cancel.as_raw_fd()));
         let mut child = command.spawn().unwrap();
         drop(child_cancel);
