@@ -6,6 +6,7 @@ import selectors
 import signal
 import subprocess
 import threading
+import time
 
 STDOUT_LIMIT = 64 * 1024
 DIAGNOSTIC_LIMIT = 16 * 1024
@@ -14,16 +15,31 @@ EVIDENCE_LIMIT = 4 * 1024 * 1024
 
 
 def stop_owned(process):
-    result = {"pid": process.pid, "requestedSignal": None, "escalated": False}
+    result = {"pid": process.pid, "requestedSignal": None, "escalated": False,
+              "osClock": "CLOCK_MONOTONIC", "osTimeNamespace": None,
+              "beforeSignalNs": None, "signalReturnedNs": None, "stopCompletedNs": None}
+    try:
+        result["osTimeNamespace"] = os.stat("/proc/self/ns/time").st_ino
+    except OSError:
+        pass  # Unavailable evidence never prevents stopping the owned child.
+    def sample(field):
+        try:
+            result[field] = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+        except OSError:
+            result[field] = None  # Unknown ordering never prevents owned shutdown.
+
     if process.poll() is None:
         result["requestedSignal"] = signal.SIGTERM
+        sample("beforeSignalNs")
         process.send_signal(signal.SIGTERM)
+        sample("signalReturnedNs")
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             result["escalated"] = True
             process.kill()
             process.wait(timeout=5)
+    sample("stopCompletedNs")
     result["returncode"] = process.returncode
     return result
 

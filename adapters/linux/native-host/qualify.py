@@ -231,7 +231,7 @@ def run(binary, env, directory, cancel=False, server_loss=None, mode="normal",
             if (not stopped or stopped["requestedSignal"] != signal.SIGTERM or
                     stopped["escalated"] or stopped["returncode"] not in (0, -signal.SIGTERM) or
                     report.get("expectedServerLoss") is not True or report.get("coreErrorCount") != 1 or
-                    not isinstance(core, dict) or set(core) != {"id", "sequence", "result", "messageComplete", "message"} or
+                    not isinstance(core, dict) or set(core) != {"id", "sequence", "result", "messageComplete", "message", "observedMonotonicNs"} or
                     type(core.get("id")) is not int or core["id"] != 0 or
                     type(core.get("sequence")) is not int or not -(2**31) <= core["sequence"] < 2**31 or
                     core.get("result") != -errno.EPIPE or core.get("messageComplete") is not True or

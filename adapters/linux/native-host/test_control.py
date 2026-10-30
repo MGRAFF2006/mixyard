@@ -3,6 +3,7 @@ import copy
 import os
 import re
 import signal
+import time
 import subprocess
 from pathlib import Path
 import tempfile
@@ -28,6 +29,32 @@ def private_snapshot():
 
 
 class Isolation(unittest.TestCase):
+    def test_actual_c_and_python_os_clock_share_the_recorded_namespace(self):
+        base = Path(__file__).resolve().parent
+        program = r'''#include <assert.h>
+#include <inttypes.h>
+#include <stdio.h>
+#include "os_clock.h"
+int main(void) {
+    uint64_t ns, now;
+    assert(mx_os_time_namespace(&ns) && mx_os_monotonic_ns(&now));
+    printf("{\"namespace\":%" PRIu64 ",\"monotonicNs\":%" PRIu64 "}\n", ns, now);
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="mixyard-os-clock-", dir="/dev/shm") as root:
+            source, binary = Path(root) / "clock.c", Path(root) / "clock"
+            source.write_text(program)
+            subprocess.run(["cc", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror",
+                            "-pedantic", "-I", str(base), str(source), "-o", str(binary)],
+                           env=dict(os.environ, TMPDIR=root), check=True, capture_output=True)
+            before = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+            observed = qualify.json.loads(subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout)
+            after = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+            self.assertEqual(observed["namespace"], os.stat("/proc/self/ns/time").st_ino)
+            self.assertLessEqual(before, observed["monotonicNs"])
+            self.assertLessEqual(observed["monotonicNs"], after)
+
     def test_stop_signal_mask_is_inherited_before_workers_and_acknowledged(self):
         base = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix="mixyard-stop-signals-", dir="/dev/shm") as root:
@@ -72,7 +99,7 @@ int main(void) {
         .frames = 128, .chunk_present = true, .offset = 32, .size = 2048,
         .stride = 16, .flags = 1, .clock_id = 19, .clock_frame = 9007199254740993ULL,
         .header_present = true, .header_seq = 9007199254740865ULL, .header_pts = -7,
-        .sample_index = 3, .actual_bits = 0x8000000000000000ULL,
+        .callback_monotonic_ns = 123456789, .sample_index = 3, .actual_bits = 0x8000000000000000ULL,
         .expected_bits = 0x3ff0000000000001ULL };
     mx_native_record_first(&failure, &first);
     struct mx_native_observation late = { .error = 11, .size = 0 };
@@ -92,6 +119,7 @@ int main(void) {
             result = qualify.json.loads(subprocess.run([str(binary)], check=True,
                 capture_output=True, text=True).stdout)
         self.assertIsNone(result["empty"])
+        self.assertEqual(result["failure"]["callbackMonotonicNs"], 123456789)
         report = result["failure"]
         self.assertEqual((report["error"], report["role"], report["port"]), (12, 2, 1))
         self.assertEqual((report["offset"], report["size"], report["stride"], report["flags"]),

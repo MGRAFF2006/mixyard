@@ -46,7 +46,7 @@ def passing_report(mode="normal", cancel=False, server_loss=False):
         result["lossFrame"] = 10000
     if server_loss:
         result.update(error=46, coreErrorCount=1, coreError={
-            "id": 0, "sequence": 37, "result": -errno.EPIPE,
+            "id": 0, "sequence": 37, "result": -errno.EPIPE, "observedMonotonicNs": 0,
             "messageComplete": True, "message": "connection error"})
     return result
 
@@ -63,6 +63,8 @@ while not (root / "request.json").exists():
     if time.monotonic() >= deadline: raise RuntimeError("request not published")
     time.sleep(.001)
 report = config["report"]
+report["osClock"] = "CLOCK_MONOTONIC"
+report["osTimeNamespace"] = os.stat("/proc/self/ns/time").st_ino
 if config.get("cancel"):
     def stop(number, _):
         report["stopSignal"] = number; report["cancelled"] = True
@@ -75,6 +77,7 @@ if config.get("serverPid"):
         except ProcessLookupError: break
         if time.monotonic() >= deadline: raise RuntimeError("owned server not reaped")
         time.sleep(.001)
+    report["coreError"]["observedMonotonicNs"] = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
 if config.get("cancel"):
     while not report["cancelled"]:
         if time.monotonic() >= deadline: raise RuntimeError("no cancellation")
@@ -189,7 +192,15 @@ while True: time.sleep(.01)
                 root = Path(temporary)
                 captures = Captures()
                 daemon = self.start_daemon(captures, root, diagnostic, stream)
-                daemon.stop()
+                before = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+                stopped = daemon.stop()
+                after = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+                self.assertEqual(stopped["osClock"], "CLOCK_MONOTONIC")
+                self.assertEqual(stopped["osTimeNamespace"], os.stat("/proc/self/ns/time").st_ino)
+                self.assertLessEqual(before, stopped["beforeSignalNs"])
+                self.assertLessEqual(stopped["beforeSignalNs"], stopped["signalReturnedNs"])
+                self.assertLessEqual(stopped["signalReturnedNs"], stopped["stopCompletedNs"])
+                self.assertLessEqual(stopped["stopCompletedNs"], after)
                 failures = captures.finalize()
                 completed = captures.write_evidence(root / "evidence.json", {}, "; ".join(failures) if failures else None)
                 self.assertEqual(completed["qualification"], "failure" if diagnostic else "success")
@@ -204,6 +215,9 @@ while True: time.sleep(.01)
         wrong = passing_report(server_loss=True)
         wrong["coreError"]["id"] = 7
         variants.append((expected, wrong))
+        first_chunk_fault = passing_report(server_loss=True)
+        first_chunk_fault["error"] = 12
+        variants.append((expected, first_chunk_fault))  # No EMPTY/teardown exception without measured cause.
         for diagnostic, report in variants:
             with self.subTest(extra=diagnostic != expected, wrong_core=report is not None), \
                     tempfile.TemporaryDirectory(prefix="mixyard-disconnect-diagnostics-", dir="/dev/shm") as temporary:

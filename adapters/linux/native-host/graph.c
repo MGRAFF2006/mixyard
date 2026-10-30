@@ -25,6 +25,7 @@
 #include "consumer_copy.h"
 #include "generation_stop.h"
 #include "stop_signals.h"
+#include "os_clock.h"
 
 #define ROUTES 3
 #define FRAMES 128
@@ -96,7 +97,8 @@ struct app {
     bool quiet_started;
     bool topology_written, linked, expected_loss, cancelled, stop_signals_ready;
     int stop_signal;
-    struct { uint32_t count, id; int sequence, result; bool complete; char message[256]; } core_failure;
+    struct { uint32_t count, id; int sequence, result; bool complete; uint64_t monotonic_ns; char message[256]; } core_failure;
+    uint64_t os_time_namespace, first_error_monotonic_ns;
     bool expected_server_loss;
     const char *directory;
 };
@@ -104,6 +106,7 @@ struct app {
 // Linker wrapping measures heap operations in this client and the static Rust host.
 // The distro libpipewire shared object's internals are outside this measurement.
 static _Thread_local struct app *callback_owner;
+static _Thread_local uint64_t callback_monotonic_ns;
 void *__real_malloc(size_t); void *__real_calloc(size_t, size_t);
 void *__real_realloc(void *, size_t); void __real_free(void *);
 int __real_posix_memalign(void **, size_t, size_t);
@@ -146,7 +149,10 @@ static double oracle(struct app *a, unsigned route, uint64_t frame, unsigned cha
 }
 static void fail(struct app *a, unsigned error) {
     unsigned zero = 0;
-    atomic_compare_exchange_strong(&a->error, &zero, error);
+    uint64_t observed = 0;
+    mx_os_monotonic_ns(&observed);
+    if (atomic_compare_exchange_strong(&a->error, &zero, error))
+        a->first_error_monotonic_ns = observed; // Printed only after all native owners retire.
 }
 static struct spa_meta_header *header(struct pw_buffer *b) {
     return spa_buffer_find_meta_data(b->buffer, SPA_META_Header, sizeof(struct spa_meta_header));
@@ -165,7 +171,7 @@ static void observe_failure(struct endpoint *e, unsigned port, bool input,
         .clock_id = pos->clock.id, .clock_frame = pos->clock.position,
         .clock_ns = pos->clock.nsec, .clock_duration = pos->clock.duration,
         .rate_num = pos->clock.rate.num, .rate_denom = pos->clock.rate.denom,
-        .sample_index = sample_index };
+        .sample_index = sample_index, .callback_monotonic_ns = callback_monotonic_ns };
     memcpy(&value.actual_bits, &actual, sizeof(actual));
     memcpy(&value.expected_bits, &expected, sizeof(expected));
     if (b->buffer->n_datas) {
@@ -228,6 +234,7 @@ static void consume_owned(struct endpoint *e, unsigned route, const struct spa_i
                     .rate_num = pos->clock.rate.num, .rate_denom = pos->clock.rate.denom,
                     .phase = atomic_load_explicit(&a->phase, memory_order_relaxed),
                     .command = atomic_load_explicit(&a->command, memory_order_relaxed),
+                    .callback_monotonic_ns = callback_monotonic_ns,
                     .header_flags = packet->metadata.header_flags,
                     .header_seq = packet->metadata.native_frame,
                     .header_pts = (int64_t)packet->metadata.stamp.captured_ns, .sample_index = 2*f+ch };
@@ -429,7 +436,11 @@ static void process(void *userdata, struct spa_io_position *pos) {
     // before touching Rust state; replacement invokes this same loop with ack.
     if (!pw_data_loop_in_thread(e->app->data_loop)) { fail(e->app, 77); return; }
     callback_owner = e->app;
+    if (!mx_os_monotonic_ns(&callback_monotonic_ns)) {
+        fail(e->app, 96); callback_owner = NULL; return;
+    }
     process_inner(userdata, pos);
+    callback_monotonic_ns = 0;
     callback_owner = NULL;
 }
 static void param_changed(void *userdata, void *port, uint32_t id, const struct spa_pod *param) {
@@ -536,6 +547,7 @@ static void core_error(void *userdata, uint32_t id, int seq, int res, const char
     size_t n = message ? strnlen(message, sizeof(a->core_failure.message)) : 0;
     bool complete = message && n < sizeof(a->core_failure.message);
     if (a->core_failure.count == 1) {
+        mx_os_monotonic_ns(&a->core_failure.monotonic_ns);
         a->core_failure.id = id; a->core_failure.sequence = seq; a->core_failure.result = res;
         a->core_failure.complete = complete;
         size_t kept = n < sizeof(a->core_failure.message)-1 ? n : sizeof(a->core_failure.message)-1;
@@ -967,6 +979,8 @@ static void print_format_reports(const struct app *a) {
         atomic_load(&a->consumer_prior_epoch[0]), atomic_load(&a->consumer_prior_epoch[1]), atomic_load(&a->consumer_prior_epoch[2]));
     printf(",\"sourceStopBeforeDestroy\":%s,\"sourceRemovalObserved\":%s,\"sourceStopFrame\":%" PRIu64,
         a->source_stop_before_destroy ? "true" : "false", a->source_removal_observed ? "true" : "false", a->source_stop_frame);
+    printf(",\"osClock\":\"CLOCK_MONOTONIC\",\"osTimeNamespace\":%" PRIu64 ",\"firstErrorMonotonicNs\":%" PRIu64,
+        a->os_time_namespace, a->first_error_monotonic_ns);
     printf(",\"expectedServerLoss\":%s,\"coreErrorCount\":%u,\"coreError\":",
         a->expected_server_loss ? "true" : "false", a->core_failure.count);
     if (a->core_failure.count) {
@@ -974,6 +988,7 @@ static void print_format_reports(const struct app *a) {
         json_object_object_add(event, "id", json_object_new_int64(a->core_failure.id));
         json_object_object_add(event, "sequence", json_object_new_int(a->core_failure.sequence));
         json_object_object_add(event, "result", json_object_new_int(a->core_failure.result));
+        json_object_object_add(event, "observedMonotonicNs", json_object_new_uint64(a->core_failure.monotonic_ns));
         json_object_object_add(event, "messageComplete", json_object_new_boolean(a->core_failure.complete));
         json_object_object_add(event, "message", json_object_new_string(a->core_failure.message));
         printf("%s", json_object_to_json_string_ext(event, JSON_C_TO_STRING_PLAIN));
@@ -1007,6 +1022,7 @@ int main(int argc, char **argv) {
     // cannot retroactively mask a thread that already inherited an open mask.
     int signal_error = mx_native_block_stop_signals();
     if (signal_error) { fprintf(stderr, "stop signal ownership: %s\n", strerror(signal_error)); return 2; }
+    if (!mx_os_time_namespace(&a.os_time_namespace)) { fprintf(stderr, "OS time namespace unavailable\n"); return 2; }
     atomic_init(&a.epoch_frame, UINT64_MAX); atomic_init(&a.overflow_frame, UINT64_MAX); atomic_init(&a.loss_frame, UINT64_MAX);
     pw_init(&argc, &argv);
     a.loop = pw_main_loop_new(NULL);

@@ -271,3 +271,16 @@ incomplete/different client classifications. Actual SDK isolation snapshots must
 contain client observations with `pipewire.access = unrestricted` for these
 owned, non-sandboxed fixture clients, and record them in evidence. All existing
 module/device/link/diagnostic gates remain strict. No warning exception is added.
+
+Server-loss ordering diagnostics now record **OS CLOCK_MONOTONIC** separately
+from PipeWire sample timestamps: controller times immediately before and after
+the actual signal syscall and after reaping, native callback entry, the first
+fatal error, and the core-error notification. A failed clock read is recorded
+as unavailable/zero; it cannot establish ordering. Both processes record their actual Linux time-namespace
+inode. The control regression checks C/Python OS timestamps and namespace on
+owned processes; no hardware/engine/PipeWire clock mapping is inferred. The
+first fatal error and strict EMPTY rejection remain unchanged. This diagnostic
+revision still requires error 46 for server loss: it does not accept error 12
+or overwrite its first-cause record. A witnessed ordering/geometry decision,
+negative pre-stop/unrelated-corruption checks, and another gated SDK run are
+required before considering any narrower expected-teardown classification.
