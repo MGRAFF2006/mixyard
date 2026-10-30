@@ -2,6 +2,7 @@ name: Windows ingress and capture artifacts (no driver load)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml']
   pull_request:
     paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml']

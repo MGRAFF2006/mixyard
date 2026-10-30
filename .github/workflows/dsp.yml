@@ -3,6 +3,7 @@ name: Offline Float64 DSP (no native delivery)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/dsp/**', 'src/latency.rs', 'tests/latency.rs', 'tests/dsp*', 'tests/dsp/**', 'examples/dsp*', 'docs/dsp.md', 'docs/latency.md', '.github/workflows/dsp.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/dsp/**', 'src/latency.rs', 'tests/latency.rs', 'tests/dsp*', 'tests/dsp/**', 'examples/dsp*', 'docs/dsp.md', 'docs/latency.md', '.github/workflows/dsp.yml']

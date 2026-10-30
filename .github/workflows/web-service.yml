@@ -2,6 +2,7 @@ name: Loopback web service
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', 'tests/web_support/**', 'tests/runtime_inventory.rs', 'observers/**', 'adapters/linux/**', '.github/workflows/web-service.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/web*', 'tests/web_support/**', 'tests/runtime_inventory.rs', 'observers/**', 'adapters/linux/**', '.github/workflows/web-service.yml']

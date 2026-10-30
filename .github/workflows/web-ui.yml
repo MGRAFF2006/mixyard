@@ -3,6 +3,7 @@ name: Web console frontend checks
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'apps/web/**'
       - 'src/**'

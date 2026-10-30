@@ -4,6 +4,7 @@ on:
   pull_request:
     paths: ['control/**', 'src/**', 'apps/web/src/**', 'apps/web/package.json', 'apps/web/pnpm-lock.yaml', 'Cargo.toml', 'Cargo.lock', 'verification/device-control/**', '.github/workflows/device-control-integration.yml']
   push:
+    branches: [main]
     paths: ['control/**', 'src/**', 'apps/web/src/**', 'apps/web/package.json', 'apps/web/pnpm-lock.yaml', 'Cargo.toml', 'Cargo.lock', 'verification/device-control/**', '.github/workflows/device-control-integration.yml']
 permissions:
   contents: read

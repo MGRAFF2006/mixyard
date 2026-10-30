@@ -2,6 +2,7 @@ name: Native paired desktop control (no audio qualification)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['apps/desktop/**', 'verification/desktop-paired/**', '.github/workflows/desktop-paired.yml']
   pull_request:
     paths: ['apps/desktop/**', 'verification/desktop-paired/**', '.github/workflows/desktop-paired.yml']

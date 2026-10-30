@@ -2,6 +2,7 @@ name: Shared core without desktop IPC
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/audio*', 'tests/dsp*', 'tests/latency.rs', 'tests/runtime_worker.rs', '.github/workflows/mobile-core.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/audio*', 'tests/dsp*', 'tests/latency.rs', 'tests/runtime_worker.rs', '.github/workflows/mobile-core.yml']

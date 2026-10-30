@@ -3,6 +3,7 @@ name: Desktop snapshot inspection boundary (no native audio)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'apps/desktop/src-tauri/src/inspection.rs'
       - 'verification/desktop-inspection/**'

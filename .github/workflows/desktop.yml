@@ -3,6 +3,7 @@ name: Desktop frontend checks (not native audio)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'apps/desktop/**'
       - 'apps/web/**'

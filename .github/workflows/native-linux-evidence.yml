@@ -2,6 +2,7 @@ name: Silent Linux evidence harness (fixtures only)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['verification/native-linux/**', '.github/workflows/native-linux-evidence.yml']
   pull_request:
     paths: ['verification/native-linux/**', '.github/workflows/native-linux-evidence.yml']

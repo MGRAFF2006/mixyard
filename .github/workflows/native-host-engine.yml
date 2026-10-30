@@ -2,6 +2,7 @@ name: Canonical native host ABI
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['adapters/engine/**', 'src/audio.rs', 'src/dsp/live.rs', 'tests/audio_host.rs', '.github/workflows/native-host-engine.yml']
   pull_request:
     paths: ['adapters/engine/**', 'src/audio.rs', 'src/dsp/live.rs', 'tests/audio_host.rs', '.github/workflows/native-host-engine.yml']

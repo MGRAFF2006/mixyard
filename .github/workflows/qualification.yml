@@ -3,6 +3,7 @@ name: Qualification models and native builds (not native audio)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'

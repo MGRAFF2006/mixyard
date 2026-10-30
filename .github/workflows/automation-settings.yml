@@ -2,6 +2,7 @@ name: Durable situation settings
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/store_fs.rs', 'src/profiles/**', 'src/profiles.rs', 'src/automation/**', 'src/context.rs', 'tests/automation*', 'tests/profiles_cli.rs', 'tests/context.rs', 'docs/automation-settings.md', '.github/workflows/automation-settings.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/store_fs.rs', 'src/profiles/**', 'src/profiles.rs', 'src/automation/**', 'src/context.rs', 'tests/automation*', 'tests/profiles_cli.rs', 'tests/context.rs', 'docs/automation-settings.md', '.github/workflows/automation-settings.yml']

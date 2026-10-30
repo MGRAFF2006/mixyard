@@ -3,6 +3,7 @@ name: Situation decision core (explicit observations)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/automation/**', 'src/bin/mixyard-automation.rs', 'tests/automation*', 'examples/automation/**', 'docs/automation*.md', '.github/workflows/automation.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/automation/**', 'src/bin/mixyard-automation.rs', 'tests/automation*', 'examples/automation/**', 'docs/automation*.md', '.github/workflows/automation.yml']

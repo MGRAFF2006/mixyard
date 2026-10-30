@@ -3,6 +3,7 @@ name: Native inventory helpers (read-only runner proof)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml']
   pull_request:
     paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml']

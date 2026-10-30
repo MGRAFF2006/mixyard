@@ -2,6 +2,7 @@ name: Bounded native PCM handoff
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/audio.rs', 'src/audio/**', 'src/dsp/**', 'src/runtime/**', 'tests/runtime_worker.rs', 'tests/native_pipeline.rs', 'tests/native_linux_pcm.rs', '.github/workflows/native-worker.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/audio.rs', 'src/audio/**', 'src/dsp/**', 'src/runtime/**', 'tests/runtime_worker.rs', 'tests/native_pipeline.rs', 'tests/native_linux_pcm.rs', '.github/workflows/native-worker.yml']

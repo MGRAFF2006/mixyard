@@ -2,6 +2,7 @@ name: Headless runtime lifecycle (no native audio)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', 'tests/recording.rs', 'tests/runtime_support/**', 'scripts/install-inventory-runtime.*', 'adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', '.github/workflows/runtime.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', 'tests/recording.rs', 'tests/runtime_support/**', 'scripts/install-inventory-runtime.*', 'adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', '.github/workflows/runtime.yml']

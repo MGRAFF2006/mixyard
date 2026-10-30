@@ -3,6 +3,7 @@ name: macOS worker bridge (synthetic PCM, no audio devices)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'adapters/macos/**'
       - '.github/workflows/macos-workers.yml'

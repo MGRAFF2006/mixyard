@@ -3,6 +3,7 @@ name: Core PCM processing (no native delivery)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/audio.rs', 'src/audio/**', 'tests/audio*', 'tests/audio/**', 'examples/**', 'docs/audio-core.md', '.github/workflows/audio-core.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/audio.rs', 'src/audio/**', 'tests/audio*', 'tests/audio/**', 'examples/**', 'docs/audio-core.md', '.github/workflows/audio-core.yml']

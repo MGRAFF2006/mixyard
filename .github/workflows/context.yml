@@ -2,6 +2,7 @@ name: Passive situation observers
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/context.rs', 'src/bin/mixyard-context.rs', 'src/automation/**', 'observers/**', 'tests/context.rs', 'adapters/linux/mixyard_linux.py', 'docs/context.md', '.github/workflows/context.yml']
   pull_request:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/context.rs', 'src/bin/mixyard-context.rs', 'src/automation/**', 'observers/**', 'tests/context.rs', 'adapters/linux/mixyard_linux.py', 'docs/context.md', '.github/workflows/context.yml']
