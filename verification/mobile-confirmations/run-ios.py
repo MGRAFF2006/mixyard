@@ -174,7 +174,7 @@ def main():
     cleanup_failures = []
     try:
         output = Path(os.environ['RUNNER_TEMP']) / 'mixyard-confirm-ios'
-        destination = f'platform=iOS Simulator,id={identifier},arch={arch}'
+        destination = f'platform=iOS Simulator,id={identifier}'
         common = ['-project', 'apps/mobile/ios/Mixyard.xcodeproj', '-scheme', 'MixyardConfirmations',
                   '-configuration', 'Debug', '-sdk', 'iphonesimulator', '-destination', destination,
                   '-derivedDataPath', str(output), 'ONLY_ACTIVE_ARCH=YES', f'ARCHS={arch}', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE', 'CODE_SIGNING_ALLOWED=NO']
