@@ -127,3 +127,11 @@ ONLY scheduling hooks and these same tests, requiring exactly three native RED
 failures before current tests run. This is not the sequential stdin harness or a
 double of native generation atomics. Current-source Rust/TLS execution is pending
 until the hosted job actually runs; local formatting/source checks are not proof.
+
+The first7df hosted runs passed the historical RED gate but then ran an executable
+with the same three historical failure markers as current. Their shared Cargo
+target made artifact reuse a concrete suspect; these runs do NOT qualify the
+repair. Historical source now compiles into its own temporary target. Both gates
+record source hashes and the exact Cargo-reported executable hash; current runs
+that executable directly. Separately built current GREEN execution is still
+required; no local native compilation was performed for this fixture correction.

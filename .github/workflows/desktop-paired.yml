@@ -88,7 +88,7 @@ jobs:
       - name: Actual current production native authority concurrency and TLS regressions
         env:
           MIXYARD_TEST_CONTROL_BINARY: ${{ github.workspace }}/qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}
-        run: cargo test --locked --manifest-path apps/desktop/native-control/Cargo.toml
+        run: python -B verification/desktop-paired/native-current.py
       - uses: pnpm/action-setup@v6
         if: runner.os == 'Linux'
         with:

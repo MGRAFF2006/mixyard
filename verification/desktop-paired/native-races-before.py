@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import json
+from native_test_build import compile_tests
 
 BEFORE='b2cb91d288e4fa25b6ced337d0268b5537bb6008'
 if os.environ.get('GITHUB_ACTIONS')!='true': raise RuntimeError('Hosted owned source qualification only')
@@ -41,7 +43,12 @@ with tempfile.TemporaryDirectory(prefix='native-race-before-',dir=os.environ['RU
     text+='\n#[cfg(test)]\nmod authority_tests;\n'
     (destination/'src/lib.rs').write_text(text)
     (destination/'src/authority_tests.rs').write_text((current/'src/authority_tests.rs').read_text())
-    command=['cargo','test','--locked','--manifest-path',str(destination/'Cargo.toml'),'--target-dir',str(current/'target'),'authority_tests::native_','--','--nocapture']
+    # NEVER share a target with the current source: Cargo can otherwise reuse
+    # the same package/test artifact after this temporary crate has built it.
+    executable, evidence = compile_tests(destination/'Cargo.toml', destination/'target')
+    evidence['historicalSourceHead'] = BEFORE
+    print('Historical isolated executable attestation: ' + json.dumps(evidence), flush=True)
+    command=[str(executable),'authority_tests::native_','--nocapture']
     result=subprocess.run(command,text=True,capture_output=True,timeout=300)
     output=result.stdout+'\n'+result.stderr
     expected=['native_old_open_admission_cannot_clear_replacement_session','native_delayed_expected_disconnect_cannot_clear_replacement_session','native_stale_tls_completion_cannot_publish_for_a_new_admission']
