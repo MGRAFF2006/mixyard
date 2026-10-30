@@ -22,6 +22,7 @@ final class MemoryVault: CredentialVault {
         let vault = MemoryVault()
         var client = try ControlClient(store: vault)
         var captured: [String: Ticket] = [:]
+        FileHandle.standardOutput.write(Data("{\"event\":\"ready\"}\n".utf8))
         while let line = readLine() {
             var reply: [String: Any] = [:]
             do {
@@ -62,7 +63,10 @@ final class MemoryVault: CredentialVault {
             } catch {
                 // Export classification only, never arbitrary errors containing
                 // credentials, invitations or native provisioning.
-                reply["ok"] = false; reply["failure"] = String(describing: type(of: error))
+                reply["ok"] = false
+                let native = error as NSError
+                let known = [NSURLErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain]
+                reply["failure"] = known.contains(native.domain) ? "\(native.domain):\(native.code)" : String(describing: type(of: error))
             }
             reply["hasAuthority"] = client.ticket.authority != nil
             let data = try JSONSerialization.data(withJSONObject: reply)

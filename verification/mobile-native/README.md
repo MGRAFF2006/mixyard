@@ -24,7 +24,7 @@ runtime. The native raw-string canonical payload path must not depend on either
 implementation's floating-point reserialization.
 
 The dedicated workflow builds the control service from exact production source
-`812eee1479702635dc51994dc795ca9f8a655351` (PR #76) in a separate hosted checkout.
+`b3731ce51af02cfbcd0ad6fb7080694f08b6a0bd` (PR #76) in a separate hosted checkout.
 This is an explicit stack dependency, not an unversioned download. The client
 revision is the PR checkout under test. An SDK build or queued job is not a pass.
 Do not upload fixture directories: they contain private disposable TLS identities
@@ -52,3 +52,23 @@ These are hosted native service tests, not physical Android/iPhone secure storag
 WebView, route/focus, background, capture, playback, battery or audio qualification.
 Both availability flags remain false. The portable host ABI attachment is a
 separate native outcome and cannot promote any role based on these tests.
+
+## Readiness and failure evidence
+
+The previous Swift run compiled but its first pairing RPC timed out after20s;
+the subsequent cleanup remained blocked until job cancellation. That is a failed
+suite, not evidence of a harmless preemption or successful TLS. Its precise cause
+has not yet been established. The driver now announces readiness before stdin is
+admitted. Trust preparation and the first RPC share the original20s total budget;
+HTTP bounds, Security trust, hostname verification and leaf pinning are unchanged.
+Only a small fixed phase vocabulary is exposed; arbitrary native stderr is drained
+without logging paths, credentials, certificates or captured Security output.
+
+The hosted Swift wrapper bounds each owned Security command and its total startup
+and cleanup work. On failure it restores and verifies the original keychain search
+list before removing only its owned fixture trust and keychain. Cleanup failures
+are reported. Actor shutdown and independent service shutdown are both attempted,
+so a trust-cleanup error cannot skip service reaping. Node actor lifecycle tests
+use real owned child processes; Python trust-lifecycle tests replace Security and
+never change local PKI. These tests do not qualify actual macOS cleanup or explain
+the earlier failure; current-head hosted phase/readiness/TLS execution is required.

@@ -1,0 +1,93 @@
+name: Owned native confirmation UI
+on:
+  workflow_dispatch:
+    inputs:
+      android_emulator:
+        description: 'Authorize this owned hosted Android SDK image/emulator run (no local install)'
+        type: boolean
+        default: false
+  pull_request:
+    paths: ['apps/mobile/**', 'apps/web/**', 'verification/mobile-confirmations/**', '.github/workflows/mobile-confirmations.yml']
+  push:
+    branches: [main]
+    paths: ['apps/mobile/**', 'apps/web/**', 'verification/mobile-confirmations/**', '.github/workflows/mobile-confirmations.yml']
+permissions:
+  contents: read
+jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: '11.10.0'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.1'
+      - run: pnpm --dir apps/web install --frozen-lockfile
+      - name: Build actual shared App with the explicit UI-only service double
+        env:
+          MIXYARD_CONFIRMATION_CACHE: ${{ runner.temp }}/confirmation-vite
+        run: node verification/mobile-confirmations/build.mjs "$RUNNER_TEMP/confirmation-assets"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: confirmation-ui-assets
+          path: ${{ runner.temp }}/confirmation-assets/
+  ios-native-dialog:
+    runs-on: macos-15
+    needs: fixture
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v6
+        with:
+          name: confirmation-ui-assets
+          path: apps/mobile/ios/App/controller/
+      - name: Real WKWebView, shipping UIKit delegate and actual shared editor confirmations
+        run: python3 -B verification/mobile-confirmations/run-ios.py
+      - if: always()
+        run: |
+          echo 'Owned iOS Simulator UI fixture: actual App and native dialogs; synthetic read-only service, no native authentication, audio, physical phone or capture qualification.' >> "$GITHUB_STEP_SUMMARY"
+  android-native-dialog:
+    if: github.event_name == 'workflow_dispatch' && inputs.android_emulator
+    runs-on: ubuntu-latest
+    needs: fixture
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v6
+        with:
+          name: confirmation-ui-assets
+          path: apps/mobile/android/app/src/debug/assets/controller/
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Stage the SDK-only instrumentation into this disposable debug build
+        run: |
+          mkdir -p apps/mobile/android/app/src/debug/java/org/mixyard/mobile
+          cp verification/mobile-confirmations/android/ConfirmationInstrumentation.kt apps/mobile/android/app/src/debug/java/org/mixyard/mobile/
+          cp verification/mobile-confirmations/android/AndroidManifest.xml apps/mobile/android/app/src/debug/AndroidManifest.xml
+          gradle --no-daemon -p apps/mobile/android :app:assembleDebug
+      - name: Actual owned emulator native AlertDialog cancel and confirm
+        env:
+          MIXYARD_HOSTED_EMULATOR_APPROVED: '1'
+        run: bash verification/mobile-confirmations/run-android.sh
+      - if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-native-confirmation-result
+          path: ${{ runner.temp }}/android-confirmations.txt
+      - if: always()
+        run: |
+          echo 'Owned Android emulator SDK UI fixture: actual App and native dialogs; no service authentication, physical phone or audio qualification. No new Maven/test dependencies.' >> "$GITHUB_STEP_SUMMARY"

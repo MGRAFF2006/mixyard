@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { dspJson } from '../../apps/web/src/dsp-json.ts'
+import { Native } from './native-process.ts'
+import type { NativeReply } from './native-process.ts'
 
 // A missing executable fails; these tests never replace the production service
 // or the native client with a JavaScript implementation.
@@ -85,55 +87,7 @@ class Device {
     }), 'test administrator')
   }
 }
-type NativeReply = { ok: boolean; raw?: string; status?: number; hasAuthority: boolean; failure?: string }
-class Native {
-  child: ChildProcess
-  private terminal = false
-  private pending: { resolve: (reply: NativeReply) => void; reject: (error: Error) => void } | null = null
-  constructor(directory: string) {
-    this.child = spawn(command[0], command.slice(1), { env: { ...process.env, MIXYARD_NATIVE_FIXTURE: directory }, stdio: ['pipe', 'pipe', 'pipe'] })
-    const lines = createInterface({ input: this.child.stdout! })
-    lines.on('line', line => {
-      const pending = this.pending; this.pending = null
-      if (!pending) return
-      try { pending.resolve(JSON.parse(line)) } catch { pending.reject(new Error('Native driver returned invalid JSONL')) }
-    })
-    this.child.on('error', () => { this.terminal = true; this.pending?.reject(new Error('Native executable unavailable')); this.pending = null })
-    this.child.on('exit', () => { this.terminal = true; this.pending?.reject(new Error('Native driver exited')); this.pending = null; lines.close() })
-  }
-  async call(body: unknown): Promise<NativeReply> {
-    if (this.terminal) throw new Error('Native driver is unavailable')
-    assert.equal(this.pending, null, 'test driver submits one exchange at a time')
-    const reply = new Promise<NativeReply>((resolve, reject) => { this.pending = { resolve, reject } })
-    this.child.stdin!.write(dspJson(body) + '\n')
-    return deadline(reply, 'native client').catch(error => {
-      this.terminal = true; this.pending = null; this.child.kill('SIGTERM'); throw error
-    })
-  }
-  async ok(body: unknown): Promise<NativeReply> {
-    const reply = await this.call(body)
-    assert.equal(reply.ok, true, `Native operation failed (${reply.failure ?? 'unknown'})`)
-    return reply
-  }
-  async session() {
-    const reply = await this.ok({ op: 'invoke', method: 'session', payload: '{}' })
-    assert.equal(typeof reply.raw, 'string', 'the shipping native client returns raw JSON')
-    const value = JSON.parse(reply.raw!)
-    assert.equal(value.backendAvailable, false); assert.equal(value.audioApplied, false)
-    return value
-  }
-  async request(scope: any, path: string, body: unknown, expected?: string) {
-    return this.call({ op: 'invoke', method: 'request', payload: dspJson({ deviceId: scope.deviceId, authorityId: scope.authorityId, revision: scope.revision, path, body }), ...(expected ? { expected } : {}) })
-  }
-  async close() {
-    if (this.child.exitCode !== null || this.child.signalCode !== null) return
-    const exited = once(this.child, 'exit'); this.child.stdin!.end()
-    try {
-      const [code] = await deadline(exited, 'native shutdown', 20_000)
-      assert.equal(code, 0, 'native driver and hosted trust cleanup must succeed')
-    } catch (error) { this.child.kill('SIGKILL'); await exited; throw error }
-  }
-}
+
 function envelope(reply: NativeReply, status = 200) {
   assert.equal(reply.ok, true, `Native request failed (${reply.failure ?? 'unknown'})`)
   assert.equal(typeof reply.raw, 'string')
@@ -157,7 +111,7 @@ test('shipping native pinned control client against owned production TLS service
     // Adapter launches provision a private JVM truststore or a private hosted
     // macOS test keychain. Provisioning never changes this developer's PKI.
     await Promise.all(devices.map(device => device.start()))
-    native = new Native(directory)
+    native = new Native(directory, command)
     const client = native
     let scope: any
     let saved: any
@@ -333,9 +287,20 @@ test('shipping native pinned control client against owned production TLS service
       }
     })
   } finally {
-    await native?.close()
-    if (redirect) await new Promise<void>(resolveClose => redirect!.close(() => resolveClose()))
-    await Promise.all(devices.map(device => device.stop()))
-    rmSync(directory, { recursive: true, force: true })
+    // A failed trust/actor shutdown must not skip the independently owned
+    // services. Keep the first failure visible while attempting every cleanup.
+    const failures: unknown[] = []
+    try { await native?.close() } catch (error) { failures.push(error) }
+    if (redirect) {
+      redirect.closeAllConnections()
+      try { await deadline(new Promise<void>(resolveClose => redirect!.close(() => resolveClose())), 'owned redirect shutdown') }
+      catch (error) { failures.push(error) }
+    }
+    const stopped = await Promise.allSettled(devices.map(device => device.stop()))
+    for (const result of stopped) if (result.status === 'rejected') failures.push(result.reason)
+    // A failed reap/trust restoration is not permission to delete state that
+    // an active service or the hosted Security search list may still reference.
+    if (failures.length === 0) rmSync(directory, { recursive: true, force: true })
+    if (failures.length) throw new AggregateError(failures, 'Owned qualification cleanup failed')
   }
 })
