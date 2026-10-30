@@ -1,4 +1,6 @@
-use mixyard_desktop_control::{Invitation, OpenReply, Paired, PlatformVault, Reply, Target};
+use mixyard_desktop_control::{
+    Invitation, OpenIntent, OpenReply, Paired, PlatformVault, Reply, Target,
+};
 use std::sync::Arc;
 use tauri::State;
 type Client = Arc<Paired<PlatformVault>>;
@@ -31,13 +33,29 @@ pub async fn paired_pair(
     worker(move || client.pair(endpoint, display_name, invitation)).await
 }
 #[tauri::command]
+pub fn paired_prepare_open(
+    target_id: String,
+    client: State<'_, Client>,
+) -> Result<OpenIntent, String> {
+    client.prepare_open(&target_id)
+}
+#[tauri::command]
+pub fn paired_cancel_open(
+    target_id: String,
+    intent: OpenIntent,
+    client: State<'_, Client>,
+) -> Result<(), String> {
+    client.cancel_open(&target_id, intent)
+}
+#[tauri::command]
 pub async fn paired_open(
     target_id: String,
     credential_id: String,
+    intent: OpenIntent,
     client: State<'_, Client>,
 ) -> Result<OpenReply, String> {
     let client = client.inner().clone();
-    worker(move || client.open(&target_id, &credential_id)).await
+    worker(move || client.open_intent(&target_id, &credential_id, intent)).await
 }
 #[tauri::command]
 pub async fn paired_request(
@@ -72,8 +90,9 @@ pub async fn paired_revoke(
     client: State<'_, Client>,
 ) -> Result<(), String> {
     let client = client.inner().clone();
+    let intent = client.prepare_open(&target_id)?;
     worker(move || {
-        let session = client.open(&target_id, &credential_id)?;
+        let session = client.open_intent(&target_id, &credential_id, intent)?;
         if session.status != 200 {
             return Err(format!(
                 "Cannot refresh controller before revocation (HTTP {}).",

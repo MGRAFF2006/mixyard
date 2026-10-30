@@ -398,6 +398,8 @@ fn main() {
             console_request,
             paired::paired_list,
             paired::paired_pair,
+            paired::paired_prepare_open,
+            paired::paired_cancel_open,
             paired::paired_open,
             paired::paired_request,
             paired::paired_disconnect,

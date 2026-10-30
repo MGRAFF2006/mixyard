@@ -34,7 +34,7 @@ async function loadTargets() {
   } catch (error) { notice.value = `Saved paired devices unavailable: ${String(error)}` }
   finally { ready.value = true; loadingTargets = false }
 }
-function disconnectedTarget(id: string) { targetApis.find(target => target.id.startsWith(`paired:${id}:`))?.api.disconnect('Disconnected through native device management; refresh to reconnect.') }
+function disconnectedTarget(id: string, credentialId: string) { targetApis.find(target => target.id === `paired:${id}:${credentialId}`)?.api.disconnect('Disconnected through native device management; refresh to reconnect.') }
 const consoleView = ref<InstanceType<typeof Console> | null>(null)
 const connection = ref(disconnected())
 const instance = ref('default')

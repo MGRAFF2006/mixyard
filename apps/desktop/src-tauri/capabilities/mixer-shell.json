@@ -17,6 +17,8 @@
     "allow-take-ui-action",
     "allow-paired-list",
     "allow-paired-pair",
+    "allow-paired-prepare-open",
+    "allow-paired-cancel-open",
     "allow-paired-open",
     "allow-paired-request",
     "allow-paired-disconnect",

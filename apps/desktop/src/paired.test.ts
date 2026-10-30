@@ -15,6 +15,7 @@ test('shared Api reaches native authority using only the sentinel and exact sign
   const calls: { command: string; args?: Record<string, unknown> }[] = []
   const invoke: Invoke = async <T>(command: string, args?: Record<string, unknown>) => {
     calls.push({ command, args })
+    if (command === 'paired_prepare_open') return { generation: 0, serial: 1 } as T
     if (command === 'paired_open') return { generation: 1, status: 200, body: JSON.stringify(identity) } as T
     if (command === 'paired_request') return { status: 200, body: '{"deviceId":"device-B","authorityId":"boot-B","revision":1,"status":200,"body":{"value":-0}}' } as T
     return undefined as T
@@ -38,6 +39,7 @@ test('host disconnect drops in-flight native completion and prevents a queued re
   const calls: string[] = []
   const invoke: Invoke = async <T>(command: string) => {
     calls.push(command)
+    if (command === 'paired_prepare_open') return { generation: 3, serial: 1 } as T
     if (command === 'paired_open') return { generation: 4, status: 200, body: JSON.stringify(identity) } as T
     if (command === 'paired_request') return await pending as T
     return undefined as T
@@ -56,6 +58,7 @@ test('host disconnect drops in-flight native completion and prevents a queued re
 test('permission denial retains the paired session; revocation requires a fresh session', async () => {
   let status = 403
   const invoke: Invoke = async <T>(command: string) => {
+    if (command === 'paired_prepare_open') return { generation: 0, serial: 1 } as T
     if (command === 'paired_open') return { generation: 1, status: 200, body: JSON.stringify(identity) } as T
     return { status, body: JSON.stringify({ error: { code: status === 403 ? 'permission-denied' : 'unauthorized', message: 'Denied' } }) } as T
   }
@@ -71,6 +74,7 @@ test('permission denial retains the paired session; revocation requires a fresh 
 test('a scoped canonical settings conflict immediately clears shared and native authority without another dispatch', async () => {
   let nativeConnected = true, requests = 0
   const invoke: Invoke = async <T>(command: string) => {
+    if (command === 'paired_prepare_open') return { generation: 0, serial: 1 } as T
     if (command === 'paired_open') return { generation: 1, status: 200, body: JSON.stringify(identity) } as T
     if (command === 'paired_disconnect') { nativeConnected = false; return undefined as T }
     requests++; nativeConnected = false
@@ -93,11 +97,17 @@ for (const operation of ['open', 'request'] as const) for (const outcome of ['su
     let release!: (reply: unknown) => void, reject!: (error: unknown) => void, arrived!: () => void
     const held = new Promise((resolve, fail) => { release = resolve; reject = fail })
     const dispatched = new Promise<void>(resolve => { arrived = resolve })
-    let opens = 0, active: number | null = null, heldRequest = false
+    let prepares = 0, opens = 0, active: number | null = null, heldRequest = false
     const disconnects: number[] = [], requests: number[] = []
     const config = readConfig(JSON.parse(readFileSync(new URL('../../web/src/example-config.json', import.meta.url), 'utf8')))
     const store = { format: 'mixyard-local-drafts', schemaVersion: 1, storeRevision: 0, configRevision: 1, profiles: [], draft: config, previousDraft: null }
     const invoke: Invoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      if (command === 'paired_prepare_open') return { generation: opens, serial: ++prepares } as T
+      if (command === 'paired_cancel_open') {
+        const expected = (args!.intent as { generation: number }).generation + 1
+        disconnects.push(expected); if (active === expected) active = null
+        return undefined as T
+      }
       if (command === 'paired_open') {
         active = ++opens
         if (operation === 'open' && opens === 1) { arrived(); return await held as T }
@@ -149,3 +159,24 @@ for (const operation of ['open', 'request'] as const) for (const outcome of ['su
     } finally { stop(); release({}); api.disconnect() }
   })
 }
+
+for (const outcome of ['success','rejection'] as const) test(`late native prepare ${outcome} cannot even dispatch an obsolete admission`,async()=>{
+  let release!: (value: unknown)=>void, reject!: (error: unknown)=>void, arrived!: ()=>void
+  const held = new Promise((resolve,fail)=>{release=resolve;reject=fail})
+  const dispatched = new Promise<void>(resolve=>{arrived=resolve})
+  let prepares=0, opens=0, active=true
+  const invoke: Invoke=async<T>(command:string,args?:Record<string,unknown>)=>{
+    if(command==='paired_prepare_open') { if(++prepares===1){arrived();return await held as T} return {generation:0,serial:2} as T }
+    if(command==='paired_open') {opens++;return {generation:1,status:200,body:JSON.stringify(identity)} as T}
+    if(command==='paired_disconnect'||command==='paired_cancel_open'){active=false;return undefined as T}
+    assert.equal(command,'paired_request');assert.equal(active,true)
+    return {status:200,body:JSON.stringify({...identity,status:200,body:{valid:true}})} as T
+  }
+  const api=pairedApi(invoke,target)
+  const old=api.connect().then(()=>null,error=>error)
+  await dispatched;api.disconnect();await api.connect();const epoch=api.epoch
+  if(outcome==='success')release({generation:0,serial:1});else reject('obsolete prepare failure')
+  await old
+  assert.equal(opens,1);assert.equal(api.connected,true);assert.equal(api.epoch,epoch);assert.equal(active,true)
+  await api.post('/api/status');api.disconnect()
+})

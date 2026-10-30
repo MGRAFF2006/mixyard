@@ -162,9 +162,31 @@ pub struct OpenReply {
     pub status: u16,
     pub body: String,
 }
+/// A nonauthorizing snapshot/order marker, never a credential or media grant.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OpenIntent {
+    generation: u64,
+    serial: u64,
+}
 struct Authority {
     generation: u64,
     session: Option<Session>,
+    issued_intent: u64,
+    cancelled_through: u64,
+    admitted_intent: Option<OpenIntent>,
+}
+impl Authority {
+    fn advance(&mut self) -> Result<u64, String> {
+        let next = self
+            .generation
+            .checked_add(1)
+            .ok_or("Native generation exhausted; restart paired management")?;
+        self.generation = next;
+        self.session = None;
+        self.admitted_intent = None;
+        Ok(next)
+    }
 }
 struct Host {
     // Admission, cancellation and publication share ONE short state lock.
@@ -180,6 +202,9 @@ impl Host {
             authority: Mutex::new(Authority {
                 generation: 0,
                 session: None,
+                issued_intent: 0,
+                cancelled_through: 0,
+                admitted_intent: None,
             }),
             operation: Mutex::new(()),
             #[cfg(test)]
@@ -194,13 +219,62 @@ impl Host {
         if expected.is_some_and(|value| value != state.generation) {
             return Ok((state.generation, false));
         }
-        let next = state
-            .generation
+        Ok((state.advance()?, true))
+    }
+    fn prepare_open(&self) -> Result<OpenIntent, String> {
+        let mut state = self
+            .authority
+            .lock()
+            .map_err(|_| "Paired session unavailable")?;
+        let serial = state
+            .issued_intent
             .checked_add(1)
-            .ok_or("Native generation exhausted; restart paired management")?;
-        state.generation = next;
-        state.session = None;
-        Ok((next, true))
+            .filter(|value| *value <= SAFE_REVISION)
+            .ok_or("Native intent exhausted; restart paired management")?;
+        if state.generation > SAFE_REVISION {
+            return Err("Native generation exhausted; restart paired management".into());
+        }
+        state.issued_intent = serial;
+        Ok(OpenIntent {
+            generation: state.generation,
+            serial,
+        })
+    }
+    fn admit_open(&self, intent: OpenIntent) -> Result<u64, String> {
+        let mut state = self
+            .authority
+            .lock()
+            .map_err(|_| "Paired session unavailable")?;
+        if intent.serial == 0
+            || intent.serial > state.issued_intent
+            || intent.serial <= state.cancelled_through
+            || intent.generation != state.generation
+        {
+            return Err(
+                "Paired open intent is stale or cancelled; explicitly Refresh, never replay".into(),
+            );
+        }
+        let generation = state.advance()?;
+        state.admitted_intent = Some(intent);
+        Ok(generation)
+    }
+    fn cancel_open(&self, intent: OpenIntent) -> Result<(), String> {
+        let mut state = self
+            .authority
+            .lock()
+            .map_err(|_| "Paired session unavailable")?;
+        if intent.serial == 0 || intent.serial > state.issued_intent {
+            return Err("Invalid paired open intent".into());
+        }
+        // Constant bounded state fences older queued admissions. NEVER clear an
+        // established session merely because an UNADMITTED ticket's base matches.
+        state.cancelled_through = state.cancelled_through.max(intent.serial);
+        if state.admitted_intent == Some(intent)
+            && intent.generation.checked_add(1) == Some(state.generation)
+        {
+            state.advance()?;
+        }
+        Ok(())
     }
     fn current(&self, generation: u64) -> Result<std::sync::MutexGuard<'_, Authority>, String> {
         let state = self
@@ -428,19 +502,38 @@ impl<V: Vault> Paired<V> {
         let _ = (generation, changed);
         Ok(())
     }
+    /// Fast snapshot only: no vault/network I/O and no session invalidation.
+    pub fn prepare_open(&self, id: &str) -> Result<OpenIntent, String> {
+        self.host(id)?.prepare_open()
+    }
+    pub fn cancel_open(&self, id: &str, intent: OpenIntent) -> Result<(), String> {
+        self.host(id)?.cancel_open(intent)
+    }
     pub fn open(&self, id: &str, credential_id: &str) -> Result<OpenReply, String> {
+        let intent = self.prepare_open(id)?;
+        self.open_intent(id, credential_id, intent)
+    }
+    pub fn open_intent(
+        &self,
+        id: &str,
+        credential_id: &str,
+        intent: OpenIntent,
+    ) -> Result<OpenReply, String> {
         hex_id(credential_id)?;
         let _admission = self.admit()?;
-        if self.stored(id)?.target.credential_id != credential_id {
-            return Err("Saved controller changed; select its new target. Old workspace authority cannot be rebound.".into());
-        }
         let host = self.host(id)?;
-        let (generation, _) = host.advance(None)?;
+        // The caller obtains its ticket BEFORE scheduling a blocking worker.
+        // CAS admission must precede even the first potentially blocked vault read.
+        let generation = host.admit_open(intent)?;
         #[cfg(test)]
         host.checkpoint(authority_tests::Checkpoint::OpenAdmitted, generation);
-        let _operation = host.operation.lock().map_err(|_| "Session unavailable")?;
-        self.fresh(&host, generation)?;
         let result = (|| {
+            if self.stored(id)?.target.credential_id != credential_id {
+                return Err("Saved controller changed; select its new target. Old workspace authority cannot be rebound.".into());
+            }
+            self.fresh(&host, generation)?;
+            let _operation = host.operation.lock().map_err(|_| "Session unavailable")?;
+            self.fresh(&host, generation)?;
             let record = self.stored(id)?;
             if record.target.credential_id != credential_id {
                 return Err("Saved controller changed. This cached workspace cannot acquire a newly paired credential; select its new target.".into());
@@ -545,6 +638,8 @@ impl<V: Vault> Paired<V> {
         let _admission = self.admit()?;
         self.disconnect(id, None)?;
         let host = self.host(id)?;
+        #[cfg(test)]
+        host.checkpoint(authority_tests::Checkpoint::ForgetInvalidated, 0);
         let _operation = host.operation.lock().map_err(|_| "Session unavailable")?;
         let _storage = self.storage.lock().map_err(|_| "Vault unavailable")?;
         let result = (|| {
@@ -762,3 +857,6 @@ mod tests {
 
 #[cfg(test)]
 mod authority_tests;
+
+#[cfg(test)]
+mod intent_tests;

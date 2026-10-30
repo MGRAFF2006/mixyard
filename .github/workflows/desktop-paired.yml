@@ -85,6 +85,12 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin b2cb91d288e4fa25b6ced337d0268b5537bb6008
           python -B verification/desktop-paired/native-races-before.py
+      - name: Historical pre-admission native regression is causally RED (actual TLS)
+        env:
+          MIXYARD_TEST_CONTROL_BINARY: ${{ github.workspace }}/qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}
+        run: |
+          git fetch --no-tags --depth=1 origin f6b1b0df5c31aef975875098b8a9a385c61aa899
+          python -B verification/desktop-paired/native-pre-admission-before.py
       - name: Actual current production native authority concurrency and TLS regressions
         env:
           MIXYARD_TEST_CONTROL_BINARY: ${{ github.workspace }}/qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}

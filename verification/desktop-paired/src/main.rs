@@ -1,5 +1,5 @@
 //! Owned API double for the vault only. TLS and all pairing/session logic are production code.
-use mixyard_desktop_control::{Paired, PlatformVault, Vault};
+use mixyard_desktop_control::{OpenIntent, Paired, PlatformVault, Vault};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -64,8 +64,24 @@ fn main() {
                 )
                 .map_err(|e| e.to_string()),
                 "list" => serde_json::to_value(client.list()?).map_err(|e| e.to_string()),
-                "open" => serde_json::to_value(client.open(text("id")?, text("credentialId")?)?)
+                "prepare-open" => serde_json::to_value(client.prepare_open(text("id")?)?)
                     .map_err(|e| e.to_string()),
+                "cancel-open" => {
+                    let intent: OpenIntent = serde_json::from_value(value["intent"].clone())
+                        .map_err(|_| "Invalid open intent")?;
+                    client.cancel_open(text("id")?, intent)?;
+                    Ok(json!({"cancelled":true}))
+                }
+                "open" => {
+                    let reply = if value.get("intent").is_some() {
+                        let intent: OpenIntent = serde_json::from_value(value["intent"].clone())
+                            .map_err(|_| "Invalid open intent")?;
+                        client.open_intent(text("id")?, text("credentialId")?, intent)?
+                    } else {
+                        client.open(text("id")?, text("credentialId")?)?
+                    };
+                    serde_json::to_value(reply).map_err(|e| e.to_string())
+                }
                 "request" => serde_json::to_value(client.request(
                     text("id")?,
                     value["generation"].as_u64().ok_or("Missing generation")?,

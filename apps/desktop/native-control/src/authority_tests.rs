@@ -15,36 +15,50 @@ pub(super) enum Checkpoint {
     OpenAdmitted,
     DisconnectAdmitted,
     OpenPublication,
+    ForgetInvalidated,
 }
 pub(super) type Hook = Arc<dyn Fn(Checkpoint, u64) + Send + Sync>;
 
 #[derive(Default)]
-struct MemoryVault(Mutex<BTreeMap<String, String>>);
+pub(super) struct MemoryVault {
+    values: Mutex<BTreeMap<String, String>>,
+    pub(super) first_read: Mutex<Option<Arc<Gate>>>,
+    pub(super) fail_delete: std::sync::atomic::AtomicBool,
+}
 impl Vault for MemoryVault {
     fn read(&self, key: &str) -> Result<Option<String>, String> {
-        Ok(self.0.lock().unwrap().get(key).cloned())
+        if key.len() == 64 && thread::current().name() == Some("obsolete-pre-vault") {
+            let barrier = self.first_read.lock().unwrap().take();
+            if let Some(barrier) = barrier {
+                barrier.pause();
+            }
+        }
+        Ok(self.values.lock().unwrap().get(key).cloned())
     }
     fn write(&self, key: &str, value: &str) -> Result<(), String> {
-        self.0.lock().unwrap().insert(key.into(), value.into());
+        self.values.lock().unwrap().insert(key.into(), value.into());
         Ok(())
     }
     fn delete(&self, key: &str) -> Result<(), String> {
-        self.0.lock().unwrap().remove(key);
+        if self.fail_delete.load(Ordering::SeqCst) {
+            return Err("Owned vault deletion failure".into());
+        }
+        self.values.lock().unwrap().remove(key);
         Ok(())
     }
 }
-struct Gate {
+pub(super) struct Gate {
     state: Mutex<(bool, bool)>,
     event: Condvar,
 }
 impl Gate {
-    fn new() -> Arc<Self> {
+    pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new((false, false)),
             event: Condvar::new(),
         })
     }
-    fn pause(&self) {
+    pub(super) fn pause(&self) {
         let mut state = self.state.lock().unwrap();
         state.0 = true;
         self.event.notify_all();
@@ -52,7 +66,7 @@ impl Gate {
             state = self.event.wait(state).unwrap();
         }
     }
-    fn entered(&self) {
+    pub(super) fn entered(&self) {
         let state = self.state.lock().unwrap();
         let (state, _) = self
             .event
@@ -62,28 +76,28 @@ impl Gate {
         drop(state);
         assert!(entered, "Owned native worker did not reach its barrier");
     }
-    fn release(&self) {
+    pub(super) fn release(&self) {
         self.state.lock().unwrap().1 = true;
         self.event.notify_all();
     }
 }
-struct Release(Arc<Gate>);
+pub(super) struct Release(pub(super) Arc<Gate>);
 impl Drop for Release {
     fn drop(&mut self) {
         self.0.release();
     }
 }
 
-struct Fixture {
+pub(super) struct Fixture {
     root: PathBuf,
     process: Option<Child>,
     reader: Option<thread::JoinHandle<()>>,
-    client: Arc<Paired<MemoryVault>>,
+    pub(super) client: Arc<Paired<MemoryVault>>,
     target: Option<Target>,
     authority: String,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let base = std::env::temp_dir()
             .canonicalize()
@@ -191,10 +205,10 @@ impl Fixture {
         assert!(output.status.success(), "Owned CLI succeeded");
         serde_json::from_slice(&output.stdout).expect("Owned CLI JSON")
     }
-    fn target(&self) -> Target {
+    pub(super) fn target(&self) -> Target {
         self.target.as_ref().unwrap().clone()
     }
-    fn raw(&self) -> String {
+    pub(super) fn raw(&self) -> String {
         serde_json::json!({"deviceId":self.target().device_id,"authorityId":self.authority,"revision":0,"path":"/api/status","body":{}}).to_string()
     }
 }
@@ -216,7 +230,7 @@ fn open(
 ) -> thread::JoinHandle<Result<OpenReply, String>> {
     thread::spawn(move || client.open(&target.device_id, &target.credential_id))
 }
-fn hook(fixture: &Fixture, callback: impl Fn(Checkpoint, u64) + Send + Sync + 'static) {
+pub(super) fn hook(fixture: &Fixture, callback: impl Fn(Checkpoint, u64) + Send + Sync + 'static) {
     *fixture
         .client
         .host(&fixture.target().device_id)
@@ -349,3 +363,6 @@ fn native_stale_tls_completion_cannot_publish_for_a_new_admission() {
     );
     assert_eq!(actual.unwrap().status, 200);
 }
+
+#[path = "pre_vault_tests.rs"]
+mod pre_vault_tests;

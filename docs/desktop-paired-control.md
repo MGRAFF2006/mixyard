@@ -135,3 +135,47 @@ repair. Historical source now compiles into its own temporary target. Both gates
 record source hashes and the exact Cargo-reported executable hash; current runs
 that executable directly. Separately built current GREEN execution is still
 required; no local native compilation was performed for this fixture correction.
+
+Current pre-admission repair adds a nonauthorizing OpenIntent{generation,serial}.
+Preparation is a fast native snapshot/counter increment: it performs no vault or
+TLS work and never clears a session. The renderer checks its actual lifecycle
+AFTER the snapshot reply and BEFORE dispatching a blocking open. Native admission
+compares the captured generation and cancellation serial under the same Authority
+lock before even the first vault read. A worker delayed until after a successful
+replacement cannot unconditionally advance that replacement. The synchronous
+native convenience uses the same preparation/admission path; no JS clock, stored
+counter, automatic replay or authorization token is introduced.
+
+Cancellation of a never-admitted intent advances only a bounded serial fence,
+not the generation/session. Existing established authority survives even if its
+generation equals the cancelled snapshot's base. After admission, cancellation
+can clear only the exact admitted serial AND generation. Other queued stale
+intents fail and require explicit Refresh, with no automatic retry. Four integer/
+optional fields bound bookkeeping; no ticket map or waiter grows over time. All
+session publication/revision writes still use Authority; no state lock crosses
+vault/network I/O or waits for the separate operation mutex.
+
+Management now emits authoritative disconnection on ALL settlement paths,
+including vault failure, for the captured device AND credential identity. A
+Refresh that completed while Forget waited cannot leave the shared API writable
+or validated after native final invalidation. Retired/new-credential workspaces
+are not silently rebound or cleared by a different target's management callback;
+existing list reconciliation, cached drafts and codecHost ownership are retained.
+
+Local evidence executes the actual compiled PairedDevices script setup with real
+Vue reactivity, pairedApi/Api and ConsoleSession, doubling only invoke scheduling
+and component event delivery. Exact-f6 management source is causally RED; current
+is GREEN with pending Forget -> successful replacement Refresh/validation ->
+vault error/final native invalidation -> shared authority clear/draft retention/
+zero subsequent write dispatch. The four preceding late-open/request regressions
+and new late-prepare success/rejection cases also pass locally.
+
+Actual native current proof is still pending. The new same-source vault barrier
+is compiled separately against exact-f6 production source (no production overlay)
+and must fail ONLY after its replacement made a real TLS request and was then
+erased by the obsolete open. Existing exact-b2 three-cause RED stays unchanged.
+Current executable adds actual pre-vault, pre-worker, cancellation before/after
+admission and pending-Forget vault-error TLS tests. Sources/executables are
+independently attested in isolated targets. No local Rust/SDK build or native
+race execution is claimed for these new tests. Fresh whole final reviews and
+required current-head checks remain mandatory.

@@ -36,7 +36,9 @@ async function invoke(command, args = {}) {
     case 'update_tray_context': return null
     case 'paired_list': return rpc('list')
     case 'paired_pair': return rpc('pair', { endpoint: args.endpoint, name: args.displayName, invitation: JSON.parse(args.invitation) })
-    case 'paired_open': return rpc('open', { id: args.targetId, credentialId: args.credentialId })
+    case 'paired_prepare_open': return rpc('prepare-open', { id: args.targetId })
+    case 'paired_cancel_open': return rpc('cancel-open', { id: args.targetId, intent: args.intent })
+    case 'paired_open': return rpc('open', { id: args.targetId, credentialId: args.credentialId, intent: args.intent })
     case 'paired_request': return rpc('request', { id: args.targetId, generation: args.generation, raw: args.raw })
     case 'paired_disconnect': return rpc('disconnect', { id: args.targetId, generation: args.expectedGeneration })
     case 'paired_forget': return rpc('forget', { id: args.targetId })

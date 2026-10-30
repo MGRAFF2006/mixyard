@@ -4,16 +4,19 @@ import type { Invoke } from './transport.ts'
 
 export type PairedTarget = { deviceId: string; displayName: string; endpoint: string; certificateSha256: string; credentialId: string; permissions: Permission[] }
 export const nativeCredentialSentinel = 'native-owned-paired-credential'
+type OpenIntent = { generation: number; serial: number }
 type Reply = { status: number; body: string; generation?: number }
 
 /** A sentinel requests native authority; it is never an HTTP credential. */
 export function pairedApi(invoke: Invoke, target: PairedTarget): Api {
   let generation: number | null = null
   let lifecycle = 0
+  let opening: OpenIntent | null = null
   function invalidate() {
     lifecycle++
-    const expectedGeneration = generation
-    generation = null
+    const expectedGeneration = generation, intent = opening
+    generation = null; opening = null
+    if (intent) void invoke('paired_cancel_open', { targetId: target.deviceId, intent }).catch(() => { /* Native intent cancellation is expected-ticket scoped. */ })
     if (expectedGeneration !== null) void invoke('paired_disconnect', { targetId: target.deviceId, expectedGeneration }).catch(() => { /* Native generations also reject stale queued requests. */ })
   }
   const fetcher: typeof fetch = async (input, init) => {
@@ -27,14 +30,20 @@ export function pairedApi(invoke: Invoke, target: PairedTarget): Api {
     // generation established by a later explicit reconnect.
     const abort = () => { if (epoch === lifecycle) invalidate() }
     init.signal?.addEventListener('abort', abort, { once: true })
-    let reply: Reply
+    let reply: Reply, intent: OpenIntent | null = null
     try {
       if (input === '/control/session') {
         if (init.body !== '{}') throw new Error('Session discovery requires an empty object.')
-        reply = await invoke<Reply>('paired_open', { targetId: target.deviceId, credentialId: target.credentialId })
-        if (!Number.isSafeInteger(reply.generation) || reply.generation! < 1) throw new Error('Invalid native session generation.')
+        const prepared = await invoke<OpenIntent>('paired_prepare_open', { targetId: target.deviceId })
+        // Preparation is harmless. Check logical ownership BEFORE a delayed
+        // worker can attempt generation admission or any vault/network work.
+        if (epoch !== lifecycle || init.signal?.aborted) throw new DOMException('Paired preparation cancelled', 'AbortError')
+        if (!prepared || !Number.isSafeInteger(prepared.generation) || prepared.generation < 0 || !Number.isSafeInteger(prepared.serial) || prepared.serial < 1) throw new Error('Invalid native open intent.')
+        intent = prepared; opening = intent
+        reply = await invoke<Reply>('paired_open', { targetId: target.deviceId, credentialId: target.credentialId, intent })
+        if (!Number.isSafeInteger(reply.generation) || reply.generation !== intent.generation + 1) throw new Error('Invalid native session generation.')
         if (epoch !== lifecycle || init.signal?.aborted) {
-          await invoke('paired_disconnect', { targetId: target.deviceId, expectedGeneration: reply.generation })
+          await invoke('paired_cancel_open', { targetId: target.deviceId, intent })
           throw new DOMException('Paired session cancelled', 'AbortError')
         }
         generation = reply.generation!
@@ -49,7 +58,10 @@ export function pairedApi(invoke: Invoke, target: PairedTarget): Api {
       if (epoch === lifecycle) invalidate()
       if (error instanceof DOMException) throw error
       throw new TypeError(`Native paired transport: ${String(error)}`)
-    } finally { init.signal?.removeEventListener('abort', abort) }
+    } finally {
+      if (opening === intent) opening = null
+      init.signal?.removeEventListener('abort', abort)
+    }
   }
   class NativeApi extends Api {
     override disconnect(reason = '') { invalidate(); super.disconnect(reason) }

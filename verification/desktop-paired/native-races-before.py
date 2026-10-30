@@ -43,6 +43,7 @@ with tempfile.TemporaryDirectory(prefix='native-race-before-',dir=os.environ['RU
     text+='\n#[cfg(test)]\nmod authority_tests;\n'
     (destination/'src/lib.rs').write_text(text)
     (destination/'src/authority_tests.rs').write_text((current/'src/authority_tests.rs').read_text())
+    (destination/'src/pre_vault_tests.rs').write_text((current/'src/pre_vault_tests.rs').read_text())
     # NEVER share a target with the current source: Cargo can otherwise reuse
     # the same package/test artifact after this temporary crate has built it.
     executable, evidence = compile_tests(destination/'Cargo.toml', destination/'target')

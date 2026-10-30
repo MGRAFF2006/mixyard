@@ -31,6 +31,6 @@ def compile_tests(manifest, target=None):
     executable = artifacts[0]
     if target is not None and not executable.is_relative_to(Path(target).resolve()):
         raise RuntimeError('Historical executable escaped its isolated target')
-    sources = {name:hashlib.sha256((manifest.parent/name).read_bytes()).hexdigest()
-               for name in ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/tls.rs', 'src/authority_tests.rs']}
+    names = ['Cargo.toml', 'Cargo.lock'] + [str(path.relative_to(manifest.parent)).replace('\\','/') for path in sorted((manifest.parent/'src').glob('*.rs'))]
+    sources = {name:hashlib.sha256((manifest.parent/name).read_bytes()).hexdigest() for name in names}
     return executable, {'sources':sources, 'executableSha256':hashlib.sha256(executable.read_bytes()).hexdigest()}

@@ -12,6 +12,8 @@ fn main() {
             "console_request",
             "paired_list",
             "paired_pair",
+            "paired_prepare_open",
+            "paired_cancel_open",
             "paired_open",
             "paired_request",
             "paired_disconnect",

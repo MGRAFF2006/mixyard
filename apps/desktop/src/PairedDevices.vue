@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { nativeInvoke, inDesktopShell } from './bridge.ts'
 import type { PairedTarget } from './paired.ts'
 const props = defineProps<{ targets: readonly PairedTarget[]; canRemove: (id: string) => boolean }>()
-const emit = defineEmits<{ changed: []; disconnected: [id: string] }>()
+const emit = defineEmits<{ changed: []; disconnected: [id: string, credentialId: string] }>()
 const endpoint = ref(''), displayName = ref(''), invitation = ref(''), trusted = ref(false)
 const busy = ref(false), notice = ref('')
 const trust = computed(() => {
@@ -29,13 +29,18 @@ async function manage(target: PairedTarget, command: 'paired_disconnect' | 'pair
   if (busy.value) return
   if (command !== 'paired_disconnect' && !window.confirm(command === 'paired_revoke' ? `Revoke this desktop controller on ${target.displayName}? Other controllers keep their rights. A timeout needs reconciliation on the owning service.` : `Delete this app’s saved credential for ${target.displayName}? This does not revoke it on the server.${props.canRemove(target.deviceId) ? '' : ' Unsaved work stays in a disconnected target for export; export it before closing this window.'}`)) return
   busy.value = true; notice.value = ''
-  emit('disconnected', target.deviceId)
+  emit('disconnected', target.deviceId, target.credentialId)
   try {
     await nativeInvoke(command, { targetId: target.deviceId, credentialId: target.credentialId })
     notice.value = command === 'paired_disconnect' ? 'Disconnected. Use Refresh in that device’s controls to open a fresh session.' : command === 'paired_forget' ? 'Native credential removed from this app.' : 'Controller revoked on the owning device. Its saved record remains removable here.'
     if (command === 'paired_forget') emit('changed')
   } catch (error) { notice.value = String(error) }
-  finally { busy.value = false }
+  finally {
+    // Pending management may invalidate a Refresh that completed meanwhile,
+    // including uncertain vault errors. Settle the CAPTURED credential owner.
+    emit('disconnected', target.deviceId, target.credentialId)
+    busy.value = false
+  }
 }
 </script>
 <template>
