@@ -26,6 +26,18 @@ export class Native {
       // Drain all bytes, but expose only our small fixed phase vocabulary.
       const lines = (stderr + String(data)).split('\n'); stderr = lines.pop()!.slice(-4096)
       for (const line of lines) {
+        if (line.startsWith('MIXYARD_OWNED_SIGNAL ') && line.length < 512) {
+          try {
+            const value = JSON.parse(line.slice('MIXYARD_OWNED_SIGNAL '.length))
+            if (Object.keys(value).sort().join(',') === 'errno,phase,pid,result' &&
+                ['before-privileged-term','cleanup-privileged-term'].includes(value.phase) &&
+                ['accepted','os-error'].includes(value.result) && Number.isSafeInteger(value.pid) && value.pid >= 0 && value.pid < 2 ** 31 &&
+                Number.isSafeInteger(value.errno) && value.errno >= 0 && value.errno < 2 ** 31 && reasons++ < 16) {
+              process.stderr.write(`Owned terminate syscall result (NOT completion): ${JSON.stringify(value)}\n`)
+            }
+          } catch { /* Fixed syscall/errno only; never exception text or argv. */ }
+          continue
+        }
         if (line.startsWith('MIXYARD_OWNED_PROCESS ') && line.length < 4096) {
           try {
             const value = JSON.parse(line.slice('MIXYARD_OWNED_PROCESS '.length))
@@ -44,11 +56,11 @@ export class Native {
         if (line.startsWith('MIXYARD_TRUST_STATE ') && line.length < 256) {
           try {
             const value = JSON.parse(line.slice('MIXYARD_TRUST_STATE '.length))
-            if (Object.keys(value).sort().join(',') === 'absent,adminCount,adminStatus,phase,statuses' &&
+            if (Object.keys(value).sort().join(',') === 'absent,adminCertificateStatus,phase,resolvedAdminCertificateCount,statuses' &&
                 ['admin-before', 'admin-ready', 'admin-precleanup', 'admin-after'].includes(value.phase) && typeof value.absent === 'boolean' &&
-                Number.isSafeInteger(value.adminCount) && value.adminCount >= -1 && Number.isSafeInteger(value.adminStatus) && Math.abs(value.adminStatus) < 2 ** 31 &&
+                (value.adminCertificateStatus === 0 ? Number.isSafeInteger(value.resolvedAdminCertificateCount) && value.resolvedAdminCertificateCount >= 0 : value.resolvedAdminCertificateCount === null) && Number.isSafeInteger(value.adminCertificateStatus) && Math.abs(value.adminCertificateStatus) < 2 ** 31 &&
                 Array.isArray(value.statuses) && value.statuses.length === 3 && value.statuses.every((code: unknown) => Number.isSafeInteger(code) && Number(code) > -(2 ** 31) && Number(code) < 2 ** 31) && reasons++ < 16) {
-              process.stderr.write(`Owned admin trust readback: ${value.phase} absent=${value.absent} statuses=${value.statuses.join(',')} adminCount=${value.adminCount} adminStatus=${value.adminStatus}\n`)
+              process.stderr.write(`Owned admin trust readback: ${value.phase} absent=${value.absent} statuses=${value.statuses.join(',')} resolvedAdminCertificateCount=${value.resolvedAdminCertificateCount === null ? 'unknown' : value.resolvedAdminCertificateCount} adminCertificateStatus=${value.adminCertificateStatus}\n`)
             }
           } catch { /* No raw trust state or arbitrary native output. */ }
           continue

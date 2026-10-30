@@ -130,7 +130,7 @@ was correctly withheld. This is not successful trust cleanup or full qualificati
 
 A controlled next diagnostic reports ADMIN-domain record COUNT and OSStatus only,
 alongside the three owned-fingerprint statuses, before/ready/precleanup/after.
-The certificate array stays in memory; unrelated identities/trust settings are
+The resolved certificate array stays in memory; unrelated identities/trust settings are
 never output and a count grants no removal ownership. ONLY the same three owned
 removals are reversed (viewer,b,a), distinguishing a last-entry condition from a
 certificate-specific one without extra certificates or trust-policy fallback.
@@ -147,3 +147,28 @@ part of the EXISTING command/14s cleanup budget. No SIGKILL of a sudo monitor,
 deadline increase, success-on-timeout or absent-readback waiver was added. New
 count/order/process evidence and actual successful cleanup still require the
 hosted runner; local mocked tests cannot qualify them.
+
+Actual [92@f3c](https://github.com/MGRAFF2006/mixyard/actions/runs/40997623898/job/123874357515)
+and [93@6c07](https://github.com/MGRAFF2006/mixyard/actions/runs/40997677265/job/123874529769)
+reverse-order execution passed9 Swift functional cases but again FAILED cleanup:
+viewer and b removed quickly, then LAST a remained after stop-incomplete/drain
+failure. The last-removal pattern follows order, not viewer identity; this does
+NOT prove empty-domain causation. The reported count0/status-25263 throughout,
+even while owned per-certificate statuses were0, was invalid as record-count proof.
+
+Apple's [enumeration implementation](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_keychain/lib/SecTrustSettings.cpp)
+resolves ADMIN certificates from System.keychain plus system roots, excluding our
+private fixture keychain. In contrast, per-certificate CopyTrustSettings reads
+fresh domain settings for the supplied certificate. The diagnostic is therefore
+now named resolvedAdminCertificateCount; non-success returns null/UNKNOWN, never
+zero-as-empty-domain. It is not a total record count even on success. Owned direct
+fingerprint absence and actual privileged process/pipes completion remain the
+safety gates; no export/import/trust dictionary/policy reset or extra anchor was
+introduced to obtain a count. Unexpected OSStatus still fails closed.
+
+Before TERM/drain, a fixed syscall report now distinguishes accepted from numeric
+OSError/errno. Accepted means only that terminate() returned, NOT that sudo,
+security or inherited pipes stopped; the existing communicate()/readback proof
+and ownership retention remain mandatory. No exception text/argv is output and
+no privileged signal or kill policy changed. The actual stop/authorization cause
+remains unproved until fresh runner evidence; this correction is diagnostic-only.

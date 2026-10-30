@@ -117,3 +117,13 @@ class TrustLifecycle(unittest.TestCase):
         self.assertEqual([row['pid'] for row in data['processes']],[10,11])
         self.assertNotIn('SECRET',output.getvalue()); self.assertNotIn('unrelated',output.getvalue())
         self.assertEqual(run.call_args.kwargs['timeout'],0.1)
+
+    def test_term_permission_error_is_classified_without_claiming_completion_or_leaking_exception(self):
+        child=unittest.mock.Mock();child.pid=42
+        child.terminate.side_effect=PermissionError(errno.EPERM,'SECRET-EXCEPTION')
+        output=io.StringIO()
+        with contextlib.redirect_stderr(output):
+            with self.assertRaises(PermissionError):module.terminate_owned(child,'before-privileged-term')
+        value=json.loads(output.getvalue().removeprefix('MIXYARD_OWNED_SIGNAL '))
+        self.assertEqual(value,{'phase':'before-privileged-term','pid':42,'result':'os-error','errno':errno.EPERM})
+        self.assertNotIn('SECRET',output.getvalue());child.communicate.assert_not_called()
