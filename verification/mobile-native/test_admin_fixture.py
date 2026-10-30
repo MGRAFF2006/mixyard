@@ -32,7 +32,7 @@ def fixture():
 
 def state(codes):
     count=sum(code==0 for code in codes)
-    return json.dumps({'statuses':codes,'ownedTrustAbsent':all(code in (-25300,-25263) for code in codes),'adminCount':count,'adminStatus':0 if count else -25263})
+    return json.dumps({'statuses':codes,'ownedTrustAbsent':all(code in (-25300,-25263) for code in codes),'resolvedAdminCertificateCount':count if count else None,'adminCertificateStatus':0 if count else -25263})
 
 
 class AdminFixture(unittest.TestCase):
@@ -117,7 +117,7 @@ class AdminFixture(unittest.TestCase):
                 commands.append((label,args))
                 if label.startswith('admin-'):
                     codes=[0]*3 if label in ('admin-ready','admin-precleanup') else [-25300]*3
-                    value=json.loads(state(codes)); value['adminCount']+=5; value['adminStatus']=0
+                    value=json.loads(state(codes)); value['resolvedAdminCertificateCount']=(value['resolvedAdminCertificateCount'] or 0)+5; value['adminCertificateStatus']=0
                     return json.dumps(value)
                 return ''
             admin=OwnedAdmin(root,run); admin.admit(time.monotonic()+18)
@@ -125,3 +125,16 @@ class AdminFixture(unittest.TestCase):
             admin.ready(time.monotonic()+18); self.assertTrue(admin.cleanup(time.monotonic()+14))
             removed=[Path(args[-1]).name for label,args in commands if label.startswith('cleanup-trust-')]
             self.assertEqual(removed,['owned-admin-viewer.der','owned-admin-b.der','owned-admin-a.der'])
+
+    def test_unresolved_enumeration_is_unknown_even_while_owned_records_exist(self):
+        with fixture() as root, contextlib.redirect_stderr(io.StringIO()) as output:
+            def run(*args,**kwargs):
+                value=json.loads(state([0,0,0]));value['resolvedAdminCertificateCount']=None;value['adminCertificateStatus']=-25263
+                return json.dumps(value)
+            admin=OwnedAdmin(root,run)
+            self.assertEqual(admin.state('admin-ready',time.monotonic()+1),[0,0,0])
+        self.assertIn('"resolvedAdminCertificateCount":null',output.getvalue())
+        with fixture() as root, contextlib.redirect_stderr(io.StringIO()):
+            bad=json.loads(state([-25300]*3));bad['resolvedAdminCertificateCount']=0
+            admin=OwnedAdmin(root,lambda *args,**kwargs:json.dumps(bad))
+            with self.assertRaises(RuntimeError):admin.state('admin-before',time.monotonic()+1)

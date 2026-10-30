@@ -88,3 +88,21 @@ Read-only first-launch status, resolved selected-Xcode simctl identity and numer
 CoreSimulator versions supplement the unchanged30s discovery capture. No service
 initialization, install, retry, deadline extension or SDK fallback is performed.
 These diagnostics require fresh actual hosted execution, not source-only credit.
+
+The actual [92@f3c iOS run](https://github.com/MGRAFF2006/mixyard/actions/runs/40997623894/job/123874474202)
+now narrows the first-control failure: document complete/nav finished/index exists,
+marker true, one script asset, runtime error, no CSP event, zero app children or
+fixture controls. Vue never mounted in this observation; this is not just a late
+WebView or accessible-button selector. It still does not identify the operation.
+The qualification-only observer now emits only an allowlisted error NAME and
+bounded numeric line/column, fixed module-load/fixture-boot phases, and fixed API
+capability booleans. No error message/stack/URL/HTML is logged. This diagnoses the
+actual failing boot boundary; it does not add a polyfill, change CSP or force Vue
+or confirmation. All production/native dialog assertions remain unchanged.
+
+The same runtime/app-not-mounted fields were independently observed in
+[78@fe57](https://github.com/MGRAFF2006/mixyard/actions/runs/40997578211/job/123874329843)
+and [93@6c07](https://github.com/MGRAFF2006/mixyard/actions/runs/40997677253/job/123875047689).
+All three runs completed owned simulator shutdown/delete; no native alert
+assertion ran. Embedded actual observer/query privacy tests execute only JavaScript
+classifications in an isolated VM and do not stand in for WebKit SDK execution.

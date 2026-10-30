@@ -20,12 +20,21 @@ import MobileCore
     private var ownedNavigation = "created"
     private static let ownedObservationScript = """
     (() => {
-      const state = {script: 'none', csp: 'none'};
+      const state = {script: 'none', csp: 'none', errorName: 'none', line: 0, column: 0, moduleState: 'pending'};
+      const name = value => ['Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'EvalError', 'URIError', 'AggregateError'].includes(value) ? value : 'other';
+      const position = value => Number.isInteger(value) ? Math.max(0, Math.min(10000000, value)) : 0;
       window.__mixyardOwnedEvidence = state;
       addEventListener('error', event => {
-        state.script = event.target instanceof HTMLScriptElement ? 'script-resource' : 'runtime';
+        const resource = event.target instanceof HTMLScriptElement;
+        state.script = resource ? 'script-resource' : 'runtime';
+        state.errorName = name(event.error?.name);
+        state.line = position(event.lineno); state.column = position(event.colno);
+        if (resource) state.moduleState = 'failed';
       }, true);
-      addEventListener('unhandledrejection', () => { state.script = 'rejection'; });
+      addEventListener('load', event => {
+        if (event.target instanceof HTMLScriptElement && event.target.type === 'module') state.moduleState = 'loaded';
+      }, true);
+      addEventListener('unhandledrejection', event => { state.script = 'rejection'; state.errorName = name(event.reason?.name); });
       addEventListener('securitypolicyviolation', event => {
         const allowed = ['script-src-elem', 'script-src', 'style-src-elem', 'style-src', 'connect-src', 'default-src'];
         state.csp = allowed.includes(event.effectiveDirective) ? event.effectiveDirective : 'other';
@@ -42,7 +51,17 @@ import MobileCore
           buttons: Math.min(1000, document.querySelectorAll('nav[aria-label="Owned fixture controls"] button').length),
           appChildren: Math.min(1000, document.getElementById('app')?.childElementCount ?? 0),
           script: window.__mixyardOwnedEvidence?.script ?? 'unobserved',
-          csp: window.__mixyardOwnedEvidence?.csp ?? 'unobserved'
+          csp: window.__mixyardOwnedEvidence?.csp ?? 'unobserved',
+          errorName: window.__mixyardOwnedEvidence?.errorName ?? 'unobserved',
+          line: window.__mixyardOwnedEvidence?.line ?? 0,
+          column: window.__mixyardOwnedEvidence?.column ?? 0,
+          moduleState: window.__mixyardOwnedEvidence?.moduleState ?? 'unobserved',
+          boot: window.__mixyardOwnedFixturePhase ?? 'unentered',
+          capabilities: { Response: typeof Response === 'function', fetch: typeof fetch === 'function',
+            AbortController: typeof AbortController === 'function', TextEncoder: typeof TextEncoder === 'function',
+            cryptoRandomUUID: typeof globalThis.crypto?.randomUUID === 'function', matchMedia: typeof matchMedia === 'function',
+            moduleScript: 'noModule' in HTMLScriptElement.prototype }
+
         })
         """) { [weak self] value, _ in
             let encoded = value as? String
@@ -56,15 +75,23 @@ import MobileCore
                 }
                 if let encoded, let bytes = encoded.data(using: .utf8), bytes.count <= 1024,
                    let fields = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
-                   Set(fields.keys) == Set(["ready", "marker", "tools", "buttons", "appChildren", "script", "csp"]),
+                   Set(fields.keys) == Set(["ready", "marker", "tools", "buttons", "appChildren", "script", "csp", "errorName", "line", "column", "moduleState", "boot", "capabilities"]),
                    let ready = fields["ready"] as? String, ["loading", "interactive", "complete"].contains(ready),
                    let marker = fields["marker"] as? Bool, let tools = fields["tools"] as? Bool,
                    let buttons = fields["buttons"] as? Int, (0...1000).contains(buttons),
                    let children = fields["appChildren"] as? Int, (0...1000).contains(children),
                    let script = fields["script"] as? String, ["none", "runtime", "rejection", "script-resource", "unobserved"].contains(script),
-                   let csp = fields["csp"] as? String, ["none", "script-src-elem", "script-src", "style-src-elem", "style-src", "connect-src", "default-src", "other", "unobserved"].contains(csp) {
+                   let csp = fields["csp"] as? String, ["none", "script-src-elem", "script-src", "style-src-elem", "style-src", "connect-src", "default-src", "other", "unobserved"].contains(csp),
+                   let errorName = fields["errorName"] as? String, ["none", "Error", "TypeError", "ReferenceError", "SyntaxError", "RangeError", "EvalError", "URIError", "AggregateError", "other", "unobserved"].contains(errorName),
+                   let line = fields["line"] as? Int, (0...10000000).contains(line),
+                   let column = fields["column"] as? Int, (0...10000000).contains(column),
+                   let moduleState = fields["moduleState"] as? String, ["pending", "loaded", "failed", "unobserved"].contains(moduleState),
+                   let boot = fields["boot"] as? String, ["unentered", "module-entered", "api-created", "mounting", "mounted", "observing", "controls-ready"].contains(boot),
+                   let capabilities = fields["capabilities"] as? [String: Bool],
+                   Set(capabilities.keys) == Set(["Response", "fetch", "AbortController", "TextEncoder", "cryptoRandomUUID", "matchMedia", "moduleScript"]) {
                     evidence.merge(["document":ready, "marker":marker, "tools":tools, "buttons":buttons,
-                                    "appChildren":children, "script":script, "csp":csp]) { _, new in new }
+                                    "appChildren":children, "script":script, "csp":csp, "errorName":errorName,
+                                    "line":line, "column":column, "moduleState":moduleState, "boot":boot, "capabilities":capabilities]) { _, new in new }
                 }
                 if let bytes = try? JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]),
                    let text = String(data: bytes, encoding: .utf8) { self.ownedPageEvidence = text }

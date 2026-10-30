@@ -60,6 +60,24 @@ def owned_process_evidence(label, child, budget):
     print('MIXYARD_OWNED_PROCESS ' + json.dumps(report,separators=(',',':')),file=sys.stderr,flush=True)
 
 
+
+def terminate_owned(child, label):
+    # A successful syscall is NOT process/child/pipes completion. communicate()
+    # still owns the only completion proof; errors retain pending_command.
+    if label not in ('before-privileged-term', 'cleanup-privileged-term'):
+        raise RuntimeError('owned-signal-phase-invalid')
+    report = {'phase':label, 'pid':child.pid if type(child.pid) is int and 0 < child.pid < 2**31 else 0,
+              'result':'accepted', 'errno':0}
+    try:
+        child.terminate()
+    except OSError as error:
+        report['result']='os-error'
+        report['errno']=error.errno if type(error.errno) is int and 0 <= error.errno < 2**31 else 0
+        print('MIXYARD_OWNED_SIGNAL ' + json.dumps(report,separators=(',',':')),file=sys.stderr,flush=True)
+        raise
+    print('MIXYARD_OWNED_SIGNAL ' + json.dumps(report,separators=(',',':')),file=sys.stderr,flush=True)
+
+
 def privileged_capture(command, timeout):
     global pending_command
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
@@ -78,7 +96,7 @@ def privileged_capture(command, timeout):
         # could leave a privileged Security child writing after our readback.
         try:
             owned_process_evidence('before-privileged-term',child,min(0.1,max(0,deadline-time.monotonic())))
-            child.terminate()
+            terminate_owned(child,'before-privileged-term')
             remaining=deadline-time.monotonic()
             if remaining<=0: raise subprocess.TimeoutExpired('owned-security-stop',timeout)
             child.communicate(timeout=min(reserve, remaining))
@@ -101,7 +119,7 @@ def drain_command(deadline):
     try:
         if remaining <= 0: raise TimeoutError()
         owned_process_evidence('cleanup-privileged-term',child,min(0.2,remaining/4))
-        child.terminate()
+        terminate_owned(child,'cleanup-privileged-term')
         remaining=deadline-time.monotonic()
         if remaining<=0: raise TimeoutError()
         child.communicate(timeout=min(1, remaining))

@@ -22,13 +22,13 @@ import CryptoKit
         let absent = statuses.allSatisfy { $0 == errSecItemNotFound || $0 == errSecNoTrustSettings }
         var domainCertificates: CFArray?
         let domainStatus = SecTrustSettingsCopyCertificates(.admin, &domainCertificates)
-        let count: Int
-        if domainStatus == errSecSuccess { count = domainCertificates.map { CFArrayGetCount($0) } ?? -1 }
-        else if domainStatus == errSecNoTrustSettings || domainStatus == errSecItemNotFound { count = 0 }
-        else { count = -1 }
-        // Count/status only: no unrelated certificate identity or trust dump.
+        let count: Any
+        if domainStatus == errSecSuccess, let certificates = domainCertificates { count = CFArrayGetCount(certificates) }
+        else { count = NSNull() } // UNKNOWN, not a domain-record count or proof of emptiness.
+        // Resolved certificate count/status only. ADMIN enumeration searches system
+        // keychains, excluding the private fixture keychain; no record count.
         let report: [String: Any] = ["statuses": statuses.map { Int($0) }, "ownedTrustAbsent": absent,
-                                    "adminCount": count, "adminStatus": Int(domainStatus)]
+                                    "resolvedAdminCertificateCount": count, "adminCertificateStatus": Int(domainStatus)]
         guard let encoded = try? JSONSerialization.data(withJSONObject: report) else { exit(2) }
         FileHandle.standardOutput.write(encoded)
         FileHandle.standardOutput.write(Data([10]))
