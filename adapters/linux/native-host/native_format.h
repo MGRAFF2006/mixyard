@@ -14,17 +14,21 @@ static inline bool mx_native_format_matches(int parse_result, const struct spa_a
         info->rate == 48000 && info->channels == 2 &&
         info->position[0] == SPA_AUDIO_CHANNEL_FL && info->position[1] == SPA_AUDIO_CHANNEL_FR;
 }
-// Only a new, unadmitted candidate may classify a fully described native EMPTY
-// buffer as unavailable. SPA chunk.size is valid-data bytes; EMPTY may carry
-// zero bytes or a full neutral quantum. Positive partial sizes remain invalid.
-// This never reads PCM or proves a source clock/header.
-static inline bool mx_native_startup_empty(bool warming, const struct spa_buffer *buffer, uint32_t frames) {
+// Before first admission/warming only: initialized zero valid bytes are not PCM.
+// SPA allocation zeroes chunk fields; EMPTY is an optional neutral-data marker,
+// not the only way for valid-data length to be zero. No clock/header is proved.
+static inline bool mx_native_startup_unavailable(bool warming, const struct spa_buffer *buffer, uint32_t frames) {
     if (!warming || !buffer || buffer->n_datas != 1 || !buffer->datas || !frames || frames > 128) return false;
     const struct spa_data *d = &buffer->datas[0];
-    return d->data && d->chunk && d->maxsize >= frames * 16 && d->chunk->offset == 0 &&
-        (d->chunk->size == 0 || d->chunk->size == frames * 16) && d->chunk->stride == 16 &&
-        d->chunk->flags == SPA_CHUNK_FLAG_EMPTY &&
-        spa_buffer_find_meta_data(buffer, SPA_META_Header, sizeof(struct spa_meta_header)) != NULL;
+    if (!d->data || !d->chunk || d->maxsize < frames * 16 || d->chunk->offset != 0 ||
+        spa_buffer_find_meta_data(buffer, SPA_META_Header, sizeof(struct spa_meta_header)) == NULL) return false;
+    const struct spa_chunk *chunk = d->chunk;
+    if (chunk->size == 0)
+        return (chunk->stride == 0 || chunk->stride == 16) &&
+            (chunk->flags == 0 || chunk->flags == SPA_CHUNK_FLAG_EMPTY);
+    // Full explicitly neutral quantum may also be unavailable. Positive partial,
+    // corrupted/unknown flags and all admitted cases still reach strict faults.
+    return chunk->size == frames * 16 && chunk->stride == 16 && chunk->flags == SPA_CHUNK_FLAG_EMPTY;
 }
 static inline bool mx_native_header_current(const struct spa_meta_header *header,
         uint64_t native_frame, uint64_t native_ns) {

@@ -118,8 +118,8 @@ int main(int argc, char **argv) {
     assert(out.status == SPA_STATUS_HAVE_DATA && out.buffer_id < 2);
     const struct spa_buffer *empty = outputs[out.buffer_id];
     assert(empty->datas[0].chunk->size == 0 && empty->datas[0].chunk->flags == SPA_CHUNK_FLAG_EMPTY);
-    assert(mx_native_startup_empty(true, empty, 128)); // RED with old full-size-only helper
-    assert(!mx_native_startup_empty(false, empty, 128));
+    assert(mx_native_startup_unavailable(true, empty, 128)); // RED with old full-size-only helper
+    assert(!mx_native_startup_unavailable(false, empty, 128));
     // This expected counterexample is diagnostic evidence, never a graph PASS.
     printf("{\"actualSpaPlugin\":true,\"singleInputBufferAlias\":true,\"heldMetadataChanged\":true,\"heldPcmChanged\":true,\"ownedCopyStable\":true,\"ownedConsumerCopyStable\":true,\"poolBuffers\":2,\"zeroByteEmptyUnavailable\":true,\"exhaustedResult\":%d}\n", exhausted);
     assert(pw_unload_spa_handle(handle) == 0);

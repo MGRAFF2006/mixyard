@@ -75,7 +75,7 @@ struct app {
     _Atomic uint64_t consumer_epochs[ROUTES], consumer_dropped[ROUTES], consumer_closed[ROUTES];
     _Atomic uint64_t consumer_prior_epoch[ROUTES];
     unsigned prior_in_epoch[ROUTES];
-    _Atomic uint64_t startup_empty[3][ROUTES];
+    _Atomic uint64_t startup_unavailable[3][ROUTES];
     struct global globals[MAX_GLOBALS];
     size_t global_count;
     struct pw_proxy *links[ROUTES * 2];
@@ -257,8 +257,8 @@ static void receive_consumer(struct endpoint *e, const struct spa_io_position *p
         if (!admitted && (q->active || q->count)) mx_consumer_close(q);
         struct pw_buffer *b = pw_filter_dequeue_buffer(e->in[r]);
         if (!b) continue;
-        if (mx_native_startup_empty(!a->ever_admitted, b->buffer, pos->clock.duration)) {
-            atomic_fetch_add_explicit(&a->startup_empty[e->role][r], 1, memory_order_relaxed);
+        if (mx_native_startup_unavailable(!a->ever_admitted, b->buffer, pos->clock.duration)) {
+            atomic_fetch_add_explicit(&a->startup_unavailable[e->role][r], 1, memory_order_relaxed);
             return_input(a, e->in[r], b); continue; // unavailable, never PCM/scheduled silence
         }
         double *pcm = samples(e, r, b, true, pos->clock.duration, pos);
@@ -385,8 +385,8 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
         input[s] = pw_filter_dequeue_buffer(e->in[s]);
         if (!input[s]) { fresh = false; continue; }
         if (!admitted && !warming) { fresh = false; continue; } // revoked: drain/ack only
-        if (mx_native_startup_empty(!admitted && warming, input[s]->buffer, n)) {
-            atomic_fetch_add_explicit(&a->startup_empty[e->role][s], 1, memory_order_relaxed);
+        if (mx_native_startup_unavailable(!admitted && warming, input[s]->buffer, n)) {
+            atomic_fetch_add_explicit(&a->startup_unavailable[e->role][s], 1, memory_order_relaxed);
             fresh = false; continue; // unavailable, not admitted PCM or concealment
         }
         double *p = samples(e, s, input[s], true, n, pos);
@@ -966,13 +966,13 @@ static void print_format_reports(const struct app *a) {
             printf("]}");
         }
     printf("]");
-    printf(",\"consumerEpochs\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"consumerDropped\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"consumerTerminalClosures\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"startupEmpty\":[",
+    printf(",\"consumerEpochs\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"consumerDropped\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"consumerTerminalClosures\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "],\"startupUnavailable\":[",
         atomic_load(&a->consumer_epochs[0]), atomic_load(&a->consumer_epochs[1]), atomic_load(&a->consumer_epochs[2]),
         atomic_load(&a->consumer_dropped[0]), atomic_load(&a->consumer_dropped[1]), atomic_load(&a->consumer_dropped[2]),
         atomic_load(&a->consumer_closed[0]), atomic_load(&a->consumer_closed[1]), atomic_load(&a->consumer_closed[2]));
     for (unsigned role = 0; role < 3; ++role) {
         printf("%s[", role ? "," : "");
-        for (unsigned r = 0; r < ROUTES; ++r) printf("%s%" PRIu64, r ? "," : "", atomic_load(&a->startup_empty[role][r]));
+        for (unsigned r = 0; r < ROUTES; ++r) printf("%s%" PRIu64, r ? "," : "", atomic_load(&a->startup_unavailable[role][r]));
         printf("]");
     }
     printf("],\"consumerRejectedPriorEpoch\":[%" PRIu64 ",%" PRIu64 ",%" PRIu64 "]",

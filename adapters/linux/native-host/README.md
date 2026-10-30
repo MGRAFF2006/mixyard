@@ -286,14 +286,18 @@ negative pre-stop/unrelated-corruption checks, and another gated SDK run are
 required before considering any narrower expected-teardown classification.
 
 
-Before the first host admission only, an exact native EMPTY descriptor may have
-zero valid-data bytes or one full neutral quantum. The pinned SPA definition
-makes `chunk.size` the valid-data byte count; the actual 1.0.5 audiomixer excludes
-EMPTY inputs from PCM mixing and can propagate size zero. Both states are
-**unavailable**: return the borrowed token without reading PCM, installing a host,
-claiming a fresh header/clock, or scheduling silence. Positive partial/oversized
-sizes, wrong offset/stride, missing metadata, and unknown/corrupted flags still
-fault. The existing warming/never-admitted caller guards and all exact format
-checks remain. Any admitted EMPTY still fails; no server-loss exception is added.
-The SDK regressions exercise actual POD/descriptor boundaries and the real SPA
-plugin's zero-byte EMPTY output; local SDK execution remains unavailable.
+Pre-admission payload readiness is based on valid-data length, not solely EMPTY.
+The pinned PipeWire allocator uses zero-initialized storage for chunk/header
+fields; `spa_buffer_alloc_array` exposes that exact initialized state. Zero
+valid-data bytes with offset zero, stride zero or the exact stride, known flags
+zero/EMPTY, full capacity and existing header metadata are **unavailable**. A
+full explicitly EMPTY quantum is also unavailable. Both states return the native
+token without reading PCM, installing a host, proving source header/clock freshness,
+or scheduling silence. Unchanged caller guards permit this only while never
+admitted/warming; actual formats and current source headers/common clock remain
+required before host admission. Positive partial/oversized lengths, corrupted or
+unknown flags, wrong strides/offsets, missing metadata and all admitted invalid
+or EMPTY data remain fatal. The actual SDK allocator and SPA-plugin regressions
+exercise these states and rejection boundaries; local SDK execution remains
+unavailable. `startupUnavailable` accurately names their diagnostic counters.
+The strict server-loss first-error/code-46 gate remains unchanged.
