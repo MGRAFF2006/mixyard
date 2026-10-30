@@ -1,0 +1,4 @@
+module CHost {
+    header "shim.h"
+    export *
+}

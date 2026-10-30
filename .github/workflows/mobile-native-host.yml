@@ -1,0 +1,60 @@
+name: Mobile canonical host linkage
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['apps/mobile/native/**', 'apps/mobile/android/core/**', 'apps/mobile/ios/Sources/**', 'verification/mobile-host/**', '.github/workflows/mobile-native-host.yml']
+  push:
+    branches: [main]
+    paths: ['apps/mobile/native/**', 'verification/mobile-host/**', '.github/workflows/mobile-native-host.yml']
+permissions:
+  contents: read
+concurrency:
+  group: mobile-host-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  kotlin-jni-source:
+    name: Actual Kotlin JNI and canonical Rust processing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile actual worker and linked probe source
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/mobile-host-gradle
+        run: |
+          mkdir -p verification/mobile-host/kotlin/build/production
+          cp apps/mobile/android/core/src/main/kotlin/org/mixyard/mobile/Endpoint.kt verification/mobile-host/kotlin/build/production/
+          gradle --no-daemon -p verification/mobile-host/kotlin installDist
+      - name: Strict native JNI syntax using actual frozen engine ABI
+        run: c++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only -Iadapters/engine/include -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/linux" apps/mobile/native/jni/host_jni.cpp
+      - name: Build actual merged canonical Rust host library
+        run: cargo build --locked --manifest-path adapters/engine/Cargo.toml --release --jobs 2
+      - name: Execute actual Kotlin and JNI binary-buffer policy and DSP path
+        run: bash verification/mobile-host/run-jvm.sh "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/adapters/engine/target/release/libmixyard_host.a" "$GITHUB_WORKSPACE/adapters/engine/fixtures/owned-common-clock.json"
+      - if: always()
+        run: echo 'Actual Kotlin/JNI/Rust offline linked processing is tested. Synthetic shared clock and binary sources only; audio/backend/applied roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
+  swift-source:
+    name: Actual Swift and canonical Rust processing
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Typecheck actual Swift worker and linked probe source
+        run: |
+          mkdir -p "$RUNNER_TEMP/mobile-host-modules"
+          swiftc -parse-as-library -emit-module -module-name MobileCore apps/mobile/ios/Sources/MobileCore/*.swift -emit-module-path "$RUNNER_TEMP/mobile-host-modules/MobileCore.swiftmodule"
+          swiftc -parse-as-library -emit-module -module-name NativeHost -I "$RUNNER_TEMP/mobile-host-modules" -I apps/mobile/native/swift/CHost -Xcc -Iadapters/engine/include apps/mobile/native/swift/NativeHostWorker.swift -emit-module-path "$RUNNER_TEMP/mobile-host-modules/NativeHost.swiftmodule"
+          swiftc -parse-as-library -typecheck -I "$RUNNER_TEMP/mobile-host-modules" -I apps/mobile/native/swift/CHost -Xcc -Iadapters/engine/include verification/mobile-host/swift/HostQualification.swift
+      - name: Build actual merged canonical Rust host library
+        run: cargo build --locked --manifest-path adapters/engine/Cargo.toml --release --jobs 2
+      - name: Execute actual Swift binary-buffer policy and DSP path
+        run: bash verification/mobile-host/run-swift.sh "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/adapters/engine/target/release/libmixyard_host.a" "$GITHUB_WORKSPACE/adapters/engine/fixtures/owned-common-clock.json"
+      - if: always()
+        run: echo 'Actual Swift/Rust offline linked processing is tested. Synthetic shared clock and binary sources only; audio/backend/applied roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
