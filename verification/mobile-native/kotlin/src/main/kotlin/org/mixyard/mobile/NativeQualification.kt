@@ -7,6 +7,7 @@ fun main() {
     val vault = CredentialStore()
     var client = PinnedControl(vault)
     val captured = mutableMapOf<String, Ticket>()
+    println("{\"event\":\"ready\"}"); System.out.flush()
     generateSequence(::readLine).forEach { line ->
         val reply = JSONObject()
         try {

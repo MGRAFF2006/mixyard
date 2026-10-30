@@ -36,6 +36,10 @@ jobs:
           GRADLE_USER_HOME: ${{ runner.temp }}/native-control-gradle
         with:
           gradle-version: '8.11.1'
+      - name: Bounded qualifier readiness and owned-process lifecycle
+        run: |
+          node --test verification/mobile-native/lifecycle.test.ts
+          python3 -B -m unittest discover -s verification/mobile-native -p test_swift_lifecycle.py
       - name: Compile unchanged shipping Kotlin client with only vault boundary double
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/native-control-gradle
@@ -100,6 +104,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '24.13.1'
+      - name: Bounded qualifier readiness and owned-process lifecycle
+        run: |
+          node --test verification/mobile-native/lifecycle.test.ts
+          python3 -B -m unittest discover -s verification/mobile-native -p test_swift_lifecycle.py
       - name: Compile shipping Swift client and platform test driver
         run: bash verification/mobile-native/build-swift.sh
       - name: Build pinned production control service
