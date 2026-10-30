@@ -29,13 +29,18 @@ jobs:
           node-version: '24.13.1'
       - name: SDK selection and owned cleanup regression (no SDK execution)
         run: python3 -B -m unittest discover -s verification/mobile-confirmations -p 'test_*.py'
-      - name: Embedded evidence privacy and classification (no native execution)
-        run: node --test verification/mobile-confirmations/diagnostics.test.mjs
       - run: pnpm --dir apps/web install --frozen-lockfile
+      - name: Embedded evidence privacy and classification (no native execution)
+        run: node --test verification/mobile-confirmations/diagnostics.test.mjs apps/mobile/controller/classic-controller.test.mjs
       - name: Build actual shared App with the explicit UI-only service double
         env:
           MIXYARD_CONFIRMATION_CACHE: ${{ runner.temp }}/confirmation-vite
         run: node verification/mobile-confirmations/build.mjs "$RUNNER_TEMP/confirmation-assets"
+      - name: Actual classic shared App browser guards (not native dialog proof)
+        env:
+          MIXYARD_CONFIRMATION_ASSETS: ${{ runner.temp }}/confirmation-assets
+          MIXYARD_CONFIRMATION_CHROMIUM: /usr/bin/google-chrome
+        run: node verification/mobile-confirmations/browser-check.mjs
       - uses: actions/upload-artifact@v6
         with:
           name: confirmation-ui-assets
