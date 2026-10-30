@@ -6,6 +6,7 @@ import platform
 import plistlib
 import re
 import subprocess
+import time
 
 
 def version(value):
@@ -43,12 +44,12 @@ def process_evidence(label):
         print('Owned simulator process evidence unavailable: ' + label, flush=True)
 
 
-def capture(label, *args):
+def capture(label, *args, timeout=30):
     print('Owned simulator capture: ' + label + '-start', flush=True)
     try:
-        value = subprocess.check_output(args, text=True, timeout=30, stdin=subprocess.DEVNULL).strip()
+        value = subprocess.check_output(args, text=True, timeout=timeout, stdin=subprocess.DEVNULL).strip()
     except subprocess.TimeoutExpired:
-        print('Owned simulator capture failure: ' + json.dumps({'phase':label, 'kind':'timeout', 'value':30}), flush=True)
+        print('Owned simulator capture failure: ' + json.dumps({'phase':label, 'kind':'timeout', 'value':timeout}), flush=True)
         process_evidence(label + '-failed'); raise
     except subprocess.CalledProcessError as error:
         code = error.returncode
@@ -117,6 +118,40 @@ def validate_comparison(xcode, sdk):
     print('Owned simulator COMPARISON: preinstalled Xcode16.2 / SDK18.2; same assertions/budgets, not causal repair', flush=True)
 
 
+
+def destination_evidence(text, identifier):
+    records=[];availability='unknown'
+    for line in text.splitlines():
+        if 'Available destinations for' in line: availability='available'
+        if 'Ineligible destinations for' in line: availability='ineligible'
+        for entry in re.findall(r'\{([^{}]+)\}',line):
+            pairs=[part.strip().split(':',1) for part in entry.split(',') if ':' in part]
+            fields={key.strip():value.strip() for key,value in pairs}
+            if fields.get('id') != identifier: continue
+            records.append({'platform':fields.get('platform') if fields.get('platform') in ('iOS Simulator','iOS','macOS') else 'other',
+                            'arch':fields.get('arch') if fields.get('arch') in ('arm64','x86_64') else 'missing-or-other',
+                            'archPresent':'arch' in fields,'errorPresent':'error' in fields,'availability':availability,
+                            'duplicateFields':len(fields)!=len(pairs)})
+    return {'ownedUuidMentioned':identifier in text,'records':records[:8],'recordLimitExceeded':len(records)>8}
+
+
+def shutdown_owned(identifier):
+    deadline=time.monotonic()+30
+    try:
+        step('cleanup-shutdown',['xcrun','simctl','shutdown',identifier],30)
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 149: raise
+        remaining=deadline-time.monotonic()
+        if remaining<=0: raise
+        # Exit149 alone is NEVER success. Verify the unique UUID we created is
+        # actually Shutdown, in the remainder of the SAME30s cleanup budget.
+        raw=capture('cleanup-owned-state','xcrun','simctl','list','devices','--json',timeout=min(3,remaining))
+        value=json.loads(raw)
+        entries=[device for group in value['devices'].values() for device in group if device.get('udid')==identifier]
+        if len(entries)!=1 or entries[0].get('state')!='Shutdown': raise error
+        print('Owned simulator phase: cleanup-shutdown-postcondition-verified',flush=True)
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
         raise RuntimeError('Disposable hosted Mac required')
@@ -143,6 +178,7 @@ def main():
                   '-configuration', 'Debug', '-sdk', 'iphonesimulator', '-destination', destination,
                   '-derivedDataPath', str(output), 'ONLY_ACTIVE_ARCH=YES', f'ARCHS={arch}', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE', 'CODE_SIGNING_ALLOWED=NO']
         destinations = capture('owned-destinations', 'xcodebuild', '-showdestinations', *common)
+        print('Owned simulator destination evidence: '+json.dumps(destination_evidence(destinations,identifier)),flush=True)
         if not any(identifier in line and re.search(r'\barch:\s*' + re.escape(arch) + r'\b', line) for line in destinations.splitlines()):
             raise RuntimeError('Owned simulator destination does not advertise the native architecture')
         step('boot', ['xcrun', 'simctl', 'boot', identifier], 30)
@@ -156,7 +192,9 @@ def main():
         # Both independent owned cleanup operations are attempted. Never mask
         # the FIRST boot/build/test error with a later cleanup deadline.
         for operation in ('shutdown', 'delete'):
-            try: step('cleanup-' + operation, ['xcrun', 'simctl', operation, identifier], 30)
+            try:
+                if operation=='shutdown': shutdown_owned(identifier)
+                else: step('cleanup-' + operation, ['xcrun', 'simctl', operation, identifier], 30)
             except Exception as error: cleanup_failures.append(error)
     if first_failure is not None:
         if cleanup_failures:

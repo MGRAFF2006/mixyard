@@ -114,3 +114,14 @@ architecture inputs are required or the lane fails, with no install or fallback.
 The same shipping source, qualification flag, UI assertions,10s readiness and all
 original command/boot/test/cleanup limits run unchanged. The separate16.4 lane
 remains. A comparison pass is not causal repair or current-runtime eligibility.
+
+The first actual16.2 comparison [92@dbd run](https://github.com/MGRAFF2006/mixyard/actions/runs/41001387504/job/123886466019)
+passed discovery/create but failed native-architecture advertisement before build
+or UI. Captured destination stdout was not published, so the exact owned-entry
+format is still unknown. A bounded diagnostic now emits only that UUID's parsed
+platform/architecture/availability/error-presence fields, never names/UUIDs/raw
+stdout; the architecture gate is unchanged. Independent delete completed after
+shutdown149/alreadyShutdown. Exit149 now requires exact unique owned-UUID Shutdown
+readback within the SAME30s shutdown budget to establish the desired cleanup
+postcondition; it is never a blanket allowed status. The original architecture
+failure stays primary. No compilation/native-dialog success is inferred.
