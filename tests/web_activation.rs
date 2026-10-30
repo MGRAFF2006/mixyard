@@ -180,7 +180,30 @@ fn status(s: &Service) -> Value {
     s.ok("/api/automation/status", json!({}))
 }
 fn review_arm(s: &Service) -> Value {
-    let review = s.ok("/api/automation/review", json!({}));
+    review_arm_on_busy(s, || {})
+}
+// A 503 context-busy is rejected before the owner queue. Only these two slow
+// fixture operations may wait for admission; every admitted response is final.
+fn review_arm_on_busy(s: &Service, mut on_busy: impl FnMut()) -> Value {
+    let mut admit = |path: &str, body: Value| {
+        let started = Instant::now();
+        loop {
+            let reply = s.post(path, body.clone());
+            let value = reply.json();
+            if reply.status == 503 && value["error"]["code"] == "context-busy" {
+                assert!(
+                    started.elapsed() < CLIENT_TIMEOUT,
+                    "Admission deadline at {path}: {value}"
+                );
+                on_busy();
+                thread::sleep(TICK);
+                continue;
+            }
+            assert_eq!(reply.status, 200, "POST {path}: {value}");
+            return value;
+        }
+    };
+    let review = admit("/api/automation/review", json!({}));
     assert_eq!(review["blocked"], Value::Null, "{review}");
     assert_eq!(review["audioApplied"], false);
     assert_eq!(review["review"]["actions"][0]["candidate"]["revision"], 901);
@@ -188,7 +211,7 @@ fn review_arm(s: &Service) -> Value {
         review["review"]["actions"][0]["preview"]["plan"]["configRevision"],
         901
     );
-    let armed = s.ok(
+    let armed = admit(
         "/api/automation/arm",
         json!({"reviewId":review["review"]["id"]}),
     );
@@ -481,6 +504,11 @@ root=pathlib.Path(os.environ['MIXYARD_TEST_OBSERVER_ROOT'])
 json.load(sys.stdin)
 state=json.loads((root/'observer-state.json').read_text())
 (root/'capture-started').write_text(str(time.monotonic_ns()))
+release=state.get('releaseFile')
+deadline=time.monotonic()+4
+while release and not (root/release).exists():
+    if time.monotonic() >= deadline: raise SystemExit('owned observer release deadline')
+    time.sleep(0.01)
 time.sleep(state.get('delayMs',0)/1000)
 names=[('application.running','linux.proc'),('power.source','linux.sysfs'),('power.battery-percent','linux.sysfs'),('civil.timezone','civil.zoneinfo'),('civil.date','civil.zoneinfo'),('civil.weekday','civil.zoneinfo'),('civil.minute-of-day','civil.zoneinfo'),('device.connected','linux.pipewire')]
 facts=[]
@@ -514,6 +542,56 @@ fn running_settings() -> Value {
     options["graph"]["nodes"][0]["condition"] = json!({"kind":"fact","key":{"name":"application.running"},"predicate":{"op":"contains","value":"mapped-present"}});
     options
 }
+#[cfg(target_os = "linux")]
+#[test]
+fn held_context_rejects_review_and_arm_before_admission_then_fixture_arms_once() {
+    let f = Fixture::new();
+    let initial = setup(&f, settings());
+    let _runtime = InventoryRuntime::start(&f);
+    let s = f.start_command(observer_fixture(
+        &f,
+        json!({"releaseFile":"release-observer"}),
+    ));
+    thread::scope(|scope| {
+        let context = scope.spawn(|| s.ok("/api/automation/context", json!({})));
+        let started = Instant::now();
+        while !f.root.join("capture-started").exists() {
+            assert!(
+                started.elapsed() < CLIENT_TIMEOUT,
+                "held context never started"
+            );
+            thread::sleep(TICK);
+        }
+        for (path, body) in [
+            ("/api/automation/review", json!({})),
+            ("/api/automation/arm", json!({"reviewId":"never-admitted"})),
+        ] {
+            let rejected = s.post(path, body);
+            assert_eq!(rejected.status, 503, "POST {path}: {:?}", rejected.json());
+            assert_eq!(rejected.json()["error"]["code"], "context-busy");
+        }
+        let before = status(&s);
+        assert_eq!(before["armed"], false);
+        assert_eq!(before["review"], Value::Null);
+        assert_eq!(before["storeRevision"], initial);
+        let mut busy = 0;
+        review_arm_on_busy(&s, || {
+            busy += 1;
+            // The release is caused by a real rejected HTTP admission, never a
+            // timer or the assumption that a queued mutation was cancelled.
+            fs::write(f.root.join("release-observer"), "release").unwrap();
+        });
+        assert!(busy > 0, "fixture must observe the held admission barrier");
+        assert_eq!(context.join().unwrap()["mode"], "read-only-live-context");
+    });
+    until(&s, |v| v["storeRevision"] == initial + 1);
+    until(&s, |v| v["decision"]["kind"] == "already-applied");
+    assert_eq!(
+        s.ok("/api/profiles/read", json!({}))["storeRevision"],
+        initial + 1
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn live_domain_restriction_and_explicit_declarations_preserve_unknowns() {

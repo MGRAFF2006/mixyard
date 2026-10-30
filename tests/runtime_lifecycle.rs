@@ -116,8 +116,10 @@ impl Drop for Daemon {
     }
 }
 fn write(stream: &mut transport::Stream, bytes: &[u8]) {
+    write_until(stream, bytes, Instant::now() + LIMIT);
+}
+fn write_until(stream: &mut transport::Stream, bytes: &[u8], deadline: Instant) {
     let mut sent = 0;
-    let start = Instant::now();
     while sent < bytes.len() {
         match stream.write(&bytes[sent..]) {
             Ok(n) if n > 0 => sent += n,
@@ -126,11 +128,13 @@ fn write(stream: &mut transport::Stream, bytes: &[u8]) {
             }
             other => panic!("write failed: {other:?}"),
         }
-        assert!(start.elapsed() < LIMIT, "write timeout");
+        assert!(Instant::now() < deadline, "write timeout");
     }
 }
 fn read(stream: &mut transport::Stream) -> Value {
-    let start = Instant::now();
+    read_until(stream, Instant::now() + LIMIT)
+}
+fn read_until(stream: &mut transport::Stream, deadline: Instant) -> Value {
     let mut input = Vec::new();
     loop {
         let mut buf = [0; 1024];
@@ -138,6 +142,8 @@ fn read(stream: &mut transport::Stream) -> Value {
             Ok(n) if n > 0 => {
                 input.extend_from_slice(&buf[..n]);
                 if let Some(end) = input.iter().position(|b| *b == b'\n') {
+                    assert!(input.len() <= 8192);
+                    assert!(Instant::now() < deadline, "read timeout");
                     return serde_json::from_slice(&input[..end]).unwrap();
                 }
             }
@@ -147,7 +153,7 @@ fn read(stream: &mut transport::Stream) -> Value {
             other => panic!("read failed: {other:?}"),
         }
         assert!(input.len() <= 8192);
-        assert!(start.elapsed() < LIMIT, "read timeout");
+        assert!(Instant::now() < deadline, "read timeout");
     }
 }
 fn connect(d: &Daemon) -> transport::Stream {
@@ -158,6 +164,55 @@ fn raw(d: &Daemon, request: &[u8]) -> Value {
     write(&mut s, request);
     read(&mut s)
 }
+// Closing the client socket does not synchronously retire its server-owned slot.
+// Only the documented pre-admission events/busy response permits another attempt;
+// no mutation is retried and every attempt shares the original LIMIT deadline.
+fn resync_after_slot_retirement(d: &Daemon, mut observed_busy: impl FnMut()) -> Value {
+    let deadline = Instant::now() + LIMIT;
+    let endpoint = mixyard::runtime::endpoint(&d.instance).unwrap();
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .expect("event slot retirement timeout");
+        let mut stream = transport::connect_cancellable(
+            &endpoint,
+            &std::sync::atomic::AtomicBool::new(false),
+            remaining.min(CLIENT_TIMEOUT),
+        )
+        .unwrap();
+        write_until(&mut stream, b"{\"ipcVersion\":1,\"requestId\":\"cursor\",\"command\":\"events\",\"afterSequence\":999}\n", deadline);
+        let reply = read_until(&mut stream, deadline);
+        if reply
+            == json!({"ipcVersion":1,"requestId":"cursor","error":{
+            "code":"busy","message":"at most 8 event subscribers; retry later"}})
+        {
+            observed_busy();
+            thread::sleep(
+                Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
+            );
+            continue;
+        }
+        assert_eq!(reply["ipcVersion"], 1, "unexpected resync reply: {reply}");
+        assert_eq!(
+            reply["requestId"], "cursor",
+            "unexpected resync reply: {reply}"
+        );
+        assert!(
+            reply.get("error").is_none(),
+            "unexpected resync reply: {reply}"
+        );
+        assert_eq!(
+            reply["result"]["event"], "snapshot",
+            "unexpected resync reply: {reply}"
+        );
+        assert_eq!(
+            reply["result"]["resync"], true,
+            "unexpected resync reply: {reply}"
+        );
+        return reply;
+    }
+}
+
 fn request(command: &str) -> Vec<u8> {
     format!(
         "{}\n",
@@ -298,8 +353,10 @@ fn hostile_clients_are_bounded_and_do_not_wedge_health_or_shutdown() {
     assert_eq!(raw(&d, &request("events"))["error"]["code"], "busy");
     // Reconnect always resyncs, including an obsolete/future cursor.
     drop(subscribers.pop());
-    thread::sleep(Duration::from_millis(50));
-    assert_eq!(raw(&d,b"{\"ipcVersion\":1,\"requestId\":\"cursor\",\"command\":\"events\",\"afterSequence\":999}\n")["result"]["resync"],true);
+    assert_eq!(
+        resync_after_slot_retirement(&d, || {})["result"]["resync"],
+        true
+    );
     let mut unread = connect(&d);
     write(&mut unread, &request("events"));
     let mut stalled = connect(&d);
@@ -309,6 +366,47 @@ fn hostile_clients_are_bounded_and_do_not_wedge_health_or_shutdown() {
     drop(stalled);
     drop(unread);
     drop(subscribers);
+}
+
+#[test]
+fn resync_observes_busy_until_an_actual_event_slot_is_retired() {
+    let mut d = Daemon::start(instance());
+    let mut subscribers = Vec::new();
+    for _ in 0..8 {
+        let mut stream = connect(&d);
+        write(&mut stream, &request("events"));
+        assert_eq!(read(&mut stream)["result"]["event"], "snapshot");
+        subscribers.push(stream);
+    }
+    thread::scope(|scope| {
+        let (sent, busy) = std::sync::mpsc::channel();
+        let owner = &d;
+        let observer = scope.spawn(move || {
+            let mut reported = false;
+            resync_after_slot_retirement(owner, || {
+                if !reported {
+                    sent.send(()).unwrap();
+                    reported = true;
+                }
+            })
+        });
+        busy.recv_timeout(LIMIT)
+            .expect("observer never received the exact busy response");
+        assert!(
+            !observer.is_finished(),
+            "observer returned while all eight slots were occupied"
+        );
+        // No sleep or assumed server schedule: release only after an actual busy reply.
+        drop(subscribers.pop());
+        assert_eq!(observer.join().unwrap()["result"]["resync"], true);
+    });
+    assert_eq!(d.run("status")["result"]["daemonReachable"], true);
+    assert_eq!(d.run("shutdown")["result"]["shutdown"], "requested");
+    // Drain before reaping: Windows disconnect discards unread pipe replies.
+    for mut subscriber in subscribers {
+        assert_eq!(read(&mut subscriber)["result"]["lifecycle"], "stopping");
+    }
+    assert!(wait(&mut d.child).success());
 }
 
 #[test]
