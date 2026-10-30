@@ -5,6 +5,8 @@ import '../../../apps/web/src/style.css'
 
 // Only the service boundary is synthetic. The actual shared App/editor guards
 // and shipping Android/iOS WebView/native confirmation delegates are exercised.
+const ownedWindow = window as Window & { __mixyardOwnedFixturePhase: string }
+ownedWindow.__mixyardOwnedFixturePhase = 'module-entered'
 const api = new Api(async input => {
   const body = input === '/api/session' ? { apiVersion: 1, csrfToken: 'owned-confirmation-fixture', audioAvailable: false }
     : input === '/api/status' ? { connected: false, snapshot: null, error: null }
@@ -13,7 +15,10 @@ const api = new Api(async input => {
   if (!body) throw new Error('UI qualification forbids writes and external service operations.')
   return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
 })
+ownedWindow.__mixyardOwnedFixturePhase = 'api-created'
+ownedWindow.__mixyardOwnedFixturePhase = 'mounting'
 createApp(App, { api }).mount('#app')
+ownedWindow.__mixyardOwnedFixturePhase = 'mounted'
 const output = document.querySelector('#observed')!
 function observe() {
   const gain = document.querySelector<HTMLInputElement>('input[aria-label="mic to Call gain"]')
@@ -22,6 +27,7 @@ function observe() {
 }
 new MutationObserver(observe).observe(document.querySelector('#app')!, { childList: true, subtree: true, characterData: true })
 document.addEventListener('input', () => queueMicrotask(observe))
+ownedWindow.__mixyardOwnedFixturePhase = 'observing'
 
 // Test-only navigation controls avoid native slider accessibility differences.
 // Each action dispatches the ACTUAL App DOM event; editor/confirm decisions
@@ -51,3 +57,5 @@ for (const [label, action] of [
   const button = document.createElement('button'); button.textContent = label; button.onclick = action; tools.append(button)
 }
 document.body.insertBefore(tools, document.querySelector('#app'))
+
+ownedWindow.__mixyardOwnedFixturePhase = 'controls-ready'
