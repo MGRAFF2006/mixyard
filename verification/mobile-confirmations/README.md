@@ -106,3 +106,11 @@ and [93@6c07](https://github.com/MGRAFF2006/mixyard/actions/runs/40997677253/job
 All three runs completed owned simulator shutdown/delete; no native alert
 assertion ran. Embedded actual observer/query privacy tests execute only JavaScript
 classifications in an isolated VM and do not stand in for WebKit SDK execution.
+
+Repeated current-family16.4 discovery failures sometimes precede the prepared
+bootstrap diagnostic. One explicitly named COMPARISON job therefore uses only
+preinstalled macos14/Xcode16.2/SDK+runtime18.2. Exact toolchain/SDK/runtime/native
+architecture inputs are required or the lane fails, with no install or fallback.
+The same shipping source, qualification flag, UI assertions,10s readiness and all
+original command/boot/test/cleanup limits run unchanged. The separate16.4 lane
+remains. A comparison pass is not causal repair or current-runtime eligibility.

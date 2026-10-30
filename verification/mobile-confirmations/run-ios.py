@@ -85,7 +85,7 @@ def toolchain_evidence():
     # user GUI interaction or change to the runtime-discovery30s deadline.
     step('first-launch-status', ['xcodebuild', '-checkFirstLaunchStatus'], 30)
     simctl = Path(capture('resolved-simctl', 'xcrun', '--find', 'simctl')).resolve()
-    developer = Path(capture('selected-developer', 'xcode-select', '-p')).resolve()
+    developer = Path(os.environ.get('DEVELOPER_DIR') or capture('selected-developer', 'xcode-select', '-p')).resolve()
     expected = developer / 'usr/bin/simctl'
     candidates = [developer / 'Library/PrivateFrameworks/CoreSimulator.framework/Resources/Info.plist',
                   Path('/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/Info.plist')]
@@ -105,11 +105,24 @@ def toolchain_evidence():
         raise RuntimeError('Resolved simctl does not belong to selected Xcode')
 
 
+
+def validate_comparison(xcode, sdk):
+    lane = os.environ.get('MIXYARD_CONFIRMATION_COMPARISON')
+    if lane is None: return
+    expected = '/Applications/Xcode_16.2.app/Contents/Developer'
+    if lane != 'xcode16.2-sdk18.2' or os.environ.get('DEVELOPER_DIR') != expected or not Path(expected).is_dir():
+        raise RuntimeError('COMPARISON requires the exact preinstalled Xcode16.2; no install/fallback')
+    if xcode.splitlines()[0] != 'Xcode 16.2' or version(sdk)[:2] != (18,2):
+        raise RuntimeError('COMPARISON selected toolchain/SDK mismatch; no fallback')
+    print('Owned simulator COMPARISON: preinstalled Xcode16.2 / SDK18.2; same assertions/budgets, not causal repair', flush=True)
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
         raise RuntimeError('Disposable hosted Mac required')
     xcode = capture('selected-xcode', 'xcodebuild', '-version')
     sdk = capture('selected-sdk', 'xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version')
+    validate_comparison(xcode,sdk)
     arch = platform.machine()
     print('Owned simulator toolchain: ' + json.dumps({'xcode':xcode, 'sdk':sdk, 'arch':arch}), flush=True)
     toolchain_evidence()
