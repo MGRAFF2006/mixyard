@@ -120,11 +120,38 @@
     "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
     "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
     "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
-    "src/runtime/private_audio/mod.rs": "58ae4fed71fd5e425a057798fe7bd1141eb73fc67b4c0027c9fba3b1d1fc1e39",
-    "src/runtime/private_audio/process.rs": "ad51eb47ea19240907a2205b13bb4f1715f5ec854908f4e1894c7e1c6d1aeefb",
+    "src/runtime/private_audio/mod.rs": "b6c3767e7f62a96207c2636500a9b7b1b96e0d91d9c29b61cec1b30538a04dca",
+    "src/runtime/private_audio/process.rs": "8ae0489133c829461fb53384b7b5ef703bae9053986ae591ef23f96b5169c9e9",
     "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
-    "src/runtime/private_audio/service_tests.rs": "d71bb6b72cc0c5fa29a06457e6b04e0a7d27a5f5517a03aac0684d1356fb5735",
+    "src/runtime/private_audio/service_tests.rs": "83fa1249b49fcc04e26f008a090a2aa661f10c4201424550bb9e13c90b40e3d7",
     "src/runtime/private_audio/state.rs": "80a77f3b388a172c75e0da9c0f07552a97d1cb4fcfdf67b79e72b698c3e9d9cd",
     "src/runtime/private_audio/state_tests.rs": "7f70c027c7370befc3bceedc03993f9bc94dd7c7586d0c4bab3d5347e7be51b3"
+  },
+  "rootReviewFollowup": {
+    "reviewedHead": "5ab148108b8e82e0278e0647321c9986adcf0eab",
+    "review": "https://github.com/MGRAFF2006/mixyard/pull/116#pullrequestreview-5714565460",
+    "agent": "mixyard-web-owner",
+    "changes": [
+      "Shutdown travels on the existing priority socket; partially sent normal frames are neither replaced nor resumed during graceful retirement.",
+      "Each accepted Prepare/Link/Apply owns one original2s service budget through Ready/Reserved/Stage/Install; terminal outcome or priority fencing clears it, not peer disconnect.",
+      "Deadline checks precede late child-event acceptance and deferred normal dispatch; Staged does not reset either operation or peer budget."
+    ],
+    "newRegressionSourcesUnrun": [
+      "graceful_shutdown_uses_priority_after_a_partially_written_normal_frame",
+      "ready_child_reservation_deadline_fences_without_a_peer_and_ignores_late_reserved",
+      "late_staged_cannot_acquire_guard_or_restart_an_expired_apply",
+      "staged_preserves_original_apply_and_peer_deadlines"
+    ],
+    "checksPerformed": [
+      "rustfmt edition2021 with skip_children=true (source parsing/formatting only)",
+      "git diff --check",
+      "current source-manifest SHA256 equality"
+    ],
+    "executionLimits": [
+      "No local compiler/build/test or test-helper process was launched for this followup; existing operational hold remains in force.",
+      "The four added Rust regressions are uncompiled and unexecuted at source delivery; source-derived defects were not reproduced against the old binary.",
+      "Historical77/2ignored library and2explicit bridge passes apply to5ab source only; new-head CI/review pending.",
+      "Actual companion SDK compilation, JSON helper, native handlers, four-consumer R1/R2 recordings, heap and SDK scrub remain unrun."
+    ]
   }
 }

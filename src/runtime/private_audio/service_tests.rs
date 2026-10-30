@@ -113,7 +113,7 @@ impl Fixture {
                 store,
                 prepared: None,
                 guard: None,
-                install_started: None,
+                operation_started: None,
                 startup_started: None,
                 child_ready: true, // Explicit owner API-double startup.
                 reservation_ready: false,
@@ -165,7 +165,7 @@ impl Fixture {
             std::thread::sleep(Duration::from_millis(2));
         }
     }
-    fn staged_install(&mut self) {
+    fn stage_request(&mut self) -> (CompanionRequest, u64, u64) {
         let service = self.service();
         let nonce = service.coordinator.snapshot().stop_target.instance_nonce;
         let prepare = service
@@ -258,6 +258,11 @@ impl Fixture {
             .pending_install
             .unwrap()
             .reserved_generation;
+        (stage, generation, inventory)
+    }
+    fn staged_install(&mut self) {
+        let (stage, generation, inventory) = self.stage_request();
+        let service = self.service();
         accept_reservation(service, &stage);
         service
             .event(reply(
@@ -275,6 +280,118 @@ impl Fixture {
         assert!(service.guard.is_some());
         assert_eq!(service.coordinator.snapshot().phase, Phase::Installing);
     }
+}
+
+#[test]
+fn ready_child_reservation_deadline_fences_without_a_peer_and_ignores_late_reserved() {
+    let mut fixture = Fixture::new("import time;time.sleep(60)");
+    let (stage, _, _) = fixture.stage_request();
+    let reservation = fixture
+        .service()
+        .coordinator
+        .reserve_request(&stage)
+        .unwrap();
+    fixture.service().queue_command(&stage).unwrap();
+    assert!(fixture.service().child_ready);
+    assert!(fixture.service().startup_started.is_none());
+    assert!(fixture.service().peers.is_empty());
+    fixture.service().operation_started = Some(Instant::now() - Duration::from_millis(INSTALL_MS));
+    fixture.service().tick().unwrap();
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopping
+    );
+    assert!(fixture.service().deferred_native.is_none());
+    assert!(fixture.service().guard.is_none());
+    let CompanionAction::Reserve {
+        reserved_generation,
+        request_digest,
+        ..
+    } = reservation.action
+    else {
+        panic!("expected reservation")
+    };
+    fixture
+        .service()
+        .event(reply(
+            &stage,
+            CompanionEvent::Reserved {
+                reserved_generation,
+                request_digest,
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopping
+    );
+    assert!(fixture.service().deferred_native.is_none());
+    assert!(fixture.service().operation_started.is_none());
+}
+
+#[test]
+fn late_staged_cannot_acquire_guard_or_restart_an_expired_apply() {
+    let mut fixture = Fixture::new("import time;time.sleep(60)");
+    let (stage, generation, inventory) = fixture.stage_request();
+    accept_reservation(fixture.service(), &stage);
+    fixture.service().operation_started = Some(Instant::now() - Duration::from_millis(INSTALL_MS));
+    fixture
+        .service()
+        .event(reply(
+            &stage,
+            CompanionEvent::Staged {
+                staged_token: "e".repeat(64),
+                generation,
+                config_revision: 1,
+                inventory_revision: inventory,
+                request_digest: "c".repeat(64),
+                endpoint_set_digest: "d".repeat(64),
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopping
+    );
+    assert!(fixture.service().guard.is_none());
+    assert!(fixture.service().operation_started.is_none());
+    assert!(fixture.service().fence_started.is_some());
+}
+
+#[test]
+fn staged_preserves_original_apply_and_peer_deadlines() {
+    let mut fixture = Fixture::new(COMPANION);
+    let (stage, generation, inventory) = fixture.stage_request();
+    accept_reservation(fixture.service(), &stage);
+    let started = Instant::now() - Duration::from_millis(INSTALL_MS / 2);
+    fixture.service().operation_started = Some(started);
+    let (server, _client) = UnixStream::pair().unwrap();
+    server.set_nonblocking(true).unwrap();
+    let mut peer = Peer::new(server);
+    peer.operation = Some(stage.operation_id.clone());
+    peer.started = started;
+    fixture.service().peers.push(peer);
+    fixture
+        .service()
+        .event(reply(
+            &stage,
+            CompanionEvent::Staged {
+                staged_token: "e".repeat(64),
+                generation,
+                config_revision: 1,
+                inventory_revision: inventory,
+                request_digest: "c".repeat(64),
+                endpoint_set_digest: "d".repeat(64),
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Installing
+    );
+    assert_eq!(fixture.service().operation_started, Some(started));
+    assert_eq!(fixture.service().peers[0].started, started);
+    assert!(fixture.service().guard.is_some());
 }
 fn accept_reservation(service: &mut Service, request: &CompanionRequest) {
     let reserve = service.coordinator.reserve_request(request).unwrap();
@@ -443,7 +560,7 @@ fn disconnected_install_deadline_owns_fence_and_retirement_without_a_peer() {
     let mut fixture = Fixture::new(COMPANION);
     fixture.staged_install();
     assert!(fixture.service().peers.is_empty());
-    fixture.service().install_started = Some(Instant::now() - Duration::from_millis(INSTALL_MS));
+    fixture.service().operation_started = Some(Instant::now() - Duration::from_millis(INSTALL_MS));
     fixture.service().tick().unwrap();
     assert_eq!(
         fixture.service().coordinator.snapshot().phase,

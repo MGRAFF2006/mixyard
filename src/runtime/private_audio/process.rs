@@ -403,16 +403,16 @@ impl Processes {
         self.qualified.observe_bindings(self.companion.id(), false)
     }
     pub fn begin_graceful(&mut self, request: &CompanionRequest) -> io::Result<()> {
-        // A verified owner fence makes older normal commands permanently inert.
-        self.normal = Outbound::new();
-        self.normal.queue(request)?;
-        self.normal.flush(&mut self.stdin)?;
+        // A fenced normal request may still have a prefix in the child's stdin.
+        // Never append Shutdown to that incomplete frame or resume its suffix.
+        self.priority.append_priority(request)?;
+        self.priority.flush(&mut self.cancel)?;
         Ok(())
     }
     pub fn graceful_progress(&mut self) -> io::Result<bool> {
         self.check_diagnostics()?;
         if self.companion.try_wait()?.is_none() {
-            self.normal.flush(&mut self.stdin)?;
+            self.priority.flush(&mut self.cancel)?;
         } else if !self.daemon_term_sent {
             // Preserve the shared collective 1s budget, but let the companion
             // destroy its private client context before terminating its core.
@@ -499,6 +499,133 @@ impl Drop for Processes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Real product pipes and shutdown transport, with an explicit owner API
+    /// double. This does not execute or qualify the native companion handler.
+    #[test]
+    fn graceful_shutdown_uses_priority_after_a_partially_written_normal_frame() -> io::Result<()> {
+        let mut daemon_command = Command::new("/usr/bin/python3");
+        daemon_command
+            .env_clear()
+            .args(["-c", "import time;time.sleep(60)"]);
+        parent_death(&mut daemon_command, None);
+        let daemon = daemon_command.spawn()?;
+        let (cancel, child_cancel) = UnixStream::pair()?;
+        let mut command = Command::new("/usr/bin/python3");
+        command
+            .env_clear()
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .arg("-c")
+            .arg(
+                r#"
+import json,os,select,sys
+prefix=b''
+while len(prefix)<16: prefix+=os.read(0,16-len(prefix))
+def priority():
+ b=b''
+ while not b.endswith(b'\n'): b+=os.read(3,4096)
+ return json.loads(b)
+assert priority()['action']['kind']=='fence'
+print('FENCED',flush=True) # API-double ACK, not native fence proof.
+while True:
+ ready,_,_=select.select([0,3],[],[],2)
+ assert ready
+ if 0 in ready:
+  prefix+=os.read(0,4096)
+  assert b'\n' not in prefix, 'normal frame was corrupted during shutdown'
+ if 3 in ready:
+  assert priority()['action']['kind']=='shutdown'
+  sys.exit(0)
+"#,
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        parent_death(&mut command, Some(child_cancel.as_raw_fd()));
+        let companion = command.spawn()?;
+        drop(child_cancel);
+        let qualified = Qualified::test_double(Descriptor {
+            schema_version: VERSION,
+            scope: Scope::OwnedPrivateGeneratedV1,
+            sdk_prefix: PathBuf::from("/dev/shm"),
+            prefix_manifest: PathBuf::from("/not-an-sdk-manifest"),
+            prefix_manifest_sha256: "0".repeat(64),
+            companion_executable: PathBuf::from("/not-a-native-binary"),
+            companion_sha256: "0".repeat(64),
+            sdk_version: "1.4.8".into(),
+            sdk_commit: "8b43ed5c910e892d53de5a96aa01e9280a5b6650".into(),
+            generators: Vec::new(),
+            limits: PrivateLimits {
+                max_sources: 1,
+                max_outputs: 4,
+                max_resident_bytes: 1024 * 1024,
+                max_frames: 128,
+            },
+        });
+        let mut processes = Processes::test_owned(qualified, daemon, companion, cancel, || Ok(()))?;
+        let normal = CompanionRequest {
+            companion_version: VERSION,
+            instance_nonce: "a".repeat(64),
+            control_epoch: 1,
+            operation_id: "normal-snapshot".into(),
+            action: CompanionAction::Snapshot {},
+        };
+        processes.queue(&normal)?;
+        // Deliver an actual prefix while retaining its unsent suffix. The
+        // double ACKs Fence only after reading that prefix from real stdin.
+        let written = processes.stdin.write(&processes.normal.bytes[..16])?;
+        assert_eq!(written, 16);
+        processes.normal.at = written;
+        let normal_len = processes.normal.bytes.len();
+        let fence = CompanionRequest {
+            companion_version: VERSION,
+            instance_nonce: "a".repeat(64),
+            control_epoch: 1,
+            operation_id: "fence-2".into(),
+            action: CompanionAction::Fence {
+                expected: StopTarget {
+                    instance_nonce: "a".repeat(64),
+                    control_epoch: 1,
+                    active_generation: None,
+                    pending_install: None,
+                },
+                new_control_epoch: 2,
+            },
+        };
+        processes.queue(&fence)?;
+        let started = Instant::now();
+        let mut ack = Vec::new();
+        while !ack.ends_with(b"\n") {
+            processes.priority.flush(&mut processes.cancel)?;
+            let mut buffer = [0; 32];
+            match processes.stdout.read(&mut buffer) {
+                Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+                Ok(n) => ack.extend_from_slice(&buffer[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) => return Err(e),
+            }
+            assert!(started.elapsed() < Duration::from_secs(2));
+            std::thread::yield_now();
+        }
+        assert_eq!(ack, b"FENCED\n");
+        let shutdown = CompanionRequest {
+            companion_version: VERSION,
+            instance_nonce: "a".repeat(64),
+            control_epoch: 2,
+            operation_id: "fence-2".into(),
+            action: CompanionAction::Shutdown {},
+        };
+        processes.begin_graceful(&shutdown)?;
+        assert_eq!(processes.normal.at, 16);
+        assert_eq!(processes.normal.bytes.len(), normal_len);
+        let started = Instant::now();
+        while !processes.graceful_progress()? {
+            assert!(started.elapsed() < Duration::from_secs(2));
+            std::thread::yield_now();
+        }
+        assert!(processes.companion.try_wait()?.unwrap().success());
+        assert!(processes.reaped()?);
+        Ok(())
+    }
     #[test]
     #[ignore = "requires explicitly precompiled owned portable C helper; no SDK"]
     fn review_native_contract_launcher_fd3_reaches_production_validator() {

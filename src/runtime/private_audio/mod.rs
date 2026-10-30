@@ -191,7 +191,7 @@ pub(crate) struct Service {
     store: Store,
     prepared: Option<CurrentSnapshot>,
     guard: Option<CurrentSnapshotGuard>,
-    install_started: Option<Instant>,
+    operation_started: Option<Instant>,
     startup_started: Option<Instant>,
     child_ready: bool,
     reservation_ready: bool,
@@ -243,7 +243,7 @@ impl Service {
             store,
             prepared: None,
             guard: None,
-            install_started: None,
+            operation_started: None,
             startup_started: Some(startup_started),
             child_ready: false,
             reservation_ready: false,
@@ -257,7 +257,8 @@ impl Service {
         })
     }
     fn dispatch(&mut self, operation: Operation) -> Result<Option<CompanionRequest>, Failure> {
-        match operation {
+        let started = Instant::now();
+        let command = match operation {
             Operation::Status {} => Ok(None),
             Operation::Prepare {
                 instance_nonce,
@@ -353,9 +354,23 @@ impl Service {
                 self.fence_started = Some(Instant::now());
                 self.deferred_native = None;
                 self.startup_started = None;
+                self.operation_started = None;
                 Ok(Some(request))
             }
+        }?;
+        if command.as_ref().is_some_and(|request| {
+            matches!(
+                request.action,
+                CompanionAction::Prepare { .. }
+                    | CompanionAction::Link { .. }
+                    | CompanionAction::Stage { .. }
+            )
+        }) {
+            // One budget belongs to the accepted mutation, including readiness,
+            // reservation and Stage -> Install, independently of its IPC peer.
+            self.operation_started = Some(started);
         }
+        Ok(command)
     }
     fn queue_command(&mut self, command: &CompanionRequest) -> Result<(), Failure> {
         if matches!(
@@ -381,6 +396,7 @@ impl Service {
         }
     }
     fn dispatch_reserved(&mut self) -> Result<(), Failure> {
+        self.enforce_deadlines();
         if self.child_ready && self.reservation_ready {
             if let Some(command) = self.deferred_native.take() {
                 self.processes
@@ -400,6 +416,9 @@ impl Service {
         Ok(())
     }
     fn event(&mut self, reply: CompanionReply) -> Result<(), Failure> {
+        // An already queued late Reserved/Staged/Installed cannot revive work
+        // after its service-owned deadline, even in the same event batch.
+        self.enforce_deadlines();
         let operation = reply.operation_id.clone();
         let event = reply.event.clone();
         let transition = self.coordinator.accept(reply)?;
@@ -418,12 +437,18 @@ impl Service {
                 self.dispatch_reserved()?;
                 None
             }
-            Transition::Prepared => Some(ResultValue::Prepared {
-                status: self.coordinator.snapshot(),
-            }),
-            Transition::Linked => Some(ResultValue::Linked {
-                status: self.coordinator.snapshot(),
-            }),
+            Transition::Prepared => {
+                self.operation_started = None;
+                Some(ResultValue::Prepared {
+                    status: self.coordinator.snapshot(),
+                })
+            }
+            Transition::Linked => {
+                self.operation_started = None;
+                Some(ResultValue::Linked {
+                    status: self.coordinator.snapshot(),
+                })
+            }
             Transition::Staged => {
                 self.processes
                     .observe()
@@ -431,27 +456,30 @@ impl Service {
                 let snapshot = self.prepared.as_ref().ok_or_else(|| {
                     failure(ErrorCode::OwnerFailed, "staged without canonical snapshot")
                 })?;
+                let current = desired(snapshot);
                 self.guard = Some(
                     self.store
                         .guard_current_snapshot(snapshot, STORE_LIMIT)
                         .map_err(store_failure)?,
                 );
-                let install = self.coordinator.begin_install(&desired(snapshot))?;
+                self.enforce_deadlines();
+                if self.fence_started.is_some() || self.failed {
+                    return Ok(());
+                }
+                let install = self.coordinator.begin_install(&current)?;
                 let install_operation = install.operation_id.clone();
                 self.processes
                     .queue(&install)
                     .map_err(|e| failure(ErrorCode::OwnerFailed, e.to_string()))?;
-                self.install_started = Some(Instant::now());
                 for peer in &mut self.peers {
                     if peer.operation.as_deref() == Some(&operation) {
                         peer.operation = Some(install_operation.clone());
-                        peer.started = Instant::now();
                     }
                 }
                 None
             }
             Transition::Installed(permit) => {
-                self.install_started = None;
+                self.operation_started = None;
                 self.processes
                     .observe()
                     .map_err(|e| failure(ErrorCode::UnqualifiedSdk, e.to_string()))?;
@@ -470,7 +498,7 @@ impl Service {
                 }
             }
             Transition::Fenced(permit) => {
-                self.install_started = None;
+                self.operation_started = None;
                 self.release(&permit)?;
                 self.fence_started = None;
                 let CompanionEvent::Fenced { receipt } = event else {
@@ -517,6 +545,7 @@ impl Service {
         Ok(())
     }
     fn fail(&mut self, error: Failure) {
+        self.operation_started = None;
         self.coordinator.fail_held(error.code, &error.message);
         self.failed = true;
         for peer in &mut self.peers {
@@ -531,7 +560,7 @@ impl Service {
     }
     fn timeout_fence(&mut self) {
         self.startup_started = None;
-        self.install_started = None;
+        self.operation_started = None;
         self.deferred_native = None;
         let target = self.coordinator.snapshot().stop_target;
         match self.coordinator.begin_stop(&target) {
@@ -542,19 +571,20 @@ impl Service {
             Err(error) => self.fail(error),
         }
     }
-    pub(crate) fn tick(&mut self) -> io::Result<()> {
-        self.listener.owned_directory()?;
-        // One existing2s startup budget includes daemon socket publication.
-        // Fence before consuming a late Ready; it cannot dispatch normal work.
-        if self
-            .startup_started
-            .is_some_and(|s| s.elapsed() >= Duration::from_millis(INSTALL_MS))
-            && self.fence_started.is_none()
-            && self.retirement.is_none()
-            && !self.retired
-        {
+    fn enforce_deadlines(&mut self) {
+        let expired = [self.startup_started, self.operation_started]
+            .into_iter()
+            .flatten()
+            .any(|start| start.elapsed() >= Duration::from_millis(INSTALL_MS));
+        if expired && self.fence_started.is_none() && self.retirement.is_none() && !self.retired {
             self.timeout_fence();
         }
+    }
+    pub(crate) fn tick(&mut self) -> io::Result<()> {
+        self.listener.owned_directory()?;
+        // Fence before flushing or consuming late child events. The startup
+        // budget includes daemon publication; mutation budgets never restart.
+        self.enforce_deadlines();
         if !self.shutting_down && self.peers.len() < 16 {
             if let Some(stream) = self.listener.accept()? {
                 self.peers.push(Peer::new(stream));
@@ -643,17 +673,7 @@ impl Service {
             }
             index += 1;
         }
-        // This deadline belongs to the owned install, not to any IPC peer.
-        // A caller may disappear; only a real fence or actual reaps releases it.
-        if self
-            .install_started
-            .is_some_and(|s| s.elapsed() >= Duration::from_millis(INSTALL_MS))
-            && self.fence_started.is_none()
-            && self.retirement.is_none()
-            && !self.retired
-        {
-            self.timeout_fence();
-        }
+        self.enforce_deadlines();
         if self
             .fence_started
             .is_some_and(|start| start.elapsed() >= Duration::from_millis(FENCE_MS))
@@ -764,6 +784,7 @@ impl Service {
                 Ok(command) => {
                     self.deferred_native = None;
                     self.startup_started = None;
+                    self.operation_started = None;
                     self.processes.queue(&command)?;
                     self.fence_started = Some(Instant::now());
                 }
