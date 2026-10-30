@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
 import re
 import subprocess
 
@@ -78,6 +79,32 @@ def step(label, args, timeout):
     return result
 
 
+
+def toolchain_evidence():
+    # Read-only evidence. No first-launch setup/install, service restart, retry,
+    # user GUI interaction or change to the runtime-discovery30s deadline.
+    step('first-launch-status', ['xcodebuild', '-checkFirstLaunchStatus'], 30)
+    simctl = Path(capture('resolved-simctl', 'xcrun', '--find', 'simctl')).resolve()
+    developer = Path(capture('selected-developer', 'xcode-select', '-p')).resolve()
+    expected = developer / 'usr/bin/simctl'
+    candidates = [developer / 'Library/PrivateFrameworks/CoreSimulator.framework/Resources/Info.plist',
+                  Path('/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/Info.plist')]
+    versions = []
+    for location in candidates:
+        try:
+            value = plistlib.loads(location.read_bytes())
+        except (OSError, plistlib.InvalidFileException):
+            continue
+        fields = [value.get('CFBundleShortVersionString'), value.get('CFBundleVersion')]
+        if all(isinstance(field, str) and re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', field) for field in fields):
+            versions.append({'scope':'selected-xcode' if location == candidates[0] else 'shared-developer',
+                             'version':fields[0], 'build':fields[1]})
+    print('Owned simulator tool identity: ' + json.dumps({'simctlMatchesSelectedXcode':simctl == expected.resolve(),
+          'coreSimulatorVersions':versions}), flush=True)
+    if simctl != expected.resolve():
+        raise RuntimeError('Resolved simctl does not belong to selected Xcode')
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
         raise RuntimeError('Disposable hosted Mac required')
@@ -85,6 +112,7 @@ def main():
     sdk = capture('selected-sdk', 'xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version')
     arch = platform.machine()
     print('Owned simulator toolchain: ' + json.dumps({'xcode':xcode, 'sdk':sdk, 'arch':arch}), flush=True)
+    toolchain_evidence()
     process_evidence('before-runtime-discovery')
     runtimes = json.loads(capture('runtime-discovery', 'xcrun', 'simctl', 'list', 'runtimes', '--json'))['runtimes']
     runtime = select_runtime(sdk, runtimes, arch)
@@ -100,7 +128,7 @@ def main():
         destination = f'platform=iOS Simulator,id={identifier},arch={arch}'
         common = ['-project', 'apps/mobile/ios/Mixyard.xcodeproj', '-scheme', 'MixyardConfirmations',
                   '-configuration', 'Debug', '-sdk', 'iphonesimulator', '-destination', destination,
-                  '-derivedDataPath', str(output), 'ONLY_ACTIVE_ARCH=YES', f'ARCHS={arch}', 'CODE_SIGNING_ALLOWED=NO']
+                  '-derivedDataPath', str(output), 'ONLY_ACTIVE_ARCH=YES', f'ARCHS={arch}', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE', 'CODE_SIGNING_ALLOWED=NO']
         destinations = capture('owned-destinations', 'xcodebuild', '-showdestinations', *common)
         if not any(identifier in line and re.search(r'\barch:\s*' + re.escape(arch) + r'\b', line) for line in destinations.splitlines()):
             raise RuntimeError('Owned simulator destination does not advertise the native architecture')

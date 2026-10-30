@@ -58,3 +58,33 @@ selected toolchain before discovery and bounded read-only CoreSimulator/tool
 process names and IDs on failure. No argv/environment/unrelated process data is
 published; no service is killed/restarted and discovery is not retried or given
 a longer deadline. The actual service-initialization cause remains unknown.
+
+The authorized initial Android dispatch at8b7 compiled instrumentation but stopped
+before any emulator/image or dialog assertion: its KVM gate lacked diagnostic
+metadata. The gate now reports fixed existence/type, numeric UID/GID/mode and
+current-user read/write state, verifies the node against the kernel KVM misc
+registration, and only on the disposable approved GitHub Linux VM grants that
+runner UID access using existing noninteractive setfacl (or chown if unavailable).
+It rechecks the same device identity and access; absent/non-KVM nodes stay failed.
+No world-writable permissions, software-emulator fallback or personal device is used.
+Seven mocked boundary tests do not establish actual runner KVM/UI availability.
+
+Two later iOS runs reached the ACTUAL app after successful matching18.5 discovery,
+creation and boot: [78@91d](https://github.com/MGRAFF2006/mixyard/actions/runs/40992859342/job/123859251994)
+and [93@eade](https://github.com/MGRAFF2006/mixyard/actions/runs/40993195702/job/123860322843).
+Both failed at the first missing `Fixture load example` accessible button before
+any native dialog assertion. This is distinct from the cold-discovery30s timeout:
+the architecture/build gate was exercised here, but page rendering/bootstrap or
+accessibility was not established. No native confirmation success is credited.
+
+The qualification build alone now enables OWNED_CONFIRMATION_EVIDENCE. It records
+fixed document ready/navigation classes, asset/marker/control counts and bounded
+script/CSP error classes, never raw HTML, error messages, URLs, credentials or paths.
+A test-only read-status action samples WebKit without bootstrapping Vue, changing
+CSP or answering a dialog. The existing10s startup allowance covers both WebView
+creation and real observed fixture/control readiness; all actual Cancel/Continue
+and background-cancellation assertions remain. Production builds omit this probe.
+Read-only first-launch status, resolved selected-Xcode simctl identity and numeric
+CoreSimulator versions supplement the unchanged30s discovery capture. No service
+initialization, install, retry, deadline extension or SDK fallback is performed.
+These diagnostics require fresh actual hosted execution, not source-only credit.

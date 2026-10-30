@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: '24.13.1'
       - name: SDK selection and owned cleanup regression (no SDK execution)
-        run: python3 -B -m unittest discover -s verification/mobile-confirmations -p test_ios_runner.py
+        run: python3 -B -m unittest discover -s verification/mobile-confirmations -p 'test_*.py'
       - run: pnpm --dir apps/web install --frozen-lockfile
       - name: Build actual shared App with the explicit UI-only service double
         env:

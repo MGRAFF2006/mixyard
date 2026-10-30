@@ -2,7 +2,7 @@
 set -euo pipefail
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_OS:-}" == Linux ]] || { echo 'Hosted owned emulator required'; exit 1; }
 [[ "${MIXYARD_HOSTED_EMULATOR_APPROVED:-}" == 1 ]] || { echo 'Explicit hosted emulator image approval required'; exit 1; }
-[[ -r /dev/kvm && -w /dev/kvm ]] || { echo 'No owned hosted KVM qualification capacity'; exit 1; }
+python3 -B verification/mobile-confirmations/kvm-access.py
 # Never attach to or replace another emulator. This disposable runner must have
 # no connected device, and the selected console/ADB ports must be free.
 export MIXYARD_OWNED_ADB="$ANDROID_HOME/platform-tools/adb"
