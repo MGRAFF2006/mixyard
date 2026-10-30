@@ -8,6 +8,7 @@ import re
 import subprocess
 import time
 from architecture import admit_destination, remaining, verify_artifacts
+from rejection_observation import observe_rejection
 
 
 def version(value):
@@ -222,8 +223,9 @@ def main():
     runtimes = json.loads(capture('runtime-discovery', 'xcrun', 'simctl', 'list', 'runtimes', '--json'))['runtimes']
     runtime = select_runtime(sdk, runtimes, arch)
     print('Owned simulator selection: ' + json.dumps({'xcode':xcode, 'sdk':sdk, 'runtime':runtime['version'], 'arch':arch}), flush=True)
+    device_type = 'com.apple.CoreSimulator.SimDeviceType.iPhone-16'
     identifier = capture('owned-create', 'xcrun', 'simctl', 'create', 'mixyard-confirmations',
-                         'com.apple.CoreSimulator.SimDeviceType.iPhone-16', runtime['identifier'])
+                         device_type, runtime['identifier'])
     if not re.fullmatch(r'[0-9A-Fa-f-]{36}', identifier):
         raise RuntimeError('Owned simulator returned invalid identifier')
     first_failure = None
@@ -240,7 +242,20 @@ def main():
         evidence=destination_evidence(destinations,identifier)
         print('Owned simulator destination evidence: '+json.dumps(evidence),flush=True)
         print('Owned simulator destination structure: '+json.dumps(destination_structure(destinations,identifier)),flush=True)
-        print('Owned simulator text architecture: '+admit_destination(evidence,arch),flush=True)
+        try:
+            admitted = admit_destination(evidence,arch)
+        except RuntimeError:
+            try:
+                observe_rejection(destinations,identifier,runtime['identifier'],device_type)
+            except BaseException:
+                # Diagnostic bugs/cancellation cannot replace the ORIGINAL
+                # rejection or prevent its existing independent cleanup.
+                try:
+                    print('Owned simulator rejected-admission observation: {"phase":"rejected-destination-admission","observationOnly":true,"status":"UNKNOWN","reason":"internal"}',flush=True)
+                except BaseException:
+                    pass # Even a broken diagnostic output sink preserves rejection.
+            raise
+        print('Owned simulator text architecture: '+admitted,flush=True)
         step('boot', ['xcrun', 'simctl', 'boot', identifier], 30)
         step('bootstatus', ['xcrun', 'simctl', 'bootstatus', identifier, '-b'], 180)
         # One actual supported simulator architecture for app, local package and
