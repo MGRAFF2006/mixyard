@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
 
 spec = importlib.util.spec_from_file_location('paired_qualify', Path(__file__).with_name('qualify.py'))
 module = importlib.util.module_from_spec(spec)
@@ -15,6 +17,12 @@ class CliDiagnostics(unittest.TestCase):
         self.assertIn('private-store: unsafe-ancestor', diagnostic)
         for value in (str(root), 'runneradmin', 'Volume', secret):
             self.assertNotIn(value, diagnostic)
+
+    def test_static_windows_reason_survives_without_allowing_opaque_secret_tokens(self):
+        reason = 'windows-identity-state-insecure-ancestor-acl'
+        diagnostic = module.cli_failure('unsafe-identity-store: ' + reason + ' ' + 'x' * 64, Path('/owned'))
+        self.assertIn(reason, diagnostic)
+        self.assertNotIn('x' * 64, diagnostic)
 
     def test_diagnostic_is_bounded_and_does_not_include_quoted_or_pem_values(self):
         diagnostic = module.cli_failure('private-store: \"owned secret\" -----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY----- ' + 'word ' * 2000, Path('/owned'))

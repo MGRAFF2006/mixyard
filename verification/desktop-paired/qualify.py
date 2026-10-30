@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import time
+from fixture_paths import directory as private_directory, temporary as private_temporary, Windows
 
 
 def cli_failure(stderr, private_root):
@@ -30,7 +31,15 @@ def cli_failure(stderr, private_root):
     text = re.sub(r'-----BEGIN.*?-----END[^-]*-----', '<pem>', text, flags=re.S)
     text = re.sub(r"[\"'][^\"']*[\"']", '<quoted>', text)
     text = re.sub(r'(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\|/)[^\s]+', '<path>', text)
-    text = re.sub(r'[A-Za-z0-9_-]{32,}', '<opaque>', text)
+    known = {
+        'windows-identity-account-unavailable', 'windows-identity-ancestor-acl-unavailable',
+        'windows-identity-ancestor-trust-unavailable', 'windows-identity-private-acl-unavailable',
+        'windows-identity-state-insecure-acl', 'windows-identity-state-insecure-ancestor-acl',
+        'windows-identity-state-insecure-ancestor-owner', 'windows-identity-state-insecure-owner',
+        'windows-identity-state-reparse-hardlink-or-invalid-type', 'windows-identity-state-requires-local-absolute-path',
+        'windows-identity-state-unsupported-ancestor-acl',
+    }
+    text = re.sub(r'[A-Za-z0-9_-]{32,}', lambda match: match[0] if match[0] in known else '<opaque>', text)
     return ' '.join(text.split())[:1024] or '<no stderr>'
 
 
@@ -72,7 +81,7 @@ class Service:
     def __init__(self, binary, root, assets, roles='view,control,settings'):
         self.binary, self.root, self.assets = binary, root, assets
         self.state = root / 'identity'
-        self.root.mkdir(mode=0o700)
+        private_directory(self.root)
         self.cli('init', '--ip', '127.0.0.1')
         self.invite = self.cli('invite', '--permissions', roles)
         self.process = None
@@ -229,8 +238,30 @@ def qualify(args):
     results = []
     # Resolve only the existing trusted OS temporary base (/var aliases on macOS).
     # Caller-supplied identity paths still go literally through strict admission.
-    with tempfile.TemporaryDirectory(prefix='mixyard-desktop-paired-', dir=Path(tempfile.gettempdir()).resolve(strict=True)) as tmp:
+    with private_temporary('mixyard-desktop-paired-') as tmp:
         root = Path(tmp)
+        if os.name == 'nt':
+            windows = Windows()
+            before = root / 'python-0700-before'; before.mkdir(mode=0o700)
+            before_acl = windows.classify(before)
+            probe = subprocess.run([args.service, '--state', str(before / 'identity'), 'init', '--ip', '127.0.0.1'], capture_output=True, text=True, timeout=20)
+            reason = cli_failure(probe.stderr, root)
+            confirmed = any(ace['trustee'] == 'owner-rights' and ace['mutable'] for ace in before_acl['aces'])
+            evidence = {'scope':'owned-fixture-only','beforeAcl':before_acl,'beforeExit':probe.returncode,'beforeReason':reason}
+            print('Owned Windows fixture ACL admission: ' + json.dumps(evidence), flush=True)
+            assert confirmed and probe.returncode != 0 and 'windows-identity-state-insecure-ancestor-acl' in reason, 'CPython OWNER_RIGHTS mismatch not confirmed; inspect classified evidence'
+            assert not (before / 'identity' / 'state.json').exists(), 'rejected ancestor must not persist a private key'
+            after = root / 'explicit-user-after'; private_directory(after)
+            successful = subprocess.run([args.service, '--state', str(after / 'identity'), 'init', '--ip', '127.0.0.1'], capture_output=True, text=True, timeout=20)
+            assert successful.returncode == 0, cli_failure(successful.stderr, root)
+            state_acl = windows.classify(after / 'identity' / 'state.json')
+            assert state_acl['owner'] == 'current-user' and state_acl['protected']
+            assert len(state_acl['aces']) == 1 and state_acl['aces'][0] == {'trustee':'current-user','type':0,'flags':0,'mask':'0x1f01ff','mutable':True}
+            unsafe = root / 'unsafe-parent-negative'; windows.directory(unsafe, unsafe=True)
+            denied = subprocess.run([args.service, '--state', str(unsafe / 'identity'), 'init', '--ip', '127.0.0.1'], capture_output=True, text=True, timeout=20)
+            assert denied.returncode != 0 and 'windows-identity-state-insecure-ancestor-acl' in cli_failure(denied.stderr, root)
+            assert not (unsafe / 'identity' / 'state.json').exists()
+            results.append({'windowsFixtureAdmission':'passed','before':before_acl,'after':windows.classify(after),'state':state_acl,'unsafeParentRejected':True})
         harness = Harness(str(Path(args.harness).resolve()))
         services = []
         try:
