@@ -213,12 +213,12 @@ import MobileCore
         do { try control?.forget(); status = "Local credential removed. Revoke this controller on the host separately." }
         catch { status = "Keychain removal failed. Repair native credential storage." }
     }
-    func pair(origin: String, pin: String, certificatePem: String, device: String, invitation: String, name: String) {
+    func pair(origin: String, trustRecord: String, device: String, invitation: String, name: String) {
         suspend(.peerRevoked)
         guard let control else { return }
         let expected = control.ticket
         Task {
-            do { try await control.pair(endpoint: origin, pin: pin, certificatePem: certificatePem, device: device, invitation: invitation, name: name, expected: expected); status = "Paired. Open controller explicitly." }
+            do { try await control.pair(endpoint: origin, trustRecord: trustRecord, device: device, invitation: invitation, name: name, expected: expected); status = "Paired. Open controller explicitly." }
             catch { status = "Pair failed. Verify the OOB certificate, fingerprint, target and invitation. Existing local credentials are retained." }
         }
     }
@@ -261,8 +261,7 @@ struct MobileView: View {
     @StateObject private var shell = Shell()
     @Environment(\.scenePhase) private var phase
     @State private var origin = ""
-    @State private var pin = ""
-    @State private var certificatePem = ""
+    @State private var trustRecord = ""
     @State private var device = ""
     @State private var invitation = ""
     @State private var name = ""
@@ -270,12 +269,11 @@ struct MobileView: View {
         VStack {
             DisclosureGroup("Pair verified device") {
                 TextField("Exact trusted HTTPS origin", text: $origin).textInputAutocapitalization(.never).autocorrectionDisabled()
-                TextField("Leaf certificate SHA-256 hex", text: $pin).textInputAutocapitalization(.never).autocorrectionDisabled()
-                TextEditor(text: $certificatePem).frame(height: 70).accessibilityLabel("Out-of-band certificate PEM (one certificate)")
+                TextEditor(text: $trustRecord).frame(height: 70).accessibilityLabel("Public OOB trust JSON from owner")
                 TextField("Expected device ID", text: $device).textInputAutocapitalization(.never).autocorrectionDisabled()
                 SecureField("One-time invitation", text: $invitation).textContentType(.oneTimeCode)
                 TextField("Controller name", text: $name)
-                Button("Pair") { let secret = invitation; invitation = ""; shell.pair(origin: origin, pin: pin, certificatePem: certificatePem, device: device, invitation: secret, name: name) }
+                Button("Pair") { let secret = invitation; invitation = ""; shell.pair(origin: origin, trustRecord: trustRecord, device: device, invitation: secret, name: name) }
                 Button("Disconnect and forget local credential") { shell.forget() }
             }.padding(.horizontal)
             Button("Open controller / Refresh connection") { shell.open() }

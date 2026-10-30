@@ -78,8 +78,7 @@ class MainActivity : Activity() {
             layout.addView(this)
         }
         val origin = field("Exact trusted HTTPS origin")
-        val pin = field("Verified leaf certificate SHA-256 hex")
-        val certificate = field("Out-of-band certificate PEM (one certificate)").apply { isSingleLine = false; minLines = 2; maxLines = 4 }
+        val trustRecord = field("Public OOB trust JSON from owner").apply { isSingleLine = false; minLines = 2; maxLines = 4 }
         val device = field("Expected device ID")
         val invitation = field("One-time invitation", true)
         val name = field("Controller name")
@@ -129,11 +128,11 @@ class MainActivity : Activity() {
         }
         layout.addView(Button(this).apply { text = "Pair verified device"; setOnClickListener {
             stop(StopReason.PEER_REVOKED)
-            val values = listOf(origin.text.toString(), pin.text.toString(), device.text.toString(), invitation.text.toString(), name.text.toString(), certificate.text.toString())
+            val values = listOf(origin.text.toString(), trustRecord.text.toString(), device.text.toString(), invitation.text.toString(), name.text.toString())
             invitation.text.clear()
             val expected = control.ticket()
             try { worker.execute {
-                val result = try { control.pair(values[0], values[1], values[5], values[2], values[3], values[4], expected); "Paired. Refresh controller explicitly." }
+                val result = try { control.pair(values[0], values[1], values[2], values[3], values[4], expected); "Paired. Refresh controller explicitly." }
                     catch (_: Exception) { "Pair failed. Verify the OOB certificate, fingerprint, target and invitation. Existing local credentials are retained." }
                 runOnUiThread { status.text = result }
             } } catch (_: java.util.concurrent.RejectedExecutionException) { status.text = "Native request busy. Pair again explicitly." }

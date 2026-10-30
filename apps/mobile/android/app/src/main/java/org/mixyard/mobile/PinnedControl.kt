@@ -1,9 +1,57 @@
 package org.mixyard.mobile
 
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.net.URI
 import org.mixyard.mobile.http.PinnedHttpExchange
 import org.mixyard.mobile.http.OobCertificate
+
+/** Four string fields from the owner's public OOB record; never a network reply.
+ * Scan quoted token boundaries before platform decoding so Android and JVM both
+ * reject duplicate (including escaped-equivalent) keys and lenient JSON forms. */
+internal data class OobRecord(val deviceId: String, val serverName: String, val certificatePem: String, val certificateSha256: String) {
+    companion object {
+        fun parse(text: String, expectedDevice: String): OobRecord {
+            require(text.length <= 65536 && text.toByteArray(Charsets.UTF_8).size <= 65536) { "oob-record-too-large" }
+            var at = 0
+            fun white() { while (at < text.length && text[at] in " \t\r\n") at++ }
+            fun take(char: Char) { white(); require(at < text.length && text[at++] == char) { "strict-oob-json-required" } }
+            fun string(): String {
+                white(); val start = at
+                require(at < text.length && text[at++] == '"') { "oob-string-required" }
+                var closed = false
+                while (at < text.length) {
+                    val next = text[at++]
+                    if (next == '"') { closed = true; break }
+                    require(next.code >= 32) { "oob-json-control" }
+                    if (next == '\\') {
+                        require(at < text.length) { "oob-json-escape" }
+                        val escape = text[at++]
+                        if (escape == 'u') { require(at + 4 <= text.length && text.substring(at, at + 4).all { it in "0123456789abcdefABCDEF" }) { "oob-json-unicode" }; at += 4 }
+                        else require(escape in "\"\\/bfnrt") { "oob-json-escape" }
+                    }
+                }
+                require(closed) { "oob-json-string" }
+                return JSONTokener(text.substring(start, at)).nextValue() as? String ?: error("oob-string-required")
+            }
+            val values = mutableMapOf<String, String>()
+            val keys = setOf("deviceId", "serverName", "certificatePem", "certificateSha256")
+            take('{')
+            while (true) {
+                val key = string(); require(key in keys && key !in values) { "oob-unknown-or-duplicate-field" }
+                take(':'); values[key] = string(); white()
+                require(at < text.length) { "oob-json-object" }
+                if (text[at] == '}') { at++; break }; take(',')
+            }
+            white(); require(at == text.length && values.keys == keys) { "exact-oob-record-required" }
+            val record = OobRecord(values.getValue("deviceId"), values.getValue("serverName"), values.getValue("certificatePem"), values.getValue("certificateSha256"))
+            require(expectedDevice.matches(Regex("[a-f0-9]{64}")) && record.deviceId == expectedDevice) { "oob-selected-device-mismatch" }
+            require(record.serverName == "mixyard-control") { "oob-server-name-mismatch" }
+            OobCertificate(record.certificatePem, record.certificateSha256)
+            return record
+        }
+    }
+}
 
 /** No redirects, proxy login, cookie jar, local CSRF service, permissive trust or token in URLs. */
 class PinnedControl(private val store: CredentialStore) {
@@ -33,7 +81,7 @@ class PinnedControl(private val store: CredentialStore) {
     }
     private fun request(config: JSONObject, path: String, body: String, ticket: Ticket, credential: Boolean): Pair<Int, String> {
         require(path in allowed)
-        require(config.optInt("version", 0) == 2 && config.has("certificatePem")) { "reprovision-oob-certificate-required-credential-retained" }
+        require(config.opt("version") == 2 && config.has("certificatePem") && config.optString("serverName") == "mixyard-control") { "reprovision-oob-certificate-required-credential-retained" }
         val exchange = PinnedHttpExchange(endpoint(config), config.getString("pin"), path, body,
             if (credential) config.getString("credential") else null, config.getString("certificatePem"))
         try {
@@ -43,11 +91,11 @@ class PinnedControl(private val store: CredentialStore) {
             return result
         } finally { exchange.close(); synchronized(this) { if (active === exchange) active = null } }
     }
-    fun pair(endpoint: String, pin: String, certificatePem: String, device: String, invitation: String, name: String, expected: Ticket) {
-        OobCertificate(certificatePem, pin) // BEFORE invalidation or invitation HTTP.
+    fun pair(endpoint: String, trustRecord: String, device: String, invitation: String, name: String, expected: Ticket) {
+        val oob = OobRecord.parse(trustRecord, device) // BEFORE invalidation or invitation HTTP.
         val ticket: Ticket
         synchronized(this) { fence.check(expected); invalidate(); ticket = fence.ticket() }
-        val config = JSONObject().put("version", 2).put("endpoint", endpoint).put("pin", pin).put("certificatePem", certificatePem).put("deviceId", device)
+        val config = JSONObject().put("version", 2).put("endpoint", endpoint).put("pin", oob.certificateSha256).put("certificatePem", oob.certificatePem).put("serverName", oob.serverName).put("deviceId", device)
         val (status, rawReply) = request(config, "/control/pair", JSONObject().put("deviceId", device).put("invitation", invitation).put("name", name).toString(), ticket, false)
         val reply = JSONObject(rawReply)
         require(status == 200 && reply.getString("deviceId") == device) { "pairing-failed" }

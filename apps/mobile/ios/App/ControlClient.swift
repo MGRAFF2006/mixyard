@@ -5,7 +5,7 @@ import MobileCore
 
 // Public SDK trust evaluation only. No global/user/admin trust mutation, custom
 // parser, certificate exceptions, system-anchor fallback or learned certificate.
-private struct OobCertificate {
+struct OobCertificate {
     let certificate: SecCertificate
     init(pem: String, pin: String) throws {
         guard pem.utf8.count <= 65536, pin.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else { throw MobileError.invalid("explicit-oob-certificate-required") }
@@ -22,7 +22,7 @@ private struct OobCertificate {
         self.certificate = certificate
     }
     func admits(_ trust: SecTrust, host: String) -> Bool {
-        guard SecTrustSetPolicies(trust, [SecPolicyCreateSSL(true, host as CFString), SecPolicyCreateBasicX509()] as CFArray) == errSecSuccess,
+        guard SecTrustSetPolicies(trust, [SecPolicyCreateSSL(true, host as CFString), SecPolicyCreateSSL(true, "mixyard-control" as CFString), SecPolicyCreateBasicX509()] as CFArray) == errSecSuccess,
               SecTrustSetAnchorCertificates(trust, [certificate] as CFArray) == errSecSuccess,
               SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess,
               SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess,
@@ -118,18 +118,19 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
         let bytes = Data(body.utf8)
         guard bytes.count <= 2_097_152 else { throw MobileError.invalid("request-too-large") }
         request.httpBody = bytes
-        guard config.version == 2, let certificatePem = config.certificatePem else { throw MobileError.invalid("reprovision-oob-certificate-required-credential-retained") }
+        guard config.version == 2, config.serverName == "mixyard-control", let certificatePem = config.certificatePem else { throw MobileError.invalid("reprovision-oob-certificate-required-credential-retained") }
         let exchange = try PinnedExchange(endpoint: endpoint, pin: config.pin, certificatePem: certificatePem); active = exchange
         defer { if active === exchange { active = nil } }
         let result = try await exchange.run(request)
         try fence.check(ticket)
         return result
     }
-    func pair(endpoint: String, pin: String, certificatePem: String, device: String, invitation: String, name: String, expected: Ticket) async throws {
-        _ = try OobCertificate(pem: certificatePem, pin: pin) // BEFORE invitation HTTP or old credential changes.
+    func pair(endpoint: String, trustRecord: String, device: String, invitation: String, name: String, expected: Ticket) async throws {
+        let oob = try OobRecord.parse(trustRecord, expectedDevice: device)
+        _ = try OobCertificate(pem: oob.certificatePem, pin: oob.certificateSha256) // BEFORE invitation HTTP or old credential changes.
         try fence.check(expected); guard !busy else { throw MobileError.invalid("native-busy") }
         invalidate(); let ticket = fence.ticket; busy = true; defer { busy = false }
-        let config = Provisioning(endpoint: endpoint, pin: pin, deviceId: device, credentialId: "", credential: "", certificatePem: certificatePem, version: 2)
+        let config = Provisioning(endpoint: endpoint, pin: oob.certificateSha256, deviceId: device, credentialId: "", credential: "", certificatePem: oob.certificatePem, serverName: oob.serverName, version: 2)
         let pairBody = try JSONSerialization.data(withJSONObject: ["deviceId": device, "invitation": invitation, "name": name])
         let (status, rawReply) = try await request(config: config, path: "/control/pair", body: String(decoding: pairBody, as: UTF8.self), ticket: ticket, credential: false)
         let value = try object(rawReply)
@@ -138,7 +139,7 @@ private final class PinnedExchange: NSObject, URLSessionDataDelegate {
               !credentialId.isEmpty, let credential = value["credential"] as? String, !credential.isEmpty,
               credential.utf8.count <= 4096, credential.utf8.allSatisfy({ (33...126).contains($0) }) else { throw MobileError.invalid("pair-failed") }
         try fence.check(ticket)
-        let next = Provisioning(endpoint: endpoint, pin: pin, deviceId: device, credentialId: credentialId, credential: credential, certificatePem: certificatePem, version: 2)
+        let next = Provisioning(endpoint: endpoint, pin: oob.certificateSha256, deviceId: device, credentialId: credentialId, credential: credential, certificatePem: oob.certificatePem, serverName: oob.serverName, version: 2)
         try store.save(next); configuration = next
     }
     func invoke(method: String, payload: Any, expected: Ticket) async throws -> [String: Any] {

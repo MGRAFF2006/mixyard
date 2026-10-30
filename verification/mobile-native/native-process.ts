@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { dspJson } from '../../apps/web/src/dsp-json.ts'
 
-export type NativeReply = { ok: boolean; raw?: string; status?: number; hasAuthority: boolean; failure?: string }
+export type NativeReply = { ok: boolean; raw?: string; status?: number; hasAuthority: boolean; failure?: string; recordRetained?: boolean; systemCertificateObservedTrusted?: boolean; privateAnchorRejected?: boolean; evaluatorOnly?: boolean }
 export class Native {
   readonly child: ChildProcess
   private terminal = false

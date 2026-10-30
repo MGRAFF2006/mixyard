@@ -34,25 +34,7 @@ class PinnedHttpExchange(origin: URI, pin: String, path: String, body: String, c
         require(path in setOf("/control/pair", "/control/session", "/control/request", "/control/credentials", "/control/rotate", "/control/revoke")) { "path-denied" }
         require(pin.matches(Regex("[a-fA-F0-9]{64}"))) { "leaf-sha256-required" }
         val anchor = OobCertificate(certificatePem, pin)
-        val only = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
-            load(null, null); setCertificateEntry("explicit-oob", anchor.certificate)
-        }
-        val anchored = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
-            init(only)
-        }.trustManagers.filterIsInstance<X509TrustManager>().single()
-        val trust = object : X509TrustManager {
-            override fun getAcceptedIssuers(): Array<X509Certificate> = anchored.acceptedIssuers
-            override fun checkClientTrusted(chain: Array<X509Certificate>, type: String) = anchored.checkClientTrusted(chain, type)
-            override fun checkServerTrusted(chain: Array<X509Certificate>, type: String) {
-                anchored.checkServerTrusted(chain, type)
-                if (chain.isEmpty() || !MessageDigest.isEqual(chain.first().encoded, anchor.certificate.encoded)) {
-                    throw java.security.cert.CertificateException("certificate-pin-mismatch")
-                }
-                // Public X509 validity checks include a self-signed leaf used
-                // as the sole anchor; normal platform path/name checks remain.
-                chain.forEach { it.checkValidity() }; anchor.certificate.checkValidity()
-            }
-        }
+        val trust = anchor.trustManager()
         val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
         client = OkHttpClient.Builder()
             .sslSocketFactory(ssl.socketFactory, trust)
@@ -104,7 +86,7 @@ class OobCertificate(pem: String, pin: String) {
     val certificate: X509Certificate
     init {
         require(pin.matches(Regex("[a-fA-F0-9]{64}"))) { "leaf-sha256-required" }
-        require(pem.toByteArray(Charsets.UTF_8).size <= 65536) { "oob-certificate-too-large" }
+        require(pem.length <= 65536 && pem.toByteArray(Charsets.UTF_8).size <= 65536) { "oob-certificate-too-large" }
         val match = Regex("\\A\\s*-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\\r\\n ]+)-----END CERTIFICATE-----\\s*\\z").matchEntire(pem)
             ?: error("one-explicit-oob-certificate-required")
         val base64 = match.groupValues[1].filterNot { it == ' ' || it == '\r' || it == '\n' }
@@ -113,7 +95,31 @@ class OobCertificate(pem: String, pin: String) {
         val input = ByteArrayInputStream(der)
         certificate = CertificateFactory.getInstance("X.509").generateCertificate(input) as X509Certificate
         require(input.available() == 0 && MessageDigest.isEqual(der, certificate.encoded)) { "exact-certificate-der-required" }
+        require(certificate.subjectAlternativeNames?.any { it.size == 2 && it[0] == 2 && it[1] == "mixyard-control" } == true) { "oob-server-name-mismatch" }
         val actual = MessageDigest.getInstance("SHA-256").digest(der).joinToString("") { "%02x".format(it) }
         require(actual == pin.lowercase()) { "oob-certificate-fingerprint-mismatch" }
     }
+    fun trustManager(): X509TrustManager {
+        val anchor = this
+        val only = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+            load(null, null); setCertificateEntry("explicit-oob", anchor.certificate)
+        }
+        val anchored = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
+            init(only)
+        }.trustManagers.filterIsInstance<X509TrustManager>().single()
+        return object : X509TrustManager {
+            override fun getAcceptedIssuers(): Array<X509Certificate> = anchored.acceptedIssuers
+            override fun checkClientTrusted(chain: Array<X509Certificate>, type: String) = anchored.checkClientTrusted(chain, type)
+            override fun checkServerTrusted(chain: Array<X509Certificate>, type: String) {
+                anchored.checkServerTrusted(chain, type)
+                if (chain.isEmpty() || !MessageDigest.isEqual(chain.first().encoded, anchor.certificate.encoded)) {
+                    throw java.security.cert.CertificateException("certificate-pin-mismatch")
+                }
+                // Public X509 validity checks include a self-signed leaf used
+                // as the sole anchor; normal platform path/name checks remain.
+                chain.forEach { it.checkValidity() }; anchor.certificate.checkValidity()
+            }
+        }
+    }
+
 }
