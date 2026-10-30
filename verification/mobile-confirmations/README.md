@@ -31,3 +31,19 @@ Current-source SDK/dialog execution is pending. Native permissions, network
 trust, secret storage and full shipping controller-to-service proof remain in
 the separate native-control qualification lane; never infer them from this UI
 fixture. Root owns final review and the Android image gate.
+
+The preceding daf1dbc iOS lane FAILED before UI tests: MobileCore was built for
+arm64-simulator while the application also emitted x86_64. The runner now requires
+an installed runtime matching the selected SDK major/minor, verifies the owned
+destination advertises the native runner architecture, and uses that explicit
+architecture consistently for the actual app, package and test. A newer arbitrary
+runtime is not selected; no architecture is excluded to hide an unsupported target.
+The SDK/runtime/native-architecture selection is logged. Selection/cleanup units
+are not SDK or dialog proof; fresh hosted execution remains required.
+
+A separate94c738 iOS run timed out in bootstatus180s and both owned cleanup
+commands30s each before any build/test. That is not the observed78/93 module
+architecture failure. Fixed phase/outcome evidence now preserves the first
+boot/build/test failure while independently attempting shutdown and delete.
+Those180s/30s/30s limits and all native UI assertions are unchanged; cleanup
+failure never becomes successful qualification.
