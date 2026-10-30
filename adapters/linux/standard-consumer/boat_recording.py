@@ -172,8 +172,11 @@ def pcm_oracle(path, route):
         if kind in chunks: raise RuntimeError("duplicate WAV chunk")
         chunks[kind] = raw[offset:offset+size]; offset += size + size % 2
     fmt, payload = chunks[b"fmt "], chunks[b"data"]
-    code, channels, rate, byte_rate, align, bits = struct.unpack_from("<HHIIHH", fmt)
-    if code == 0xfffe and len(fmt) >= 40: code = struct.unpack_from("<I", fmt, 24)[0]
+    # The captured standard-recorder contract is the 16-byte format-tag-3
+    # header. Extensible/extra format metadata is unsupported, not inferred.
+    if len(fmt) != 16:
+        raise RuntimeError("unsupported WAV format extension")
+    code, channels, rate, byte_rate, align, bits = struct.unpack("<HHIIHH", fmt)
     if (code, channels, rate, byte_rate, align, bits) != (3, 2, 48000, 384000, 8, 32):
         raise RuntimeError("WAV is not negotiated IEEE Float32/stereo/48000 output")
     if len(payload) % 8: raise RuntimeError("partial recorded frame")

@@ -39,6 +39,9 @@ Actual simultaneous consumer processes in the final capture were PIDs 34475,
 34476 and 34477. Their **native input ports** negotiated F64LE/48000 Hz/two
 channels/FL,FR. Each recorder's own client-local adapter explicitly converted to
 Float32; actual WAV `fmt` headers establish IEEE Float32, stereo and 48000 Hz.
+The file oracle accepts only the actual captured 16-byte format-tag-3 header;
+extensible or additional format metadata is unsupported and fails closed. This
+does not constrain product audio formats or claim general WAV decoder support.
 No F64 low-bit preservation through the recorder is claimed.
 
 | Bus | Recorded steady frame (L,R) | Final capture frames | Steady frames |

@@ -8,14 +8,33 @@ from unittest.mock import patch
 from boat_recording import collect_diagnostics, pcm_oracle, start_capture
 
 
-def wav(frames, *, bits=32, rate=48000):
+def wav(frames, *, bits=32, rate=48000, fmt=None):
     payload = b"".join(struct.pack("<ff", *frame) for frame in frames)
-    fmt = struct.pack("<HHIIHH", 3, 2, rate, rate * 8, 8, bits)
+    if fmt is None: fmt = struct.pack("<HHIIHH", 3, 2, rate, rate * 8, 8, bits)
     chunks = b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(payload)) + payload
     return b"RIFF" + struct.pack("<I", len(chunks) + 4) + b"WAVE" + chunks
 
 
 class Recording(unittest.TestCase):
+    def test_unsupported_extensible_guid_mask_and_extension_never_claim_float32_flfr(self):
+        frames = [(0.125, 0.015625)] * 4096 + [(0.0625, 0.046875)] * 64 + [(0.0, 0.0)] * 1024
+        base = struct.pack("<HHIIHH", 0xfffe, 2, 48000, 384000, 8, 32)
+        guid = bytes.fromhex("0300000000001000800000aa00389b71")
+        formats = [base + struct.pack("<HHI", 22, 32, 3) + guid[:4] + b"X" * 12,
+                   base + struct.pack("<HHI", 22, 32, 12) + guid,
+                   base + struct.pack("<HHI", 0, 32, 3) + guid,
+                   # Even valid extensible Float32 is outside this narrow oracle.
+                   base + struct.pack("<HHI", 22, 32, 3) + guid,
+                   struct.pack("<HHIIHH", 3, 2, 48000, 384000, 8, 32) + b"\0\0"]
+        with tempfile.TemporaryDirectory(prefix="mixyard-format-", dir="/dev/shm") as temporary:
+            path = Path(temporary) / "owned-generated.wav"
+            for fmt in formats:
+                path.write_bytes(wav(frames, fmt=fmt))
+                with self.assertRaises(RuntimeError):
+                    pcm_oracle(path, 1)
+            path.write_bytes(wav(frames))
+            self.assertEqual(pcm_oracle(path, 1)["frames"], 5184)
+
     def test_complete_riff_extent_headers_and_odd_metadata_padding(self):
         frames = [(0.125, 0.015625)] * 4096 + [(0.0625, 0.046875)] * 64 + [(0.0, 0.0)] * 1024
         valid = wav(frames)
