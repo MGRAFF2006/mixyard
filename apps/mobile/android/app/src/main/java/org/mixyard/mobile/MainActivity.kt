@@ -1,8 +1,12 @@
 package org.mixyard.mobile
 
+import android.app.AlertDialog
 import android.app.Activity
 import android.os.Bundle
 import android.text.InputType
+import android.webkit.JsResult
+import android.webkit.WebChromeClient
+import android.graphics.Bitmap
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -23,10 +27,44 @@ class MainActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var control: PinnedControl
     private lateinit var status: TextView
+    private val entry = "https://appassets.androidplatform.net/assets/controller/index.html"
+    private var resumed = false
+    private var documentGeneration = 0L
+    private var confirmation: (() -> Unit)? = null
+    private fun cancelConfirmation() { confirmation?.invoke() }
+    private fun confirm(view: WebView, url: String, message: String, result: JsResult): Boolean {
+        // Android exposes the requesting URL, not frame identity. Top-level
+        // navigation is pinned below; the bundled page CSP forbids all frames.
+        if (url != entry || view !== web || web.url != entry || !resumed || isFinishing || isDestroyed || message.length > 4096 || confirmation != null) {
+            result.cancel(); return true
+        }
+        val document = documentGeneration
+        val epoch = control.ticket().epoch
+        var finished = false
+        var dialog: AlertDialog? = null
+        fun finish(approve: Boolean) {
+            if (finished) return
+            finished = true; confirmation = null
+            val current = approve && resumed && !isFinishing && !isDestroyed &&
+                documentGeneration == document && web.url == entry && control.ticket().epoch == epoch
+            dialog?.dismiss()
+            if (current) result.confirm() else result.cancel()
+        }
+        confirmation = { finish(false) }
+        val shown = AlertDialog.Builder(this).setTitle("Confirm change").setMessage(message)
+            .setNegativeButton(android.R.string.cancel) { _, _ -> finish(false) }
+            .setPositiveButton(android.R.string.ok) { _, _ -> finish(true) }
+            .setOnCancelListener { finish(false) }.create()
+        dialog = shown
+        shown.setOnDismissListener { finish(false) }
+        try { shown.show() }
+        catch (_: android.view.WindowManager.BadTokenException) { finish(false) }
+        return true
+    }
     private val endpoint = NativeEndpoint()
     private val worker = ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, ArrayBlockingQueue(1))
     private fun stop(reason: StopReason) {
-        endpoint.stop(reason); control.invalidate()
+        cancelConfirmation(); endpoint.stop(reason); control.invalidate()
         web.evaluateJavascript("window.mixyardInvalidate?.()", null)
     }
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,10 +91,16 @@ class MainActivity : Activity() {
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = false; web.settings.allowFileAccess = false; web.settings.allowContentAccess = false
         web.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onJsConfirm(view: WebView, url: String, message: String, result: JsResult) = confirm(view, url, message, result)
+        }
         web.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                cancelConfirmation(); documentGeneration++
+            }
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse =
                 assets.shouldInterceptRequest(request.url) ?: WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", emptyMap(), "Blocked".byteInputStream())
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = request.url.toString() != "https://appassets.androidplatform.net/assets/controller/index.html"
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = request.url.toString() != entry
         }
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             status.text = "Unsupported WebView: update Android System WebView. Native control bridge disabled."
@@ -74,7 +118,10 @@ class MainActivity : Activity() {
                 val response = JSONObject().put("id", id)
                 try { response.put("value", control.invoke(value.getString("method"), value.get("payload"), expected)) }
                 catch (_: Exception) { response.put("error", "Native control failed or session changed. Verify pairing/trust, then Refresh; no replay.") }
-                runOnUiThread { if (!isDestroyed && ticket == System.identityHashCode(web)) reply.postMessage(response.toString()) }
+                runOnUiThread {
+                    if (control.ticket().epoch != expected.epoch) cancelConfirmation()
+                    if (!isDestroyed && ticket == System.identityHashCode(web)) reply.postMessage(response.toString())
+                }
             } } catch (_: java.util.concurrent.RejectedExecutionException) {
                 reply.postMessage(JSONObject().put("id", id).put("error", "Native request busy. Retry explicitly.").toString())
             }
@@ -95,12 +142,14 @@ class MainActivity : Activity() {
             try { control.forget(); status.text = "Local credential removed. Revoke this controller on the host separately." }
             catch (_: Exception) { status.text = "Credential removal failed. Clear app storage to repair." }
         } })
-        layout.addView(Button(this).apply { text = "Open controller / Refresh connection"; setOnClickListener { control.invalidate(); web.reload() } })
+        layout.addView(Button(this).apply { text = "Open controller / Refresh connection"; setOnClickListener { cancelConfirmation(); control.invalidate(); web.reload() } })
         layout.addView(status)
         layout.addView(web, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(layout)
-        web.loadUrl("https://appassets.androidplatform.net/assets/controller/index.html")
+        web.loadUrl(entry)
     }
+    override fun onResume() { super.onResume(); resumed = true }
+    override fun onPause() { resumed = false; cancelConfirmation(); super.onPause() }
     override fun onStop() { if (::web.isInitialized && ::control.isInitialized) stop(StopReason.BACKGROUND); super.onStop() }
-    override fun onDestroy() { if (::control.isInitialized) control.invalidate(); worker.shutdownNow(); if (::web.isInitialized) web.destroy(); super.onDestroy() }
+    override fun onDestroy() { cancelConfirmation(); if (::control.isInitialized) control.invalidate(); worker.shutdownNow(); if (::web.isInitialized) web.destroy(); super.onDestroy() }
 }
