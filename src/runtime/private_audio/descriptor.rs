@@ -111,6 +111,14 @@ fn relative(name: &str) -> io::Result<&Path> {
     Ok(path)
 }
 impl Qualified {
+    #[cfg(test)]
+    pub(super) fn test_double(descriptor: Descriptor) -> Self {
+        Self {
+            descriptor,
+            descriptor_path: PathBuf::new(),
+            hashes: BTreeMap::new(),
+        }
+    }
     pub fn load(path: &Path) -> io::Result<Self> {
         owned(path, false)?;
         let descriptor: Descriptor = serde_json::from_slice(&bounded(path, 8192)?)?;

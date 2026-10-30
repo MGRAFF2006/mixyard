@@ -224,7 +224,7 @@ impl Service {
             coordinator.snapshot().stop_target.control_epoch,
         )?;
         coordinator
-            .register_children(&processes.daemon, &processes.companion)
+            .register_children(&processes.companion, &processes.daemon)
             .map_err(|e| io::Error::other(e.message))?;
         Ok(Self {
             listener,
@@ -295,7 +295,7 @@ impl Service {
                     )
                     .map_err(|e| failure(ErrorCode::OwnerFailed, e.to_string()))?;
                     self.coordinator
-                        .register_children(&processes.daemon, &processes.companion)?;
+                        .register_children(&processes.companion, &processes.daemon)?;
                     self.processes = processes;
                     self.retired = false;
                     self.failed = false;
@@ -596,7 +596,7 @@ impl Service {
             self.retired = true;
             let permit = self
                 .coordinator
-                .prove_children_reaped(&mut self.processes.daemon, &mut self.processes.companion)
+                .prove_children_reaped(&mut self.processes.companion, &mut self.processes.daemon)
                 .map_err(|e| io::Error::other(e.message))?;
             if let Err(error) = self.release(&permit) {
                 self.fail(error);
@@ -672,7 +672,7 @@ impl Drop for Service {
 mod socket_tests {
     use super::*;
     use std::os::unix::net::UnixStream;
-    fn peer() -> (Peer, UnixStream) {
+    fn connection() -> (Peer, UnixStream) {
         let (a, b) = UnixStream::pair().unwrap();
         a.set_nonblocking(true).unwrap();
         b.set_nonblocking(true).unwrap();
@@ -694,10 +694,10 @@ mod socket_tests {
     #[test]
     fn actual_socket_parser_rejects_unknown_fields_and_bounded_frames() {
         for bytes in [b"{\"privateAudioVersion\":1,\"requestId\":\"x\",\"operation\":{\"kind\":\"status\",\"pcm\":[]}}\n".to_vec(),vec![b'x';REQUEST_LIMIT+1]] {
-            let (mut peer,mut client)=peer();client.write_all(&bytes).unwrap();assert!(receive(&mut peer).is_none());
+            let (mut peer,mut client)=connection();client.write_all(&bytes).unwrap();assert!(receive(&mut peer).is_none());
             peer.flush().unwrap();let mut response=[0;1024];let count=client.read(&mut response).unwrap();let reply:Reply=serde_json::from_slice(&response[..count]).unwrap();assert_eq!(reply.error.unwrap().code,ErrorCode::ProtocolError);
         }
-        let (mut peer, mut client) = peer();
+        let (mut peer, mut client) = connection();
         client.write_all(b"{\"privateAudioVersion\":1,\"requestId\":\"exact\",\"operation\":{\"kind\":\"status\"}}\n").unwrap();
         assert!(matches!(
             receive(&mut peer).unwrap().operation,
@@ -714,12 +714,12 @@ mod socket_tests {
     }
     #[test]
     fn disconnect_drops_only_peer_and_oversize_error_has_closed_bounded_response() {
-        let (mut peer, client) = peer();
+        let (mut peer, client) = connection();
         peer.operation = Some("owned-install".into());
         drop(client);
         assert!(peer.receive().is_err());
         assert_eq!(peer.operation.as_deref(), Some("owned-install"));
-        let (mut peer, mut client) = peer();
+        let (mut peer, mut client) = connection();
         peer.request_id = "bounded".into();
         peer.reply(Err(failure(
             ErrorCode::OwnerFailed,
@@ -733,3 +733,6 @@ mod socket_tests {
         assert_eq!(reply.error.unwrap().code, ErrorCode::ResourceLimit);
     }
 }
+
+#[cfg(test)]
+mod service_tests;

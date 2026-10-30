@@ -77,6 +77,8 @@ pub struct Processes {
     pub qualified: Qualified,
     forced: bool,
     retirement_started: bool,
+    #[cfg(test)]
+    observer: Option<fn() -> io::Result<()>>,
 }
 fn environment(command: &mut Command, q: &Qualified, namespace: &Path) {
     let prefix = &q.descriptor.sdk_prefix;
@@ -86,16 +88,17 @@ fn environment(command: &mut Command, q: &Qualified, namespace: &Path) {
         .env("HOME", namespace)
         .env("XDG_RUNTIME_DIR", namespace)
         .env("XDG_CONFIG_HOME", namespace)
+        .env("XDG_STATE_HOME", namespace)
         .env("PIPEWIRE_RUNTIME_DIR", namespace)
         .env("PIPEWIRE_CONFIG_DIR", namespace)
-        .env("PIPEWIRE_CONFIG_NAME", "private.conf")
+        .env("PIPEWIRE_CONFIG_NAME", "client.conf")
         .env("PIPEWIRE_REMOTE", "mixyard-private")
         .env("LD_LIBRARY_PATH", prefix.join("lib"))
         .env("PIPEWIRE_MODULE_DIR", prefix.join("lib/pipewire-0.3"))
         .env("SPA_PLUGIN_DIR", prefix.join("lib/spa-0.2"))
         .env("LC_ALL", "C");
 }
-fn parent_death(command: &mut Command, cancel: Option<RawFd>) {
+pub(super) fn parent_death(command: &mut Command, cancel: Option<RawFd>) {
     let parent = std::process::id() as libc::pid_t;
     unsafe {
         command.pre_exec(move || {
@@ -115,6 +118,34 @@ fn parent_death(command: &mut Command, cancel: Option<RawFd>) {
     }
 }
 impl Processes {
+    #[cfg(test)]
+    pub(super) fn test_owned(
+        qualified: Qualified,
+        daemon: Child,
+        mut companion: Child,
+        cancel: UnixStream,
+        observer: fn() -> io::Result<()>,
+    ) -> io::Result<Self> {
+        let stdin = companion.stdin.take().unwrap();
+        let stdout = companion.stdout.take().unwrap();
+        nonblocking(stdin.as_raw_fd())?;
+        nonblocking(stdout.as_raw_fd())?;
+        cancel.set_nonblocking(true)?;
+        Ok(Self {
+            daemon,
+            companion,
+            stdin,
+            stdout,
+            cancel,
+            normal: Outbound::new(),
+            priority: Outbound::new(),
+            input: Vec::new(),
+            qualified,
+            forced: false,
+            retirement_started: false,
+            observer: Some(observer),
+        })
+    }
     pub fn spawn(
         qualified: Qualified,
         directory: &Path,
@@ -140,8 +171,16 @@ impl Processes {
             "../../../adapters/linux/native-host/private.conf"
         ))?;
         drop(file);
+        let mut client_config = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(namespace.join("client.conf"))?;
+        client_config.write_all(b"context.properties = { support.dbus = false mem.warn-mlock = false }\ncontext.spa-libs = { support.* = support/libspa-support }\ncontext.modules = [\n    { name = libpipewire-module-protocol-native }\n    { name = libpipewire-module-client-node }\n    { name = libpipewire-module-metadata }\n]\n")?;
+        drop(client_config);
         let mut server = Command::new(qualified.descriptor.sdk_prefix.join("bin/pipewire"));
         environment(&mut server, &qualified, &namespace);
+        server.env("PIPEWIRE_CONFIG_NAME", "private.conf");
         server
             .arg("-c")
             .arg(&config)
@@ -219,6 +258,8 @@ impl Processes {
             qualified,
             forced: false,
             retirement_started: false,
+            #[cfg(test)]
+            observer: None,
         };
         nonblocking(processes.stdin.as_raw_fd())?;
         nonblocking(processes.stdout.as_raw_fd())?;
@@ -261,6 +302,10 @@ impl Processes {
         Ok(events)
     }
     pub fn observe(&self) -> io::Result<()> {
+        #[cfg(test)]
+        if let Some(observer) = self.observer {
+            return observer();
+        }
         self.qualified.observe_bindings(self.daemon.id(), true)?;
         self.qualified.observe_bindings(self.companion.id(), false)
     }
