@@ -57,6 +57,27 @@ jobs:
       - if: always()
         run: |
           echo 'Owned iOS Simulator UI fixture: actual App and native dialogs; synthetic read-only service, no native authentication, audio, physical phone or capture qualification.' >> "$GITHUB_STEP_SUMMARY"
+  ios-native-dialog-comparison:
+    name: COMPARISON preinstalled Xcode16.2 / iOS18.2 (same native assertions)
+    runs-on: macos-14
+    needs: fixture
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
+      MIXYARD_CONFIRMATION_COMPARISON: xcode16.2-sdk18.2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v6
+        with:
+          name: confirmation-ui-assets
+          path: apps/mobile/ios/App/controller/
+      - name: Same shipping shell, diagnostic flag, native dialogs and original budgets
+        run: python3 -B verification/mobile-confirmations/run-ios.py
+      - if: always()
+        run: |
+          echo 'COMPARISON ONLY: explicitly preinstalled Xcode16.2/SDK+runtime18.2. No install/fallback; same native assertions/deadlines/owned cleanup. A pass does not explain the separate16.4 cold-discovery failures or qualify current-runtime/physical UX.' >> "$GITHUB_STEP_SUMMARY"
   android-native-dialog:
     if: github.event_name == 'workflow_dispatch' && inputs.android_emulator
     runs-on: ubuntu-latest
