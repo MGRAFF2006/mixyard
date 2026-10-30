@@ -71,7 +71,9 @@ pub struct PendingInstall {
 pub struct StopTarget {
     pub instance_nonce: String,
     pub control_epoch: u64,
+    #[serde(deserialize_with = "required_nullable")]
     pub active_generation: Option<u64>,
+    #[serde(deserialize_with = "required_nullable")]
     pub pending_install: Option<PendingInstall>,
 }
 
@@ -153,6 +155,7 @@ pub enum Phase {
     Stopping,
     Stopped,
     FailedHeld,
+    FailedStopped,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -208,9 +211,11 @@ pub struct Installed {
     pub engine_first_frame: u64,
     pub first_processed_frame: u64,
     pub output_commits: Vec<OutputCommit>,
+    pub owner_install_terminal: bool,
+    pub no_late_install: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum FenceOutcome {
     CanceledBeforeSwitch,
@@ -220,12 +225,36 @@ pub enum FenceOutcome {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SwitchEvidence {
+    pub instance_nonce: String,
+    pub control_epoch: u64,
+    pub operation_id: String,
+    pub generation: u64,
+    pub config_revision: u64,
+    pub inventory_revision: u64,
+    pub clock_id: u64,
+    pub native_switch_frame: u64,
+}
+
+pub fn required_nullable<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(de)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Fenced {
     pub instance_nonce: String,
     pub control_epoch: u64,
     pub operation_id: String,
     pub outcome: FenceOutcome,
+    #[serde(deserialize_with = "required_nullable")]
     pub switched: Option<Installed>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub switch_evidence: Option<SwitchEvidence>,
     pub owner_quiesced: bool,
     pub pending_pcm_zero: bool,
     pub no_late_install: bool,
@@ -265,6 +294,7 @@ pub enum ErrorCode {
     ClockUnqualified,
     OwnerFailed,
     StopIncomplete,
+    StopRequired,
     ResourceLimit,
     ProtocolError,
     SourceLost,
