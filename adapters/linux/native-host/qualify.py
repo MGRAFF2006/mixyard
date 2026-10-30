@@ -100,7 +100,7 @@ def snapshot(env):
 
 
 def isolation(objects, *, active=False):
-    nodes, modules, links, cores = [], set(), [], []
+    nodes, modules, links, cores, clients = [], set(), [], [], []
     for item in objects:
         kind = item["type"]
         props = item.get("info", {}).get("props", {})
@@ -110,6 +110,11 @@ def isolation(objects, *, active=False):
             modules.add(props["module.name"])
         if kind == "PipeWire:Interface:Core":
             cores.append(props)
+        if kind == "PipeWire:Interface:Client":
+            access = props.get("pipewire.access")
+            if access != "unrestricted":
+                raise RuntimeError("unexpected private client access classification")
+            clients.append({"id": item["id"], "access": access})
         if kind == "PipeWire:Interface:Node":
             name = props.get("node.name")
             allowed = {"mixyard-private-driver"}
@@ -122,6 +127,8 @@ def isolation(objects, *, active=False):
             links.append(item)
     if len(cores) != 1 or cores[0].get("core.name") != "mixyard-private":
         raise RuntimeError("wrong server core")
+    if not clients:
+        raise RuntimeError("private graph client access observation is incomplete")
     if modules != MODULES:
         raise RuntimeError("unexpected private server module set: " + repr(modules))
     expected = 4 if active else 1
@@ -142,7 +149,7 @@ def isolation(objects, *, active=False):
         if len(set(destinations)) != 6:
             raise RuntimeError("duplicate destination link")
     return {"nodeCount": len(nodes), "linkCount": len(links), "modules": sorted(modules),
-            "coreName": cores[0]["core.name"]}
+            "coreName": cores[0]["core.name"], "clientAccess": clients}
 
 
 def await_file(path, process, timeout=10):

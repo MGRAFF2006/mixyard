@@ -23,7 +23,8 @@ def private_snapshot():
     return [object_(0, "Core", {"core.name": "mixyard-private"}),
             object_(1, "Node", {"node.name": "mixyard-private-driver"})] + [
                 object_(id_, "Module", {"module.name": name})
-                for id_, name in enumerate(sorted(MODULES), 2)]
+                for id_, name in enumerate(sorted(MODULES), 2)] + [
+                    object_(8, "Client", {"pipewire.access": "unrestricted"})]
 
 
 class Isolation(unittest.TestCase):
@@ -131,6 +132,26 @@ int main(void) {
         self.assertEqual(set(actual), set(configured))
         self.assertEqual(len(configured), len(actual))
         self.assertEqual(set(actual), qualify.MODULES)
+
+    def test_private_access_mode_and_observed_client_classification(self):
+        # Configuration representation is part of the pinned SDK policy: the
+        # deprecated force key selected legacy mode but did not force a grant.
+        # Keep that branch explicitly rather than changing socket/Flatpak rules.
+        config = (Path(__file__).resolve().parent / "private.conf").read_text()
+        entries = re.findall(r'\{ name = libpipewire-module-access args = \{([^}]+)\} \}', config)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].split(), ["access.legacy", "=", "true"])
+        for name in ("access.force", "access.allowed", "access.rejected", "access.restricted", "access.socket"):
+            self.assertNotRegex(entries[0], re.escape(name))
+        accepted = private_snapshot()
+        self.assertEqual(isolation(accepted)["clientAccess"], [{"id": 8, "access": "unrestricted"}])
+        for classification in (None, "default", "flatpak", "restricted"):
+            wrong = copy.deepcopy(accepted)
+            wrong[-1]["info"]["props"] = {} if classification is None else {"pipewire.access": classification}
+            with self.subTest(access=classification), self.assertRaisesRegex(RuntimeError, "access classification"):
+                isolation(wrong)
+        with self.assertRaisesRegex(RuntimeError, "access observation is incomplete"):
+            isolation(accepted[:-1])
 
     def test_failed_bind_reports_dynamic_registry_but_never_qualifies(self):
         env = {"PIPEWIRE_REMOTE": "mixyard-private"}

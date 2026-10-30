@@ -259,3 +259,15 @@ native observations did not enforce this diagnostic gate; a new fully gated
 hosted run is required before qualification. Accepted main 4e45fb295e5c1dfa7aa1a0f30604ef56084a4fe5
 has been normally merged, so that next run builds the accepted #103 host, not
 only the previously source-compared b719 implementation.
+
+The access module explicitly selects `access.legacy = true` on the pinned
+PipeWire 1.0.5 SDK. Its parser previously ignored `access.force = unrestricted`
+and selected this same legacy branch while emitting a warning. The replacement
+preserves existing client/Flatpak classification and permissions; it does not
+switch to socket-based grants, broaden access or change log levels. Legacy mode
+is supported by this SDK but may change in future versions, which require new
+qualification. The control regression locks this exact configuration and rejects
+incomplete/different client classifications. Actual SDK isolation snapshots must
+contain client observations with `pipewire.access = unrestricted` for these
+owned, non-sandboxed fixture clients, and record them in evidence. All existing
+module/device/link/diagnostic gates remain strict. No warning exception is added.
