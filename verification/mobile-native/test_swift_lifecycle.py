@@ -1,5 +1,9 @@
 """Wrapper ownership/failure units; never execute Security, Swift or PKI locally."""
+import contextlib
+import errno
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -48,8 +52,35 @@ class TrustLifecycle(unittest.TestCase):
 
     def test_security_timeout_is_bounded_and_does_not_export_captured_output(self):
         error = subprocess.TimeoutExpired(['security','private-argument'], 1, output='private-output', stderr='private-stderr')
-        with patch.object(module, 'phase'), patch.object(module.subprocess, 'run', side_effect=error) as run:
+        with patch.object(module, 'phase'), patch.object(module.subprocess, 'run', side_effect=error) as run, contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaisesRegex(RuntimeError, '^owned-security-phase-failed$'):
                 module.security('startup-list', time.monotonic()+1, 'list-keychains')
             self.assertLessEqual(run.call_args.kwargs['timeout'], 1)
             self.assertTrue(run.call_args.kwargs['capture_output'])
+
+    def test_failure_classifications_are_fixed_numeric_and_never_reveal_captured_material(self):
+        cases = [
+            (subprocess.TimeoutExpired(['security','SECRET-ARG'], 4, output='SECRET-OUT', stderr='SECRET-ERR'), 'timeout', 4000),
+            (subprocess.CalledProcessError(1, ['security','SECRET-ARG'], output='SECRET-OUT', stderr='SECRET-ERR'), 'exit', 1),
+            (subprocess.CalledProcessError(-15, ['security','SECRET-ARG'], stderr='SECRET-ERR'), 'signal', 15),
+            (OSError(errno.ENOENT, 'SECRET-PATH'), 'os-error', errno.ENOENT),
+        ]
+        for error,kind,value in cases:
+            with self.subTest(kind=kind):
+                output=io.StringIO()
+                with patch.object(module.subprocess, 'run', side_effect=error), contextlib.redirect_stderr(output):
+                    with self.assertRaisesRegex(RuntimeError, '^owned-security-phase-failed$'):
+                        module.security('trust-a', time.monotonic()+10, 'SECRET-ARG')
+                lines=output.getvalue().splitlines()
+                report=json.loads(next(line.removeprefix('MIXYARD_SECURITY ') for line in lines if line.startswith('MIXYARD_SECURITY ')))
+                self.assertEqual(report, {'phase':'trust-a','kind':kind,'value':value})
+                self.assertNotIn('SECRET', output.getvalue())
+
+    def test_expired_budget_starts_no_os_command_and_unknown_phase_cannot_inject_a_log(self):
+        output=io.StringIO()
+        with patch.object(module.subprocess, 'run') as run, contextlib.redirect_stderr(output):
+            with self.assertRaises(RuntimeError): module.security('trust-a', time.monotonic()-1, 'SECRET-ARG')
+            with self.assertRaises(RuntimeError): module.security('SECRET-PHASE', time.monotonic()+1, 'SECRET-ARG')
+            run.assert_not_called()
+        self.assertIn('"kind":"budget-exhausted"', output.getvalue())
+        self.assertNotIn('SECRET', output.getvalue())

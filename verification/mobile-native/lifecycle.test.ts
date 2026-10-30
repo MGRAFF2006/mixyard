@@ -56,3 +56,23 @@ test('a failed cleanup exit after a successful reply cannot be mistaken for succ
   if (native.child.exitCode === null) await new Promise(resolve => native.child.once('exit', resolve))
   await assert.rejects(native.close(), /native driver and hosted trust cleanup must succeed/)
 })
+
+test('stderr accepts only fixed typed Security classifications and suppresses raw and malformed fields', async () => {
+  const output: string[] = []
+  const write = process.stderr.write
+  process.stderr.write = ((chunk: unknown) => { output.push(String(chunk)); return true }) as typeof write
+  const native = fixture(`
+    process.stderr.write('SECRET-RAW\\n');
+    process.stderr.write('MIXYARD_SECURITY {"phase":"trust-a","kind":"timeout","value":4000}\\n');
+    process.stderr.write('MIXYARD_SECURITY {"phase":"trust-a","kind":"SECRET-KIND","value":1}\\n');
+    process.stderr.write('MIXYARD_SECURITY {"phase":"trust-a","kind":"exit","value":1,"stderr":"SECRET"}\\n');
+    process.stderr.write('MIXYARD_SECURITY {"phase":"SECRET","kind":"exit","value":1}\\n');
+    console.log(JSON.stringify({event:'ready'}));
+    process.stdin.on('data', () => console.log(JSON.stringify({ok:true,hasAuthority:false})));
+    process.stdin.on('end', () => process.exit(0));
+  `)
+  try { await native.ok({op:'pair'}); await reaped(native) }
+  finally { process.stderr.write = write; if (native.child.exitCode === null) await reaped(native) }
+  assert.match(output.join(''), /Owned Security failure: trust-a timeout 4000/)
+  assert.doesNotMatch(output.join(''), /SECRET|stderr/)
+})

@@ -72,3 +72,21 @@ so a trust-cleanup error cannot skip service reaping. Node actor lifecycle tests
 use real owned child processes; Python trust-lifecycle tests replace Security and
 never change local PKI. These tests do not qualify actual macOS cleanup or explain
 the earlier failure; current-head hosted phase/readiness/TLS execution is required.
+
+Actual94c738 [Swift92 failure](https://github.com/MGRAFF2006/mixyard/actions/runs/40985908895/job/123836760973)
+and identical-fixture daf1dbc [Swift93 failure](https://github.com/MGRAFF2006/mixyard/actions/runs/40985960350/job/123836925627)
+now isolate trust-a before child startup: setup/search completed, trust failed
+around its4s limit, restore/readback completed, and owned trust removal failed.
+Those observations did not distinguish a timeout from nonzero exit. New fixed
+reason records distinguish timeout milliseconds, process exit/signal, errno and
+exhausted budget; no raw captured output/exception arguments are exported. Typed
+reason parsing rejects unknown phases/kinds/extra fields. No provisioning change
+or deadline increase is made before actual typed evidence identifies the failure.
+
+Apple's [tool implementation](https://github.com/apple-oss-distributions/Security/blob/main/SecurityTool/macOS/trusted_cert_add.c)
+adds the certificate to the requested keychain and separately sets trust settings
+in the user domain by default. The -k option does not scope trust settings to that
+keychain. Apple's [trust implementation](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_keychain/lib/SecTrustSettings.cpp)
+documents that setting trust may block for authorization. This establishes tooling
+semantics, NOT the cause of the observed runner failure. User/admin trust policies,
+normal PKI and exact production pinning remain unchanged pending the new evidence.
