@@ -140,3 +140,23 @@ app/test SHA256 are logged without paths; no Apple tool is mocked in hosted proo
 Build, artifact verification and test-without-building share the EXISTING900s
 build/test budget. Native UI assertions/readiness are unchanged. Local proof-gate
 units use clearly fake bytes/tool boundaries, not SDK compilation or UI evidence.
+
+One controlled fixture-only resource discriminator adds two tiny same-CSP files:
+a classic script and a trivial module, each assigning only its own telemetry
+boolean. The actual App module is preserved and separately role-labelled. Fixed
+resource role/load/request-complete/executed/error-class fields leave no raw URL,
+HTML or message. Probe failures cannot overwrite the first recorded non-probe
+error or App module load state. No script suppresses an error/event, starts Vue,
+creates controls or answers confirmation. Readiness still requires the ACTUAL
+App controls within10s; a positive sentinel can never satisfy it. Embedded privacy/
+isolation units are not hosted module-loader evidence or a CORS cause claim.
+
+Actual standard16.4/18.5 build-for-testing now passes positive arm64 proof for the
+app/test/runner,3 MobileCore objects plus its native module, and14 packaged Mach-O
+references. Its subsequent real WK module failure remains separate; no native
+confirmation assertions passed. The16.2 comparison instead rejects the explicit
+arch option in its destination selector before building (exit70, unsupported
+specifier). That selector is now exact-owned UUID+platform only; explicit native
+ARCHS/ONLY_ACTIVE_ARCH, selected SDK/runtime and mandatory lipo/module/object proof
+remain unchanged before test-without-building. Wrong compiled architecture still
+fails. No missing-text inference, deadline change or fallback is introduced.

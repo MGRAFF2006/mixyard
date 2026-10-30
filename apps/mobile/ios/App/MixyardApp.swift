@@ -20,27 +20,42 @@ import MobileCore
     private var ownedNavigation = "created"
     private static let ownedObservationScript = """
     (() => {
-      const state = {script: 'none', csp: 'none', errorName: 'none', line: 0, column: 0, moduleState: 'pending'};
+      const state = {script: 'none', csp: 'none', errorName: 'none', line: 0, column: 0, moduleState: 'pending', errorRole: 'unknown', resources: {'classic-probe': 'pending', 'module-probe': 'pending'}};
       const name = value => ['Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'EvalError', 'URIError', 'AggregateError'].includes(value) ? value : 'other';
       const position = value => Number.isInteger(value) ? Math.max(0, Math.min(10000000, value)) : 0;
       window.__mixyardOwnedEvidence = state;
       addEventListener('error', event => {
         const resource = event.target instanceof HTMLScriptElement;
-        state.script = resource ? 'script-resource' : 'runtime';
+        const role = ['app', 'classic-probe', 'module-probe'].includes(event.target?.dataset?.ownedRole) ? event.target.dataset.ownedRole : 'unknown';
+        if (resource && role in state.resources) { state.resources[role] = 'failed'; return; }
+        if (resource && role === 'app') state.moduleState = 'failed';
+        // Preserve the first non-probe error; telemetry cannot overwrite it.
+        if (state.script !== 'none') return;
+        state.script = resource ? 'script-resource' : 'runtime'; state.errorRole = role;
         state.errorName = name(event.error?.name);
         state.line = position(event.lineno); state.column = position(event.colno);
-        if (resource) state.moduleState = 'failed';
       }, true);
       addEventListener('load', event => {
-        if (event.target instanceof HTMLScriptElement && event.target.type === 'module') state.moduleState = 'loaded';
+        if (!(event.target instanceof HTMLScriptElement)) return;
+        const role = event.target.dataset?.ownedRole;
+        if (role in state.resources) state.resources[role] = 'loaded';
+        if (role === 'app' && event.target.type === 'module') state.moduleState = 'loaded';
       }, true);
-      addEventListener('unhandledrejection', event => { state.script = 'rejection'; state.errorName = name(event.reason?.name); });
+      addEventListener('unhandledrejection', event => { if (state.script === 'none') { state.script = 'rejection'; state.errorName = name(event.reason?.name); } });
       addEventListener('securitypolicyviolation', event => {
         const allowed = ['script-src-elem', 'script-src', 'style-src-elem', 'style-src', 'connect-src', 'default-src'];
         state.csp = allowed.includes(event.effectiveDirective) ? event.effectiveDirective : 'other';
       });
     })();
     """
+    private static func checkedOwnedResource(_ raw: Any?) -> [String: Any]? {
+        guard let value = raw as? [String: Any], Set(value.keys) == Set(["load", "requestComplete", "executed", "errorClass"]),
+              let load = value["load"] as? String, ["pending", "loaded", "failed"].contains(load),
+              let complete = value["requestComplete"] as? Bool, complete == (load != "pending"),
+              let executed = value["executed"] as? Bool,
+              let errorClass = value["errorClass"] as? String, errorClass == (load == "failed" ? "resource-error" : "none") else { return nil }
+        return ["load":load, "requestComplete":complete, "executed":executed, "errorClass":errorClass]
+    }
     func sampleOwnedPageEvidence() {
         let generation = documentGeneration
         web.evaluateJavaScript("""
@@ -57,6 +72,12 @@ import MobileCore
           column: window.__mixyardOwnedEvidence?.column ?? 0,
           moduleState: window.__mixyardOwnedEvidence?.moduleState ?? 'unobserved',
           boot: window.__mixyardOwnedFixturePhase ?? 'unentered',
+          errorRole: window.__mixyardOwnedEvidence?.errorRole ?? 'unknown',
+          resourceProbes: Object.fromEntries(['classic-probe', 'module-probe'].map(role => {
+            const status = window.__mixyardOwnedEvidence?.resources?.[role] ?? 'pending';
+            const executed = role === 'classic-probe' ? window.__mixyardOwnedClassicProbeExecuted === true : window.__mixyardOwnedModuleProbeExecuted === true;
+            return [role, {load: status, requestComplete: status !== 'pending', executed, errorClass: status === 'failed' ? 'resource-error' : 'none'}];
+          })),
           capabilities: { Response: typeof Response === 'function', fetch: typeof fetch === 'function',
             AbortController: typeof AbortController === 'function', TextEncoder: typeof TextEncoder === 'function',
             cryptoRandomUUID: typeof globalThis.crypto?.randomUUID === 'function', matchMedia: typeof matchMedia === 'function',
@@ -73,9 +94,9 @@ import MobileCore
                 if let root = self.root, let names = try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("assets").path) {
                     evidence["scriptAssets"] = min(1000, names.filter { $0.hasSuffix(".js") }.count)
                 }
-                if let encoded, let bytes = encoded.data(using: .utf8), bytes.count <= 1024,
+                if let encoded, let bytes = encoded.data(using: .utf8), bytes.count <= 2048,
                    let fields = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
-                   Set(fields.keys) == Set(["ready", "marker", "tools", "buttons", "appChildren", "script", "csp", "errorName", "line", "column", "moduleState", "boot", "capabilities"]),
+                   Set(fields.keys) == Set(["ready", "marker", "tools", "buttons", "appChildren", "script", "csp", "errorName", "line", "column", "moduleState", "boot", "capabilities", "errorRole", "resourceProbes"]),
                    let ready = fields["ready"] as? String, ["loading", "interactive", "complete"].contains(ready),
                    let marker = fields["marker"] as? Bool, let tools = fields["tools"] as? Bool,
                    let buttons = fields["buttons"] as? Int, (0...1000).contains(buttons),
@@ -87,11 +108,15 @@ import MobileCore
                    let column = fields["column"] as? Int, (0...10000000).contains(column),
                    let moduleState = fields["moduleState"] as? String, ["pending", "loaded", "failed", "unobserved"].contains(moduleState),
                    let boot = fields["boot"] as? String, ["unentered", "module-entered", "api-created", "mounting", "mounted", "observing", "controls-ready"].contains(boot),
+                   let errorRole = fields["errorRole"] as? String, ["app", "unknown"].contains(errorRole),
+                   let resources = fields["resourceProbes"] as? [String: Any], Set(resources.keys) == Set(["classic-probe", "module-probe"]),
+                   let classic = Self.checkedOwnedResource(resources["classic-probe"]), let module = Self.checkedOwnedResource(resources["module-probe"]),
                    let capabilities = fields["capabilities"] as? [String: Bool],
                    Set(capabilities.keys) == Set(["Response", "fetch", "AbortController", "TextEncoder", "cryptoRandomUUID", "matchMedia", "moduleScript"]) {
                     evidence.merge(["document":ready, "marker":marker, "tools":tools, "buttons":buttons,
                                     "appChildren":children, "script":script, "csp":csp, "errorName":errorName,
-                                    "line":line, "column":column, "moduleState":moduleState, "boot":boot, "capabilities":capabilities]) { _, new in new }
+                                    "line":line, "column":column, "moduleState":moduleState, "boot":boot, "capabilities":capabilities, "errorRole":errorRole,
+                                    "resourceProbes":["classic-probe":classic, "module-probe":module]]) { _, new in new }
                 }
                 if let bytes = try? JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]),
                    let text = String(data: bytes, encoding: .utf8) { self.ownedPageEvidence = text }
