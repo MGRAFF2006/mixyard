@@ -160,3 +160,27 @@ specifier). That selector is now exact-owned UUID+platform only; explicit native
 ARCHS/ONLY_ACTIVE_ARCH, selected SDK/runtime and mandatory lipo/module/object proof
 remain unchanged before test-without-building. Wrong compiled architecture still
 fails. No missing-text inference, deadline change or fallback is introduced.
+
+
+The actual957 standard18.5 and explicit18.2 comparison lanes both built and
+verified native products, then observed the classic telemetry script executing
+(load event still pending), while the trivial module and App module failed.
+No native alert assertion ran. This establishes a classic/module execution
+boundary, not WebKit's internal CORS cause. The authorized production repair now
+uses the SAME actual shared App compiled as one classic IIFE for both native
+platforms and this fixture. Vite8/Rolldown output has code splitting disabled;
+HTML uses one external deferred classic entry, without module/CORS attributes.
+The exact file/asset origin, read scope, CSP, native bridge and all UI assertions
+are unchanged. No public bundle export, private WK preference, polyfill, new
+scheme/server, fake bootstrap or confirmation is introduced. Build/staging reject
+imports/exports/import.meta/split chunks and record public source/output hashes.
+The two diagnostic probes remain fixture-only and cannot satisfy App readiness.
+Fresh actual standard AND comparison SDK dialog execution remains required.
+
+Author current local verification: controller+fixture strict Vue types,11 bridge
+tests,9 actual packaging/embedded-diagnostic tests,20 runner/architecture/KVM
+units and both production+fixture Vite builds pass. Isolated Chromium loaded the
+actual classic shared App with seven controls and passed dirty replacement and
+codec removal Cancel/Confirm,390px layout/no page errors. These are browser
+guards, not native AlertDialog/UIAlertController or SDK proof. The hosted fixture
+lane repeats browser guards with its preinstalled Chrome; no browser download.
