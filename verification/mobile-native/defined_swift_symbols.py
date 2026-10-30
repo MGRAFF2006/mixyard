@@ -132,6 +132,14 @@ def defined_swift_names(output, counts):
         # Archive/member and Mach-O architecture headers are not code evidence.
         if line.endswith(':') and '$s' not in line:
             continue
+        # BSD nm emits an opaque name after its address/type prefix. Mach-O
+        # S records are non-text data and may contain spaces (e.g. metadata).
+        # Recognise only the observed addressed S form; never demangle it or
+        # let it contribute to defined-function availability. Other malformed
+        # shapes still fail through the unchanged parser below.
+        if re.fullmatch(r'[0-9A-Fa-f]+\s+S\s+\S+(?:[ \t]+\S+)+', line):
+            counts['nonTextMetadata'] += 1
+            continue
         match = re.fullmatch(r'(?:(?P<address>[0-9A-Fa-f]+)\s+)?(?P<kind>[A-Za-z?])\s+(?P<name>\S+)', line)
         if match is None:
             raise ToolFailure('nm-shape', shape=record_shape(line,index,'unparsed-columns'))
@@ -160,7 +168,7 @@ def attest_defined(paths, role, required=('verifier','derParseBytes'), run=captu
     if role not in ('trust-archive','qualifier','app') or not required or any(name not in FUNCTIONS for name in required):
         raise ValueError('Invalid fixed attestation role/function requirement')
     availability = dict.fromkeys(FUNCTIONS, False)
-    counts = {'artifacts':0,'definedText':0,'undefined':0,'swiftDefined':0,'demangled':0}
+    counts = {'artifacts':0,'definedText':0,'undefined':0,'swiftDefined':0,'demangled':0,'nonTextMetadata':0}
     caps = dict.fromkeys(('artifacts','inputBytes','outputBytes','symbols'), False)
     tool, status, value = 'semantic', 'ok', 0
     shape = None

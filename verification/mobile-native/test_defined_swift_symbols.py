@@ -69,6 +69,31 @@ class DefinedCodeProof(unittest.TestCase):
                    ('00000 T '+VERIFY_NAME+'\n').encode(), b'00000 ? _unknown\n']:
             with self.subTest(nm_shape=True):self.inspect(FakeTools(nm),fails=True)
 
+    def test_addressed_section_data_payload_is_opaque_and_never_code_proof(self):
+        # Observed Mac receipt: HEX address / S / multi-token payload. These
+        # synthetic names test record classification, not actual SDK linkage.
+        metadata = ('000000000badcafe S symbolic _PRIVATE_A _PRIVATE_B _PRIVATE_C\n').encode()
+        tools = FakeTools(nm=NM + metadata)
+        receipt = self.inspect(tools)
+        self.assertEqual(receipt['counts']['nonTextMetadata'], 1)
+        self.assertEqual(receipt['counts']['definedText'], 2)
+        self.assertEqual(tools.calls[1][1], (VERIFIER+'\n'+PARSER+'\n').encode())
+        # Even the required names in a data record cannot supply a function.
+        data_only = ('000000000badcafe S '+VERIFIER+' '+PARSER+' extra\n').encode()
+        tools = FakeTools(nm=data_only)
+        receipt = self.inspect(tools, fails=True)
+        self.assertEqual(receipt['status'], 'required-function-missing')
+        self.assertFalse(any(receipt['functions'].values()))
+        self.assertEqual(len(tools.calls), 1)
+        for line in ['000000000badcafe T symbolic extra payload',
+                     'S symbolic extra payload',
+                     '000000000badcafe ? symbolic extra payload',
+                     '000000000badcafe s symbolic extra payload']:
+            with self.subTest(shape=line.split()[1]):
+                receipt = self.inspect(FakeTools(nm=(line+'\n').encode()), fails=True)
+                self.assertEqual(receipt['status'], 'nm-shape')
+                self.assertFalse(any(receipt['functions'].values()))
+
     def test_shape_diagnostics_are_fixed_redacted_and_never_admit_unknown_records(self):
         cases=[
             ('000000000badcafe I _'+VERIFIER+' (indirect for _PRIVATE_TARGET)',
