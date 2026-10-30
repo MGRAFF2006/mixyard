@@ -195,3 +195,20 @@ wrong-credential open rejection -> same B real request must still work. Exact e7
 production source must first be causal RED for this assertion in its own target.
 Fresh current14-test execution AND the complete existing qualifier remain pending;
 no local Rust compile/execution or successful full native qualification is claimed.
+
+The exact-e0 native suite/full qualifier passed on all3OS with14/14 and all causal
+historical gates, but final review found a renderer-only saved-list race: a
+successful Pair/Forget notification was dropped while an older list reply was
+pending. The current correction keeps one in-flight read and ONE pending boolean.
+A newer notification makes that preceding response/error unpublishable and causes
+a single coalesced followup. No timer, polling, growing queue, write replay or
+manual-refresh workaround is added. Accepted snapshots preserve existing exact
+credential API owners and codecHost; errors cannot publish a partial registry.
+Only this operation's old error notice is cleared, preserving unrelated notices.
+Actual compiled App.loadTargets plus actual PairedDevices Pair/Forget callers are
+RED on e0 for both lost notifications and GREEN currently. Six controlled-invoke
+consumer cases cover startup, removal, multiple changes/delayed latest response,
+stale/current errors and notice ownership, with one native list maximum active.
+These are Vue/script consumer checks, not newly executed native/physical UI proof.
+Rust/TLS/control/Cargo inputs stay unchanged; fresh current-head hosted checks
+and NEW whole independent final reviews remain mandatory.

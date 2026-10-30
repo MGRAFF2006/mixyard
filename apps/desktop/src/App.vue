@@ -16,7 +16,8 @@ const api = new Api(inDesktopShell ? desktopFetcher(nativeInvoke) : undefined)
 const paired = ref<PairedTarget[]>([])
 let targetApis: DeviceTarget[] = [{ id: 'local', displayName: 'This device · loopback service', api }]
 const targets = shallowRef<readonly DeviceTarget[]>(targetApis)
-let loadingTargets = false
+let loadingTargets = false, targetRefreshPending = false
+let targetListError: string | null = null
 const ready = ref(!inDesktopShell)
 const targetKey = (target: PairedTarget) => `paired:${target.deviceId}:${target.credentialId}`
 function canRemove(id: string) {
@@ -24,15 +25,35 @@ function canRemove(id: string) {
   return !target || !(consoleView.value?.hasUnsavedDrafts(targetKey(target)) ?? false)
 }
 async function loadTargets() {
+  // One in-flight read + ONE coalesced notification, no timer or growing queue.
+  targetRefreshPending = true
   if (loadingTargets) return
   loadingTargets = true
   try {
-    const saved = await nativeInvoke<PairedTarget[]>('paired_list')
-    paired.value = saved
-    targetApis = [{ id: 'local', displayName: 'This device · loopback service', api }, ...saved.map(target => ({ id: targetKey(target), displayName: target.displayName, api: targetApis.find(old => old.id === targetKey(target))?.api ?? pairedApi(nativeInvoke, target) }))]
-    targets.value = targetApis
-  } catch (error) { notice.value = `Saved paired devices unavailable: ${String(error)}` }
-  finally { ready.value = true; loadingTargets = false }
+    while (targetRefreshPending) {
+      targetRefreshPending = false
+      try {
+        const saved = await nativeInvoke<PairedTarget[]>('paired_list')
+        // A Pair/Forget/list notification after dispatch owns newer native data.
+        // Never publish its preceding snapshot, even briefly before the followup.
+        if (targetRefreshPending) continue
+        const next: DeviceTarget[] = [{ id: 'local', displayName: 'This device · loopback service', api }, ...saved.map(target => {
+          const old = targetApis.find(old => old.id === targetKey(target))
+          return { ...old, id: targetKey(target), displayName: target.displayName, api: old?.api ?? pairedApi(nativeInvoke, target) }
+        })]
+        if (notice.value === targetListError) notice.value = ''
+        targetListError = null
+        paired.value = saved
+        targetApis = next
+        targets.value = targetApis
+      } catch (error) {
+        if (!targetRefreshPending) {
+          targetListError = `Saved paired devices unavailable: ${String(error)}`
+          notice.value = targetListError
+        }
+      }
+    }
+  } finally { loadingTargets = false; ready.value = true }
 }
 function disconnectedTarget(id: string, credentialId: string) { targetApis.find(target => target.id === `paired:${id}:${credentialId}`)?.api.disconnect('Disconnected through native device management; refresh to reconnect.') }
 const consoleView = ref<InstanceType<typeof Console> | null>(null)
