@@ -65,6 +65,11 @@ struct buffer_write_report {
     bool pending, written;
     struct mx_native_observation before, after;
 };
+struct consumer_ingress_report {
+    bool recorded, host_admitted, queue_active, queue_started;
+    uint64_t registration, generation, epoch, next_sequence, minimum_frame, clock_frame, callback_ns;
+    unsigned queued;
+};
 struct global { uint32_t id, node; uint64_t serial; char type[32], name[96], direction[8]; };
 struct app {
     struct pw_main_loop *loop;
@@ -80,6 +85,7 @@ struct app {
     _Atomic unsigned registration_count;
     struct buffer_registration registrations[MX_NATIVE_REGISTRATIONS];
     struct buffer_write_report writes[2][ROUTES]; // Exclusive DataLoop; freeze after first fatal error.
+    struct consumer_ingress_report ingress[ROUTES]; // Pre-validation observation, not readiness authority.
     struct mx_consumer_copy consumers[ROUTES]; // exclusive DataLoop, never native pointers
     char bound_outputs[ROUTES][192]; // control-prepared immutable compiled endpoint IDs
     uint64_t native_frame, warming_generation, control_generation;
@@ -320,6 +326,14 @@ static void receive_consumer(struct endpoint *e, const struct spa_io_position *p
         if (!admitted && (q->active || q->count)) mx_consumer_close(q);
         struct pw_buffer *b = pw_filter_dequeue_buffer(e->in[r]);
         if (!b) continue;
+        if (!atomic_load_explicit(&a->error, memory_order_acquire)) {
+            a->ingress[r] = (struct consumer_ingress_report){ .recorded = true,
+                .host_admitted = admitted, .queue_active = q->active, .queue_started = q->started,
+                .registration = mx_buffer_identity(&((struct port *)e->in[r])->identities, b),
+                .generation = q->generation, .epoch = q->epoch, .next_sequence = q->next_sequence,
+                .minimum_frame = q->minimum_frame, .queued = q->count,
+                .clock_frame = pos->clock.position, .callback_ns = callback_monotonic_ns };
+        }
         if (mx_native_startup_unavailable(!a->ever_admitted, b->buffer, pos->clock.duration)) {
             atomic_fetch_add_explicit(&a->startup_unavailable[e->role][r], 1, memory_order_relaxed);
             return_input(a, e->in[r], b); continue; // unavailable, never PCM/scheduled silence
@@ -1073,6 +1087,17 @@ static void print_format_reports(const struct app *a) {
     // Preserve first-fault evidence before the larger optional layout trace.
     mx_native_print_first_failure("firstChunkFailure", &a->chunk_failure);
     mx_native_print_first_failure("firstSampleMismatch", &a->mismatch_failure);
+    printf(",\"lastConsumerIngress\":[");
+    for (unsigned route = 0; route < ROUTES; ++route) {
+        const struct consumer_ingress_report *r = &a->ingress[route];
+        if (route) printf(",");
+        if (!r->recorded) { printf("null"); continue; }
+        printf("{\"port\":%u,\"registrationId\":%" PRIu64 ",\"hostAdmitted\":%s,\"queueActive\":%s,\"queueStarted\":%s,\"generation\":%" PRIu64 ",\"epoch\":%" PRIu64 ",\"nextSequence\":%" PRIu64 ",\"minimumFrame\":%" PRIu64 ",\"queued\":%u,\"clockFrame\":%" PRIu64 ",\"callbackMonotonicNs\":%" PRIu64 "}",
+            route, r->registration, r->host_admitted ? "true" : "false", r->queue_active ? "true" : "false",
+            r->queue_started ? "true" : "false", r->generation, r->epoch, r->next_sequence,
+            r->minimum_frame, r->queued, r->clock_frame, r->callback_ns);
+    }
+    printf("]");
     unsigned registered = atomic_load(&a->registration_count);
     printf(",\"bufferRegistrationOverflow\":%s,\"bufferRegistrations\":[", registered > MX_NATIVE_REGISTRATIONS ? "true" : "false");
     for (unsigned i = 0; i < registered && i < MX_NATIVE_REGISTRATIONS; ++i) {

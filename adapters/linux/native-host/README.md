@@ -352,3 +352,14 @@ new hosted evidence. The earlier pre-stop malformed 10c consumer descriptor
 remains an unresolved mapping/lifetime blocker; a later ordinary green run or
 this expected-stop tag does not repair or close it. Current layout diagnostics
 have not established cross-buffer/shared-map identity or a specific cause.
+
+
+Consumer-first-packet diagnosis separately records each sink's last pre-validation
+state before the first fatal error: native registration, current queue generation/
+epoch, active/started/count/next sequence, minimum native frame, global host-admitted
+state and callback clock/frame. These are scalar copies on the existing owner,
+not new readiness flags or admission permissions. A matching registration/frame
+can show whether an active epoch had already accepted a validated native packet;
+a closed queue's cleared `started` bit cannot prove it never had valid data.
+No ordinary EMPTY acceptance changes. The earlier zero-byte ordinary consumer
+failure and the malformed 10c descriptor remain separate unresolved outcomes.
