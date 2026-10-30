@@ -1,3 +1,9 @@
+> Historical prototype UI harness: the standalone Rust boundary tests remain
+> available, but the webview script targets retired desktop commands. Current
+> native UI qualification uses the shared-console service/IPC harness in
+> [desktop-native](../desktop-native/README.md). Historical results below do not
+> qualify the replacement UI.
+
 # Desktop snapshot inspection checks
 
 This lane checks the content boundary and read-only panel, not native audio.

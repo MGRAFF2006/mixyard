@@ -1,3 +1,9 @@
+> Historical prototype UI harness: the standalone Rust boundary tests remain
+> available, but the webview script targets retired desktop commands. Current
+> native UI qualification uses the shared-console service/IPC harness in
+> [desktop-native](../desktop-native/README.md). Historical results below do not
+> qualify the replacement UI.
+
 # Desktop named local profile checks
 
 The panel lists/shows existing local desired profiles and calls the authoritative

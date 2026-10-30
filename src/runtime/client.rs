@@ -411,11 +411,15 @@ impl ReadOnlyClient {
                 }
             } else {
                 progress_operations = 0;
-                thread::sleep(if input.is_empty() {
+                let wait = if input.is_empty() {
                     TICK
                 } else {
                     super::INVENTORY_TRANSFER_TICK
-                });
+                };
+                #[cfg(unix)]
+                transport::wait_inventory(&stream, sent < request.len(), wait)?;
+                #[cfg(windows)]
+                thread::sleep(wait);
             }
         }
     }
