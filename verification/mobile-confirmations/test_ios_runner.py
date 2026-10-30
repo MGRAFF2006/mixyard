@@ -39,6 +39,24 @@ class SimulatorSelection(unittest.TestCase):
             with patch.object(module.Path,'is_dir',return_value=False):
                 with self.assertRaises(RuntimeError):module.validate_comparison('Xcode 16.2','18.2')
 
+    def test_destination_diagnostic_exposes_only_exact_owned_arch_platform_availability(self):
+        owned='11111111-2222-3333-4444-555555555555'
+        raw='Available destinations for SECRET scheme:\n{ platform:iOS Simulator, id:'+owned+', name:SECRET }\n{ platform:iOS Simulator, arch:arm64, id:OTHER, name:SECRET }'
+        value=module.destination_evidence(raw,owned)
+        self.assertEqual(value['records'],[{'platform':'iOS Simulator','arch':'missing-or-other','archPresent':False,'errorPresent':False,'availability':'available','duplicateFields':False}])
+        self.assertNotIn('SECRET',json.dumps(value));self.assertNotIn(owned,json.dumps(value))
+    def test_shutdown149_requires_exact_owned_shutdown_readback_within_existing_budget(self):
+        owned='11111111-2222-3333-4444-555555555555'
+        with patch.object(module,'step',side_effect=subprocess.CalledProcessError(149,'owned-shutdown')),patch.object(module,'capture',return_value=json.dumps({'devices':{'runtime':[{'udid':owned,'state':'Shutdown'}]}})) as capture,contextlib.redirect_stdout(io.StringIO()):
+            module.shutdown_owned(owned)
+        self.assertLessEqual(capture.call_args.kwargs['timeout'],3)
+        for devices in [[{'udid':owned,'state':'Booted'}],[{'udid':'OTHER','state':'Shutdown'}],[]]:
+            with patch.object(module,'step',side_effect=subprocess.CalledProcessError(149,'owned-shutdown')),patch.object(module,'capture',return_value=json.dumps({'devices':{'runtime':devices}})):
+                with self.assertRaises(subprocess.CalledProcessError):module.shutdown_owned(owned)
+        with patch.object(module,'step',side_effect=subprocess.CalledProcessError(1,'owned-shutdown')),patch.object(module,'capture') as capture:
+            with self.assertRaises(subprocess.CalledProcessError):module.shutdown_owned(owned)
+            capture.assert_not_called()
+
     def test_selected_sdk_wins_over_a_newer_arbitrary_installed_runtime(self):
         result = module.select_runtime('18.5', [runtime('18.4'), runtime('18.5'), runtime('26.2')], 'arm64')
         self.assertEqual(result['version'], '18.5')
