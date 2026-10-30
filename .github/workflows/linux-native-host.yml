@@ -1,0 +1,97 @@
+name: Linux native shared-engine private graph
+on:
+  workflow_dispatch:
+  push:
+    paths: ['adapters/engine/**', 'adapters/linux/native-host/**', 'src/audio/**', 'src/audio.rs', 'src/dsp/**', '.github/workflows/linux-native-host.yml']
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+    paths: ['adapters/engine/**', 'adapters/linux/native-host/**', 'src/audio/**', 'src/audio.rs', 'src/dsp/**', '.github/workflows/linux-native-host.yml']
+permissions:
+  contents: read
+jobs:
+  private-graph:
+    if: github.event_name != 'pull_request' || github.event.action != 'labeled'
+    concurrency:
+      group: native-baseline-${{ github.event_name }}-${{ github.ref }}-${{ github.sha }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check control-plane isolation guards
+        run: python3 -B -m unittest discover -s adapters/linux/native-host -p 'test_*.py' -v
+      - name: Install SDK only on this disposable hosted runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pipewire pipewire-bin libpipewire-0.3-dev libspa-0.2-dev libjson-c-dev pkg-config
+      - name: Build actual canonical Rust engine and native transport
+        run: |
+          export MIXYARD_NATIVE_BUILD="$RUNNER_TEMP/mixyard-native-build"
+          mkdir -m 700 "$MIXYARD_NATIVE_BUILD"
+          bash adapters/linux/native-host/build.sh
+      - name: Verify real linked adapter failure and tail oracles
+        run: python3 -B adapters/linux/native-host/check_host.py "$RUNNER_TEMP/mixyard-native-build/host-oracle" "$RUNNER_TEMP"
+      - name: Exercise isolated native source to engine to consumer
+        run: python3 -B adapters/linux/native-host/qualify.py "$RUNNER_TEMP/mixyard-native-build/native-graph" "$RUNNER_TEMP/native-evidence.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-native-private-graph-evidence
+          path: |
+            ${{ runner.temp }}/native-evidence.json
+            ${{ runner.temp }}/mixyard-native-build/native-map-check.json
+          if-no-files-found: warn
+  fixed-upstream-comparison:
+    if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'qualify-pipewire-1.4.8'
+    concurrency:
+      group: native-fixed148-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Independently fetch approved main and bind the actual test merge
+        run: |
+          git -c gc.auto=0 fetch --no-tags --no-recurse-submodules origin refs/heads/main:refs/remotes/origin/main
+          python3 -B adapters/linux/native-host/comparison_provenance.py "$RUNNER_TEMP/fixed-sdk-source-provenance.json"
+      - name: Check unchanged private-graph controls and comparison boundaries
+        run: python3 -B -m unittest discover -s adapters/linux/native-host -p 'test_*.py' -v
+      - name: Install build tools only on the disposable hosted runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y meson ninja-build gettext libjson-c-dev pkg-config
+      - name: Verify pinned source and build the private comparison prefix
+        run: python3 -B adapters/linux/native-host/comparison_sdk.py prepare "$RUNNER_TEMP/mixyard-sdk148"
+      - name: Build identical native tests and actual canonical host against the fixed SDK
+        run: |
+          export MIXYARD_NATIVE_BUILD="$RUNNER_TEMP/mixyard-native-build"
+          mkdir -m 700 "$MIXYARD_NATIVE_BUILD"
+          bash adapters/linux/native-host/build.sh
+      - name: Verify real linked failure and tail oracles
+        run: python3 -B adapters/linux/native-host/check_host.py "$RUNNER_TEMP/mixyard-native-build/host-oracle" "$RUNNER_TEMP"
+      - name: Run the same two-epoch nine-case qualification with explicit SDK descriptor
+        run: |
+          python3 -B adapters/linux/native-host/qualify.py "$RUNNER_TEMP/mixyard-native-build/native-graph" \
+            "$RUNNER_TEMP/native-evidence.json" --comparison-sdk "$MIXYARD_COMPARISON_SDK"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-native-fixed148-comparison-evidence
+          path: |
+            ${{ runner.temp }}/native-evidence.json
+            ${{ runner.temp }}/mixyard-native-build/native-map-check.json
+            ${{ runner.temp }}/fixed-sdk-source-provenance.json
+            ${{ runner.temp }}/mixyard-sdk148/descriptor.json
+            ${{ runner.temp }}/mixyard-sdk148/source-inputs.json
+            ${{ runner.temp }}/mixyard-sdk148/prefix-manifest.json
+          if-no-files-found: warn
