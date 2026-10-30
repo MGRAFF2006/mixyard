@@ -167,3 +167,38 @@ fn intent_pending_forget_error_invalidates_session_opened_while_waiting() {
         .request(&id, current.generation, &fixture.raw())
         .is_err());
 }
+
+#[test]
+fn intent_wrong_credential_open_preserves_established_session() {
+    let fixture = Fixture::new();
+    let id = fixture.target().device_id;
+    let current = fixture
+        .client
+        .open(&id, &fixture.target().credential_id)
+        .unwrap();
+    assert_eq!(
+        fixture
+            .client
+            .request(&id, current.generation, &fixture.raw())
+            .unwrap()
+            .status,
+        200
+    );
+    let wrong = if fixture.target().credential_id != "0".repeat(64) {
+        "0".repeat(64)
+    } else {
+        "1".repeat(64)
+    };
+    assert!(fixture.client.open(&id, &wrong).is_err());
+    let after = fixture
+        .client
+        .request(&id, current.generation, &fixture.raw());
+    if matches!(&after,Err(error) if error.starts_with("Paired session changed;")) {
+        println!("CAUSAL_RED wrong-credential-open-erased-established-session");
+    }
+    assert!(
+        after.is_ok(),
+        "A supplied wrong credential must not invalidate the established controller"
+    );
+    assert_eq!(after.unwrap().status, 200);
+}

@@ -139,9 +139,11 @@ required; no local native compilation was performed for this fixture correction.
 Current pre-admission repair adds a nonauthorizing OpenIntent{generation,serial}.
 Preparation is a fast native snapshot/counter increment: it performs no vault or
 TLS work and never clears a session. The renderer checks its actual lifecycle
-AFTER the snapshot reply and BEFORE dispatching a blocking open. Native admission
+AFTER the snapshot reply and BEFORE dispatching a blocking open. Native ordering reservation
 compares the captured generation and cancellation serial under the same Authority
-lock before even the first vault read. A worker delayed until after a successful
+lock before even the first vault read. It does not clear established authority;
+credential validation and an atomic post-vault reservation/generation recheck
+precede destructive activation. A worker delayed until after a successful
 replacement cannot unconditionally advance that replacement. The synchronous
 native convenience uses the same preparation/admission path; no JS clock, stored
 counter, automatic replay or authorization token is introduced.
@@ -150,7 +152,7 @@ Cancellation of a never-admitted intent advances only a bounded serial fence,
 not the generation/session. Existing established authority survives even if its
 generation equals the cancelled snapshot's base. After admission, cancellation
 can clear only the exact admitted serial AND generation. Other queued stale
-intents fail and require explicit Refresh, with no automatic retry. Four integer/
+intents fail and require explicit Refresh, with no automatic retry. Constant-size integer/
 optional fields bound bookkeeping; no ticket map or waiter grows over time. All
 session publication/revision writes still use Authority; no state lock crosses
 vault/network I/O or waits for the separate operation mutex.
@@ -179,3 +181,17 @@ admission and pending-Forget vault-error TLS tests. Sources/executables are
 independently attested in isolated targets. No local Rust/SDK build or native
 race execution is claimed for these new tests. Fresh whole final reviews and
 required current-head checks remain mandatory.
+
+Actual e7 hosted jobs passed all13 native tests, including historical b2 three-RED
+and f6 pre-vault RED, then FAILED the full qualifier at its existing wrong-credential
+assertion: a rejected supplied credential had already cleared an established B.
+Those failures are retained; the qualifier assertion is unchanged. Reservation
+and activation are now separate. A pre-vault reservation fences obsolete intents
+without clearing any session. Only after the supplied stored credential matches
+can a SAME-lock freshness recheck atomically activate the replacement. Errors
+cancel only that ticket, never restore a captured old session over concurrent B.
+The current actual-TLS suite adds a14th regression: current B real request ->
+wrong-credential open rejection -> same B real request must still work. Exact e7
+production source must first be causal RED for this assertion in its own target.
+Fresh current14-test execution AND the complete existing qualifier remain pending;
+no local Rust compile/execution or successful full native qualification is claimed.

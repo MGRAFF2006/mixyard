@@ -91,6 +91,12 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin f6b1b0df5c31aef975875098b8a9a385c61aa899
           python -B verification/desktop-paired/native-pre-admission-before.py
+      - name: Historical supplied-credential regression is causally RED (actual TLS)
+        env:
+          MIXYARD_TEST_CONTROL_BINARY: ${{ github.workspace }}/qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}
+        run: |
+          git fetch --no-tags --depth=1 origin e7eab403627600529536be7f4610b53c1610b922
+          python -B verification/desktop-paired/native-pre-admission-before.py wrong-credential
       - name: Actual current production native authority concurrency and TLS regressions
         env:
           MIXYARD_TEST_CONTROL_BINARY: ${{ github.workspace }}/qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}

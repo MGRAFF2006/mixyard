@@ -175,6 +175,8 @@ struct Authority {
     issued_intent: u64,
     cancelled_through: u64,
     admitted_intent: Option<OpenIntent>,
+    reserved_intent: Option<OpenIntent>,
+    last_reserved: u64,
 }
 impl Authority {
     fn advance(&mut self) -> Result<u64, String> {
@@ -185,6 +187,7 @@ impl Authority {
         self.generation = next;
         self.session = None;
         self.admitted_intent = None;
+        self.reserved_intent = None;
         Ok(next)
     }
 }
@@ -205,6 +208,8 @@ impl Host {
                 issued_intent: 0,
                 cancelled_through: 0,
                 admitted_intent: None,
+                reserved_intent: None,
+                last_reserved: 0,
             }),
             operation: Mutex::new(()),
             #[cfg(test)]
@@ -240,13 +245,31 @@ impl Host {
             serial,
         })
     }
-    fn admit_open(&self, intent: OpenIntent) -> Result<u64, String> {
+    fn reserve_open(&self, intent: OpenIntent) -> Result<(), String> {
         let mut state = self
             .authority
             .lock()
             .map_err(|_| "Paired session unavailable")?;
         if intent.serial == 0
             || intent.serial > state.issued_intent
+            || intent.serial <= state.cancelled_through
+            || intent.serial <= state.last_reserved
+            || intent.generation != state.generation
+        {
+            return Err(
+                "Paired open intent is stale or cancelled; explicitly Refresh, never replay".into(),
+            );
+        }
+        state.last_reserved = intent.serial;
+        state.reserved_intent = Some(intent);
+        Ok(()) // Non-destructive until the supplied credential is validated.
+    }
+    fn activate_open(&self, intent: OpenIntent) -> Result<u64, String> {
+        let mut state = self
+            .authority
+            .lock()
+            .map_err(|_| "Paired session unavailable")?;
+        if state.reserved_intent != Some(intent)
             || intent.serial <= state.cancelled_through
             || intent.generation != state.generation
         {
@@ -269,6 +292,9 @@ impl Host {
         // Constant bounded state fences older queued admissions. NEVER clear an
         // established session merely because an UNADMITTED ticket's base matches.
         state.cancelled_through = state.cancelled_through.max(intent.serial);
+        if state.reserved_intent == Some(intent) {
+            state.reserved_intent = None;
+        }
         if state.admitted_intent == Some(intent)
             && intent.generation.checked_add(1) == Some(state.generation)
         {
@@ -522,15 +548,18 @@ impl<V: Vault> Paired<V> {
         hex_id(credential_id)?;
         let _admission = self.admit()?;
         let host = self.host(id)?;
-        // The caller obtains its ticket BEFORE scheduling a blocking worker.
-        // CAS admission must precede even the first potentially blocked vault read.
-        let generation = host.admit_open(intent)?;
-        #[cfg(test)]
-        host.checkpoint(authority_tests::Checkpoint::OpenAdmitted, generation);
+        // Reserve ordering BEFORE the first potentially blocked vault read,
+        // but do NOT clear an established session for an unverified credential.
+        host.reserve_open(intent)?;
         let result = (|| {
             if self.stored(id)?.target.credential_id != credential_id {
                 return Err("Saved controller changed; select its new target. Old workspace authority cannot be rebound.".into());
             }
+            // Recheck the reservation AND generation atomically AFTER vault I/O.
+            // A newer winner invalidates this intent; never restore old state.
+            let generation = host.activate_open(intent)?;
+            #[cfg(test)]
+            host.checkpoint(authority_tests::Checkpoint::OpenAdmitted, generation);
             self.fresh(&host, generation)?;
             let _operation = host.operation.lock().map_err(|_| "Session unavailable")?;
             self.fresh(&host, generation)?;
@@ -568,7 +597,7 @@ impl<V: Vault> Paired<V> {
             })
         })();
         if result.is_err() {
-            let _ = self.disconnect(id, Some(generation));
+            let _ = host.cancel_open(intent);
         }
         result
     }
