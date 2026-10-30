@@ -97,6 +97,42 @@ int main(void) {
             self.assertEqual(parsed["writes"][0]["layout"]["header"]["offsetFromPcm"], -64)
             self.assertNotIn(b"0x", observed.stdout)  # No raw pointer serialization.
 
+    def test_pool_position_setup_requires_exact_inspected_sdk_contract(self):
+        # CPU policy/source wiring only. No PipeWire headers, library or API runs.
+        base = Path(__file__).resolve().parent
+        fixture = (base / "native_pool_check.c").read_text()
+        bind = fixture.index("spa_node_set_io(node, SPA_IO_Position, &position, sizeof(position))")
+        self.assertLess(fixture.index("struct spa_io_position position ="), bind)
+        self.assertLess(bind, fixture.index("spa_node_send_command(node, &start)"))
+        self.assertLess(bind, fixture.index("spa_node_process(node)"))
+        self.assertIn("mx_pool_position_contract(headers, runtime, position_result)", fixture)
+        program = r'''#include <assert.h>
+#include "native_pool_contract.h"
+int main(void) {
+    assert(mx_pool_position_contract("1.0.5", "1.0.5", -ENOTSUP));
+    assert(mx_pool_position_contract("1.4.8", "1.4.8", 0));
+    assert(!mx_pool_position_contract("1.4.8", "1.4.8", -ENOTSUP));
+    assert(!mx_pool_position_contract("1.0.5", "1.0.5", 0));
+    assert(!mx_pool_position_contract("1.4.8", "1.0.5", 0));
+    assert(!mx_pool_position_contract("1.0.5", "1.4.8", -ENOTSUP));
+    assert(!mx_pool_position_contract("1.4.9", "1.4.9", 0));
+    assert(!mx_pool_position_contract("1.0.6", "1.0.6", -ENOTSUP));
+    assert(!mx_pool_position_contract(NULL, "1.4.8", 0));
+    assert(!mx_pool_position_contract("1.4.8", NULL, 0));
+    assert(!mx_pool_position_contract("1.4.8", "1.4.8", -EINVAL));
+    assert(!mx_pool_position_contract("1.0.5", "1.0.5", -EIO));
+    assert(!mx_pool_position_contract("1.4.8", "1.4.8", 1));
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="mixyard-pool-contract-", dir="/dev/shm") as root:
+            source, binary = Path(root) / "contract.c", Path(root) / "contract"
+            source.write_text(program)
+            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                            "-I", str(base), str(source), "-o", str(binary)],
+                           env=dict(os.environ, TMPDIR=root), check=True, capture_output=True)
+            subprocess.run([str(binary)], check=True, capture_output=True)
+
     def test_actual_c_and_python_os_clock_share_the_recorded_namespace(self):
         base = Path(__file__).resolve().parent
         program = r'''#include <assert.h>

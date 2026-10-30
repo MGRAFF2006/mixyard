@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Actual distro SPA audiomixer ownership counterexample, not an emulated mixer.
+// Actual pinned SPA audiomixer ownership counterexample, not an emulated mixer.
 // No PipeWire context/server/connection, device, process capture or playback.
 #include <assert.h>
 #include <errno.h>
@@ -13,6 +13,7 @@
 #include <spa/utils/names.h>
 #include "native_format.h"
 #include "consumer_copy.h"
+#include "native_pool_contract.h"
 #define SAMPLES 256
 struct block {
     struct spa_buffer buffer;
@@ -51,6 +52,23 @@ int main(int argc, char **argv) {
     assert(handle);
     struct spa_node *node = NULL;
     assert(spa_handle_get_interface(handle, SPA_TYPE_INTERFACE_Node, (void **)&node) == 0 && node);
+    // Own this IO area through the final process call and plugin unload. The
+    // 1.4.8 mixer unconditionally reads clock.cycle (zero-initialized here).
+    // Synchronous SPA_IO_Buffers is bound for both cycle parities by that SDK.
+    // This is a synthetic fixture position, not observed native clock evidence.
+    struct spa_io_position position = { .clock = { .id = 11,
+        .rate = { .num = 1, .denom = 48000 }, .position = 100,
+        .duration = 128, .rate_diff = 1.0 }, .state = SPA_IO_POSITION_STATE_RUNNING };
+    puts("native_pool_check: binding fixture SPA_IO_Position before processing");
+    fflush(stdout);
+    int position_result = spa_node_set_io(node, SPA_IO_Position, &position, sizeof(position));
+    const char *headers = pw_get_headers_version(), *runtime = pw_get_library_version();
+    if (!mx_pool_position_contract(headers, runtime, position_result)) {
+        fprintf(stderr, "native_pool_check: unrecognized SDK/position result %d\n", position_result);
+        return 2;
+    }
+    printf("native_pool_check: header=%s runtime=%s positionResult=%d\n", headers, runtime, position_result);
+    fflush(stdout);
     assert(spa_node_add_port(node, SPA_DIRECTION_INPUT, 0, NULL) == 0);
     uint8_t storage[2048];
     struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(storage, sizeof(storage));
@@ -121,7 +139,7 @@ int main(int argc, char **argv) {
     assert(mx_native_startup_unavailable(true, empty, 128)); // RED with old full-size-only helper
     assert(!mx_native_startup_unavailable(false, empty, 128));
     // This expected counterexample is diagnostic evidence, never a graph PASS.
-    printf("{\"actualSpaPlugin\":true,\"singleInputBufferAlias\":true,\"heldMetadataChanged\":true,\"heldPcmChanged\":true,\"ownedCopyStable\":true,\"ownedConsumerCopyStable\":true,\"poolBuffers\":2,\"zeroByteEmptyUnavailable\":true,\"exhaustedResult\":%d}\n", exhausted);
+    printf("{\"actualSpaPlugin\":true,\"singleInputBufferAlias\":true,\"heldMetadataChanged\":true,\"heldPcmChanged\":true,\"ownedCopyStable\":true,\"ownedConsumerCopyStable\":true,\"poolBuffers\":2,\"zeroByteEmptyUnavailable\":true,\"exhaustedResult\":%d,\"headerVersion\":\"%s\",\"runtimeVersion\":\"%s\",\"positionIoResult\":%d,\"positionBound\":%s}\n", exhausted, headers, runtime, position_result, position_result == 0 ? "true" : "false");
     assert(pw_unload_spa_handle(handle) == 0);
     pw_loop_leave(loop); pw_loop_destroy(loop); pw_deinit();
     return 0;
