@@ -279,11 +279,10 @@ fatal error, and the core-error notification. A failed clock read is recorded
 as unavailable/zero; it cannot establish ordering. Both processes record their actual Linux time-namespace
 inode. The control regression checks C/Python OS timestamps and namespace on
 owned processes; no hardware/engine/PipeWire clock mapping is inferred. The
-first fatal error and strict EMPTY rejection remain unchanged. This diagnostic
-revision still requires error 46 for server loss: it does not accept error 12
-or overwrite its first-cause record. A witnessed ordering/geometry decision,
-negative pre-stop/unrelated-corruption checks, and another gated SDK run are
-required before considering any narrower expected-teardown classification.
+first fatal error and strict EMPTY rejection remain unchanged in the native
+binary. Qualification retains the normal first-EPIPE46 witness and separately
+labels only a proved post-owned-stop unavailable callback as described below;
+it never rewrites the first error or treats EMPTY as admitted PCM.
 
 
 Pre-admission payload readiness is based on valid-data length, not solely EMPTY.
@@ -300,7 +299,7 @@ unknown flags, wrong strides/offsets, missing metadata and all admitted invalid
 or EMPTY data remain fatal. The actual SDK allocator and SPA-plugin regressions
 exercise these states and rejection boundaries; local SDK execution remains
 unavailable. `startupUnavailable` accurately names their diagnostic counters.
-The strict server-loss first-error/code-46 gate remains unchanged.
+The production first-error/EMPTY gate remains strict; qualification labels are separate from native processing.
 
 
 Native layout diagnosis preserves bounded registration and write evidence for
@@ -328,3 +327,28 @@ first error, warning, cancellation or server-loss gates. Portable controls check
 ID retirement/reuse/capacity, relative overlap/overflow/unknown handling and
 serialization size. Actual new SDK compilation and full hosted evidence remain
 required before drawing a production-layout conclusion.
+
+
+Qualification may emit `expected-post-owned-stop-unavailable` only for the
+specifically observed full EMPTY consumer-port-0 descriptor after an owned
+SIGTERM. The native binary still exits 1 with first error12 and never resumes;
+the raw report remains unchanged and `expectedTeardown.firstFatalError` stays12.
+All ordinary scenarios still reject every error12. The existing direct EPIPE46
+classification remains separate.
+
+The added classification requires the exact full descriptor (not zero/partial,
+corrupt, unknown flags or geometry), matching retired registration with known
+non-overlapping relative layout, same known OS CLOCK_MONOTONIC/time namespace,
+callback entry strictly AFTER the controller's actual signal syscall returned,
+first fatal observation at/after entry and strictly before the complete core
+EPIPE notification. It also requires the actual owned SIGTERM/reap without
+escalation, exact single core0/-EPIPE/message/40-byte stderr, no mismatch/heap
+operations and complete DataLoop retirement/storage scrub. Unknown clocks,
+pre-stop callbacks, wrong signal/core, extra diagnostics or missing witnesses
+reject. No comparison with PipeWire sample time is used.
+
+This is a changed qualification contract that requires independent review and
+new hosted evidence. The earlier pre-stop malformed 10c consumer descriptor
+remains an unresolved mapping/lifetime blocker; a later ordinary green run or
+this expected-stop tag does not repair or close it. Current layout diagnostics
+have not established cross-buffer/shared-map identity or a specific cause.

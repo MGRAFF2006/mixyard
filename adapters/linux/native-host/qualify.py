@@ -194,6 +194,88 @@ def parse_report(text):
     return result
 
 
+def exact_value(value, expected):
+    """Closed typed evidence: bool/float are not substitutes for integer fields."""
+    if type(value) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return value.keys() == expected.keys() and all(exact_value(value[key], item) for key, item in expected.items())
+    if isinstance(expected, list):
+        return len(value) == len(expected) and all(exact_value(a, b) for a, b in zip(value, expected))
+    return value == expected
+
+
+def positive_u64(value):
+    return type(value) is int and 0 < value < 2**64
+
+
+def classify_owned_server_stop(report, stopped, stderr, returncode):
+    """Qualification only. Preserve raw first error; never resume/relabel native PCM."""
+    verify_retirement(report)
+    core = report.get("coreError")
+    if (not isinstance(stopped, dict) or not positive_u64(stopped.get("pid")) or type(stopped.get("requestedSignal")) is not int or
+            stopped["requestedSignal"] != signal.SIGTERM or stopped.get("escalated") is not False or
+            type(stopped.get("returncode")) is not int or stopped["returncode"] not in (0, -signal.SIGTERM) or
+            report.get("expectedServerLoss") is not True or type(report.get("coreErrorCount")) is not int or
+            report["coreErrorCount"] != 1 or not isinstance(core, dict) or
+            set(core) != {"id", "sequence", "result", "messageComplete", "message", "observedMonotonicNs"} or
+            type(core.get("id")) is not int or core["id"] != 0 or
+            type(core.get("sequence")) is not int or not -(2**31) <= core["sequence"] < 2**31 or
+            type(core.get("result")) is not int or core["result"] != -errno.EPIPE or
+            core.get("messageComplete") is not True or core.get("message") != "connection error" or
+            stderr != f"native core error {-errno.EPIPE}: connection error\n" or
+            type(returncode) is not int or returncode != 1 or
+            type(report.get("sampleMismatches")) is not int or report["sampleMismatches"] != 0 or
+            type(report.get("callbackHeapOperations")) is not int or report["callbackHeapOperations"] != 0):
+        raise RuntimeError("server loss lacks the exact owned-stop/EPIPE diagnostic witness")
+    if type(report.get("error")) is int and report["error"] == 46:
+        return "expected-server-disconnect"
+    fault = report.get("firstChunkFailure")
+    layout = {"capacity": 2048,
+              "chunk": {"known": True, "offsetFromPcm": -16, "overlapsPcm": False},
+              "header": {"known": True, "offsetFromPcm": -48, "overlapsPcm": False}}
+    # Only the measured pinned-SDK full EMPTY teardown descriptor. Unknown/new
+    # fields or different geometry need a new witnessed contract, not a fallback.
+    normalized = {"error": 12, "ownedCopy": False, "role": 2, "port": 0, "direction": 0,
+                  "phase": 1, "command": 1, "frames": 128, "nDatas": 1, "dataType": 1,
+                  "dataFlags": 7, "maxsize": 2048, "mapoffset": 0, "bufferFrames": 0,
+                  "chunkPresent": True, "offset": 0, "size": 2048, "stride": 16, "flags": 2,
+                  "clockDuration": 128, "rateNum": 1, "rateDenom": 48000,
+                  "headerPresent": True, "headerFlags": 0, "headerSeq": 0, "headerPts": 0,
+                  "sampleIndex": 0, "actualBits": 0, "expectedBits": 0, "layout": layout}
+    varying = {"registrationId", "clockId", "clockFrame", "clockNs", "callbackMonotonicNs"}
+    if (type(report.get("error")) is not int or report["error"] != 12 or
+            not exact_value(report.get("stage"), 3) or report.get("cancelled") is not False or
+            not exact_value(report.get("expectedFormat"), {"format": 285, "rate": 48000, "channels": 2, "positions": [3, 4]}) or
+            not exact_value(report.get("stopSignal"), 0) or "firstSampleMismatch" not in report or
+            report["firstSampleMismatch"] is not None or report.get("bufferRegistrationOverflow") is not False or
+            not isinstance(fault, dict) or set(fault) != set(normalized) | varying or
+            not exact_value({key: fault[key] for key in normalized}, normalized) or
+            not all(positive_u64(fault[key]) for key in varying) or fault["clockId"] >= 2**32):
+        raise RuntimeError("first fault is not the exact post-stop unavailable descriptor")
+    registrations = report.get("bufferRegistrations")
+    if not isinstance(registrations, list) or not 1 <= len(registrations) <= 128:
+        raise RuntimeError("post-stop descriptor registration unavailable")
+    ids = [item.get("id") if isinstance(item, dict) else None for item in registrations]
+    if not all(type(value) is int and 1 <= value <= 128 for value in ids) or len(set(ids)) != len(ids):
+        raise RuntimeError("post-stop descriptor registration ambiguous")
+    expected_registration = {"id": fault["registrationId"], "role": 2, "direction": 0,
+                             "port": 0, "removed": True, "layout": layout}
+    registered = [item for item in registrations if item["id"] == fault["registrationId"]]
+    if len(registered) != 1 or not exact_value(registered[0], expected_registration):
+        raise RuntimeError("post-stop descriptor does not match its retired registration")
+    if (report.get("osClock") != "CLOCK_MONOTONIC" or stopped.get("osClock") != "CLOCK_MONOTONIC" or
+            not positive_u64(report.get("osTimeNamespace")) or
+            not exact_value(stopped.get("osTimeNamespace"), report["osTimeNamespace"])):
+        raise RuntimeError("post-stop ordering has no common OS clock/namespace evidence")
+    times = [stopped.get(key) for key in ("beforeSignalNs", "signalReturnedNs", "stopCompletedNs")]
+    entry, fatal, notification = fault["callbackMonotonicNs"], report.get("firstErrorMonotonicNs"), core["observedMonotonicNs"]
+    if (not all(positive_u64(value) for value in times + [fatal, notification]) or
+            not times[0] <= times[1] < entry <= fatal < notification or times[2] < times[1]):
+        raise RuntimeError("first fault is not proved after the owned signal syscall and before EPIPE")
+    return "expected-post-owned-stop-unavailable"
+
+
 def run(binary, env, directory, cancel=False, server_loss=None, mode="normal",
         stop_signal=signal.SIGTERM, captures=None):
     captures = captures if captures is not None else Captures()
@@ -224,23 +306,10 @@ def run(binary, env, directory, cancel=False, server_loss=None, mode="normal",
         report = parse_report(stdout)
         verify_retirement(report)
         if server_loss:
-            stopped = server_loss.stop_result
-            core = report.get("coreError")
-            # Exact PipeWire 1.0.5 EPIPE notification after OUR owned daemon
-            # was deliberately stopped. No prefix/warning blanket exception.
-            if (not stopped or stopped["requestedSignal"] != signal.SIGTERM or
-                    stopped["escalated"] or stopped["returncode"] not in (0, -signal.SIGTERM) or
-                    report.get("expectedServerLoss") is not True or report.get("coreErrorCount") != 1 or
-                    not isinstance(core, dict) or set(core) != {"id", "sequence", "result", "messageComplete", "message", "observedMonotonicNs"} or
-                    type(core.get("id")) is not int or core["id"] != 0 or
-                    type(core.get("sequence")) is not int or not -(2**31) <= core["sequence"] < 2**31 or
-                    core.get("result") != -errno.EPIPE or core.get("messageComplete") is not True or
-                    core.get("message") != "connection error" or
-                    stderr != f"native core error {-errno.EPIPE}: connection error\n" or
-                    process.returncode != 1 or report["error"] != 46 or report["sampleMismatches"]):
-                capture.reject("server loss lacks the exact owned-stop/EPIPE diagnostic witness")
-            capture.validation = "expected-server-disconnect"
-            return {"topology": topology, "activeIsolation": active, "result": report}
+            classification = classify_owned_server_stop(report, server_loss.stop_result, stderr, process.returncode)
+            capture.validation = classification
+            return {"topology": topology, "activeIsolation": active, "result": report,
+                    "expectedTeardown": {"classification": classification, "firstFatalError": report["error"]}}
         if stderr:
             capture.reject("unexpected native client diagnostic output")
         if report.get("expectedServerLoss") is not False or type(report.get("coreErrorCount")) is not int or report["coreErrorCount"] != 0 or report.get("coreError") is not None:

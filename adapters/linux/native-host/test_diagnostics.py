@@ -1,6 +1,7 @@
 """Real owned child pipes at the production gate; no PipeWire/SDK is loaded."""
 import base64
 import contextlib
+import copy
 import errno
 import io
 import json
@@ -51,6 +52,33 @@ def passing_report(mode="normal", cancel=False, server_loss=False):
     return result
 
 
+def post_stop_report():
+    """Controlled copy of the observed 8b full-EMPTY shape; times are synthetic."""
+    report = passing_report(server_loss=True)
+    report.update(stage=3, error=12, osClock="CLOCK_MONOTONIC", osTimeNamespace=42,
+                  firstErrorMonotonicNs=1030, firstSampleMismatch=None, bufferRegistrationOverflow=False,
+                  expectedFormat={"format": 285, "rate": 48000, "channels": 2, "positions": [3, 4]})
+    report["coreError"]["observedMonotonicNs"] = 1040
+    layout = {"capacity": 2048, "chunk": {"known": True, "offsetFromPcm": -16, "overlapsPcm": False},
+              "header": {"known": True, "offsetFromPcm": -48, "overlapsPcm": False}}
+    report["firstChunkFailure"] = {"registrationId": 23, "layout": layout, "error": 12, "ownedCopy": False,
+        "role": 2, "port": 0, "direction": 0, "phase": 1, "command": 1, "frames": 128, "nDatas": 1,
+        "dataType": 1, "dataFlags": 7, "maxsize": 2048, "mapoffset": 0, "bufferFrames": 0,
+        "chunkPresent": True, "offset": 0, "size": 2048, "stride": 16, "flags": 2,
+        "clockId": 11, "clockFrame": 7425512, "clockNs": 154698166666, "clockDuration": 128,
+        "callbackMonotonicNs": 1020, "rateNum": 1, "rateDenom": 48000, "headerPresent": True,
+        "headerFlags": 0, "headerSeq": 0, "headerPts": 0, "sampleIndex": 0, "actualBits": 0, "expectedBits": 0}
+    report["bufferRegistrations"] = [{"id": 23, "role": 2, "direction": 0, "port": 0,
+                                       "removed": True, "layout": copy.deepcopy(layout)}]
+    return report
+
+
+def post_stop_witness():
+    return {"pid": 100, "requestedSignal": 15, "escalated": False, "returncode": 0,
+            "osClock": "CLOCK_MONOTONIC", "osTimeNamespace": 42,
+            "beforeSignalNs": 1000, "signalReturnedNs": 1010, "stopCompletedNs": 1050}
+
+
 CHILD = r'''
 import base64, json, os, pathlib, signal, sys, time
 root = pathlib.Path(sys.argv[1]); config = json.loads(sys.argv[2])
@@ -77,6 +105,9 @@ if config.get("serverPid"):
         except ProcessLookupError: break
         if time.monotonic() >= deadline: raise RuntimeError("owned server not reaped")
         time.sleep(.001)
+    if config.get("postStop"):
+        report["firstChunkFailure"]["callbackMonotonicNs"] = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+        report["firstErrorMonotonicNs"] = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
     report["coreError"]["observedMonotonicNs"] = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
 if config.get("cancel"):
     while not report["cancelled"]:
@@ -91,10 +122,10 @@ raise SystemExit(config.get("returncode", 0))
 
 class Diagnostics(unittest.TestCase):
     def launch_case(self, root, *, mode="normal", cancel=False, stderr=b"", stdout=None,
-                    server=None, report=None):
+                    server=None, report=None, post_stop=False):
         config = {"report": report if report is not None else passing_report(mode, cancel, server is not None),
                   "stderr": base64.b64encode(stderr).decode(), "cancel": cancel,
-                  "returncode": 1 if server else 0}
+                  "returncode": 1 if server else 0, "postStop": post_stop}
         if stdout is not None:
             config["stdout"] = base64.b64encode(stdout).decode()
         if server:
@@ -208,6 +239,97 @@ while True: time.sleep(.01)
                 self.assertEqual(base64.b64decode(record[stream]["rawBase64"]), diagnostic)
                 self.assertIsNotNone(daemon.process.returncode)
                 self.assertFalse(daemon.reader.is_alive())
+
+    def test_post_stop_empty_requires_closed_geometry_and_actual_os_ordering(self):
+        expected = "native core error -32: connection error\n"
+        report, stopped = post_stop_report(), post_stop_witness()
+        original = copy.deepcopy(report)
+        self.assertEqual(qualify.classify_owned_server_stop(report, stopped, expected, 1),
+                         "expected-post-owned-stop-unavailable")
+        self.assertEqual(report, original)  # First error12/raw evidence are not rewritten to46.
+        mutations = [
+            ("report", ["firstChunkFailure", "callbackMonotonicNs"], 1009),  # pre-stop
+            ("report", ["firstChunkFailure", "callbackMonotonicNs"], 1010),
+            ("report", ["firstErrorMonotonicNs"], 1019),
+            ("report", ["firstErrorMonotonicNs"], 1040),
+            ("report", ["coreError", "observedMonotonicNs"], 0),
+            ("report", ["osTimeNamespace"], 43), ("stop", ["osTimeNamespace"], None),
+            ("report", ["osClock"], "unknown"), ("stop", ["osClock"], "CLOCK_BOOTTIME"),
+            ("stop", ["beforeSignalNs"], None), ("stop", ["signalReturnedNs"], 0),
+            ("stop", ["stopCompletedNs"], 1009),
+            ("stop", ["requestedSignal"], 2), ("stop", ["escalated"], True),
+            ("stop", ["returncode"], -9), ("stop", ["pid"], 0),
+            ("report", ["coreError", "id"], 7), ("report", ["coreError", "result"], -22),
+            ("report", ["coreError", "messageComplete"], False), ("report", ["coreErrorCount"], 2),
+            ("report", ["dataLoopRetired"], False), ("report", ["retiredOwnedCopiesZero"], False),
+            ("report", ["callbackHeapOperations"], 1), ("report", ["sampleMismatches"], 1),
+            ("report", ["expectedServerLoss"], False), ("report", ["stage"], 1),
+            ("report", ["firstChunkFailure", "offset"], 10240),  # Actual10c corruption, not EMPTY.
+            ("report", ["firstChunkFailure", "size"], 1073741824),
+            ("report", ["firstChunkFailure", "stride"], 81920),
+            ("report", ["firstChunkFailure", "flags"], 1070596096),
+            ("report", ["firstChunkFailure", "size"], 2047),
+            ("report", ["firstChunkFailure", "size"], 0),
+            ("report", ["firstChunkFailure", "flags"], 3),
+            ("report", ["firstChunkFailure", "flags"], 4),
+            ("report", ["firstChunkFailure", "headerFlags"], 1),
+            ("report", ["firstChunkFailure", "headerSeq"], 1),
+            ("report", ["firstChunkFailure", "registrationId"], 0),
+            ("report", ["bufferRegistrations", 0, "removed"], False),
+            ("report", ["firstChunkFailure", "layout", "chunk", "overlapsPcm"], True),
+            ("report", ["firstChunkFailure", "layout", "header", "known"], False),
+            ("report", ["firstChunkFailure", "newUnknownField"], 0),
+            ("report", ["bufferRegistrationOverflow"], True),
+            ("report", ["bufferRegistrations"], []),
+            ("report", ["expectedFormat", "positions"], [3.0, 4]),
+            ("report", ["firstChunkFailure", "size"], 2048.0),
+        ]
+        for target, path, value in mutations:
+            with self.subTest(target=target, path=path, value=value):
+                changed, stop = copy.deepcopy(report), copy.deepcopy(stopped)
+                current = changed if target == "report" else stop
+                for key in path[:-1]:
+                    current = current[key]
+                current[path[-1]] = value
+                with self.assertRaises(RuntimeError):
+                    qualify.classify_owned_server_stop(changed, stop, expected, 1)
+        for field in ("dataLoopRetired", "retiredOwnedCopiesZero", "stopSignalsReady", "firstErrorMonotonicNs"):
+            missing = copy.deepcopy(report)
+            del missing[field]
+            with self.subTest(missing=field), self.assertRaises(RuntimeError):
+                qualify.classify_owned_server_stop(missing, stopped, expected, 1)
+        with self.assertRaises(RuntimeError):
+            qualify.classify_owned_server_stop(report, stopped, expected + "[W] extra warning\n", 1)
+        duplicate = copy.deepcopy(report)
+        duplicate["bufferRegistrations"].append(copy.deepcopy(duplicate["bufferRegistrations"][0]))
+        with self.assertRaises(RuntimeError):
+            qualify.classify_owned_server_stop(duplicate, stopped, expected, 1)
+
+    def test_owned_stop_tag_preserves_first12_through_production_capture(self):
+        expected = b"native core error -32: connection error\n"
+        with tempfile.TemporaryDirectory(prefix="mixyard-owned-stop-empty-", dir="/dev/shm") as temporary:
+            root = Path(temporary)
+            captures = Captures()
+            daemon = self.start_daemon(captures, root)
+            try:
+                result, failure = self.launch_case(root, server=daemon, stderr=expected,
+                                                  report=post_stop_report(), post_stop=True)
+                self.assertIsNone(failure)
+                qualified = result["serverEpochs"][0]["controlled"]
+                self.assertEqual(qualified["expectedTeardown"], {
+                    "classification": "expected-post-owned-stop-unavailable", "firstFatalError": 12})
+                self.assertEqual(qualified["result"]["error"], 12)
+                raw = json.loads(base64.b64decode(result["diagnostics"][0]["stdout"]["rawBase64"]))
+                self.assertEqual(raw, qualified["result"])
+                self.assertEqual(result["diagnostics"][0]["validation"], "expected-post-owned-stop-unavailable")
+            finally:
+                self.assertEqual(captures.finalize(), [])
+        with tempfile.TemporaryDirectory(prefix="mixyard-ordinary-empty-", dir="/dev/shm") as temporary:
+            report = post_stop_report()
+            report.update(expectedServerLoss=False, coreErrorCount=0, coreError=None)
+            result, failure = self.launch_case(Path(temporary), report=report)
+            self.assertIsNotNone(failure)  # Ordinary first-error12 can never use this tag.
+            self.assertEqual(result["qualification"], "failure")
 
     def test_server_disconnect_exception_needs_exact_stopped_owner_and_core_cause(self):
         expected = f"native core error {-errno.EPIPE}: connection error\n".encode()

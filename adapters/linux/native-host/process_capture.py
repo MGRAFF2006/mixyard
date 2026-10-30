@@ -29,7 +29,7 @@ def stop_owned(process):
             result[field] = None  # Unknown ordering never prevents owned shutdown.
 
     if process.poll() is None:
-        result["requestedSignal"] = signal.SIGTERM
+        result["requestedSignal"] = int(signal.SIGTERM)
         sample("beforeSignalNs")
         process.send_signal(signal.SIGTERM)
         sample("signalReturnedNs")
@@ -178,7 +178,7 @@ class Captures:
                 capture.finish()
                 if capture.role == "daemon":
                     capture.check_daemon()
-                elif capture.validation not in ("clean", "expected-server-disconnect"):
+                elif capture.validation not in ("clean", "expected-server-disconnect", "expected-post-owned-stop-unavailable"):
                     capture.reject(capture.rejection or "client did not pass complete qualification")
             except Exception as error:
                 failures.append(str(error)[:2048])
