@@ -844,3 +844,60 @@ fn inventory_rejects_bad_envelopes_oversize_and_is_cancellable_with_total_deadli
     assert!(start.elapsed() < Duration::from_secs(1));
     worker.join().unwrap();
 }
+
+// Force a real empty-queue handoff before each small write. A fixed 10 ms
+// inventory sleep would consume the two-second budget before reaching 1 MiB;
+// the same bounded readiness wait must wake when each producer write arrives.
+#[cfg(unix)]
+#[test]
+fn inventory_readiness_handoffs_do_not_accumulate_idle_waits() {
+    use std::os::unix::net::UnixStream;
+    let (mut reader, mut writer) = UnixStream::pair().unwrap();
+    reader.set_nonblocking(true).unwrap();
+    writer
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    thread::scope(|scope| {
+        let (request, requests) = mpsc::channel();
+        let producer = scope.spawn(move || {
+            let mut sent = 0;
+            while let Ok((index, count)) = requests.recv() {
+                writer.write_all(&vec![index as u8; count]).unwrap();
+                sent += count;
+            }
+            sent
+        });
+        let start = Instant::now();
+        let mut total = 0;
+        let mut index = 0;
+        while total <= runtime::MAX_INVENTORY_FRAME {
+            let mut probe = [0];
+            assert_eq!(
+                reader.read(&mut probe).unwrap_err().kind(),
+                io::ErrorKind::WouldBlock,
+                "producer must wait for an actual empty socket"
+            );
+            let count = (runtime::MAX_INVENTORY_FRAME + 1 - total).min(2048);
+            request.send((index, count)).unwrap();
+            let mut received = vec![0; count];
+            let mut offset = 0;
+            while offset < count {
+                assert!(start.elapsed() < Duration::from_secs(2));
+                transport::wait_inventory(&reader, false, TICK).unwrap();
+                match reader.read(&mut received[offset..]) {
+                    Ok(0) => panic!("producer closed before its complete chunk"),
+                    Ok(n) => offset += n,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(error) => panic!("inventory handoff read: {error}"),
+                }
+            }
+            assert!(received.iter().all(|byte| *byte == index as u8));
+            total += count;
+            index += 1;
+        }
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert_eq!(total, runtime::MAX_INVENTORY_FRAME + 1);
+        drop(request);
+        assert_eq!(producer.join().unwrap(), total);
+    });
+}
