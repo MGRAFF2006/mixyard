@@ -3,6 +3,11 @@ import test from 'node:test'
 import { pairedApi, nativeCredentialSentinel } from './paired.ts'
 import type { PairedTarget } from './paired.ts'
 import type { Invoke } from './transport.ts'
+import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
+import { ConsoleSession } from '../../web/src/session.ts'
+import { readConfig, signature } from '../../web/src/model.ts'
+const { watch } = createRequire(new URL('../../web/package.json', import.meta.url))('vue') as typeof import('vue')
 const target: PairedTarget = { deviceId: 'device-B', displayName: 'Device B', endpoint: 'https://127.0.0.1:1', certificateSha256: 'pin', credentialId: 'controller', permissions: ['view', 'control'] }
 const identity = { deviceId: target.deviceId, authorityId: 'boot-B', revision: 0, permissions: target.permissions, backendAvailable: false, audioApplied: false }
 
@@ -82,3 +87,65 @@ test('a scoped canonical settings conflict immediately clears shared and native 
   await assert.rejects(api.post('/api/automation/settings/read'), /Refresh to reconnect/)
   assert.equal(requests, 1)
 })
+
+for (const operation of ['open', 'request'] as const) for (const outcome of ['success', 'rejection'] as const) {
+  test(`late native ${operation} ${outcome} cannot invalidate a newer paired workspace`, async () => {
+    let release!: (reply: unknown) => void, reject!: (error: unknown) => void, arrived!: () => void
+    const held = new Promise((resolve, fail) => { release = resolve; reject = fail })
+    const dispatched = new Promise<void>(resolve => { arrived = resolve })
+    let opens = 0, active: number | null = null, heldRequest = false
+    const disconnects: number[] = [], requests: number[] = []
+    const config = readConfig(JSON.parse(readFileSync(new URL('../../web/src/example-config.json', import.meta.url), 'utf8')))
+    const store = { format: 'mixyard-local-drafts', schemaVersion: 1, storeRevision: 0, configRevision: 1, profiles: [], draft: config, previousDraft: null }
+    const invoke: Invoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      if (command === 'paired_open') {
+        active = ++opens
+        if (operation === 'open' && opens === 1) { arrived(); return await held as T }
+        return { generation: opens, status: 200, body: JSON.stringify(identity) } as T
+      }
+      if (command === 'paired_disconnect') {
+        const expected = args!.expectedGeneration as number
+        disconnects.push(expected); if (active === expected) active = null
+        return undefined as T
+      }
+      assert.equal(command, 'paired_request')
+      assert.equal(args!.generation, active, 'shared requests must reach the still-current native generation')
+      requests.push(args!.generation as number)
+      const path = JSON.parse(args!.raw as string).path
+      if (operation === 'request' && path === '/api/validate' && !heldRequest) {
+        heldRequest = true; arrived(); return await held as T
+      }
+      const body = path === '/api/profiles/read' ? store : path === '/api/status' ? { connected: false, snapshot: null, error: null } : { valid: true }
+      return { status: 200, body: JSON.stringify({ ...identity, status: 200, body }) } as T
+    }
+    const api = pairedApi(invoke, target), workspace = new ConsoleSession(api)
+    const stop = watch(() => api.epoch, () => workspace.invalidate(), { flush: 'sync' })
+    try {
+      let old: Promise<unknown>
+      if (operation === 'open') old = api.connect().then(() => null, error => error)
+      else {
+        await workspace.refresh(); assert.equal(workspace.canWrite, true)
+        workspace.local!.sends[0]!.gain = 0.37; workspace.changed()
+        old = workspace.validate()
+      }
+      await dispatched
+      api.disconnect('Explicit disconnect before reconnect')
+      await workspace.refresh(); assert.equal(api.connected, true); assert.equal(workspace.canWrite, true)
+      await workspace.validate(); assert.equal(workspace.validated, true)
+      const draft = signature(workspace.local), epoch = api.epoch
+      if (outcome === 'rejection') reject('Owned obsolete native transport rejection')
+      else release(operation === 'open' ? { generation: 1, status: 200, body: JSON.stringify(identity) }
+        : { status: 200, body: JSON.stringify({ ...identity, status: 200, body: { valid: true } }) })
+      await old
+      assert.equal(active, 2, 'stale cleanup must not disconnect the new native generation')
+      assert.equal(api.epoch, epoch); assert.equal(api.connected, true)
+      assert.equal(workspace.canWrite, true); assert.equal(workspace.validated, true)
+      assert.equal(signature(workspace.local), draft)
+      assert.ok(!disconnects.includes(2), 'obsolete operation may clean only its own generation')
+      const before = requests.length
+      await api.post('/api/profiles/read')
+      assert.equal(requests.length, before + 1, 'a new read actually dispatches through native generation2')
+      assert.equal(requests.at(-1), 2)
+    } finally { stop(); release({}); api.disconnect() }
+  })
+}

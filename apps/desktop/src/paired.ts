@@ -23,7 +23,9 @@ export function pairedApi(invoke: Invoke, target: PairedTarget): Api {
     init.signal?.throwIfAborted()
     const epoch = lifecycle
     const current = generation
-    const abort = () => invalidate()
+    // A timeout/abort belonging to an obsolete exchange cannot own the
+    // generation established by a later explicit reconnect.
+    const abort = () => { if (epoch === lifecycle) invalidate() }
     init.signal?.addEventListener('abort', abort, { once: true })
     let reply: Reply
     try {
@@ -44,7 +46,7 @@ export function pairedApi(invoke: Invoke, target: PairedTarget): Api {
       init.signal?.throwIfAborted()
       return new Response(reply.body, { status: reply.status, headers: { 'Content-Type': 'application/json' } })
     } catch (error) {
-      invalidate()
+      if (epoch === lifecycle) invalidate()
       if (error instanceof DOMException) throw error
       throw new TypeError(`Native paired transport: ${String(error)}`)
     } finally { init.signal?.removeEventListener('abort', abort) }

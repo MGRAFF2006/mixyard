@@ -12,7 +12,7 @@ outside the window lifecycle.
    `invite --permissions view,control,settings` locally while it is stopped. Choose
    only the independent roles this controller should receive. Start that device's
    control service explicitly on its exact private IP/port. See
-   [remote control](https://github.com/MGRAFF2006/mixyard/blob/812eee1479702635dc51994dc795ca9f8a655351/docs/remote-control.md) in the service PR #76.
+   [remote control](https://github.com/MGRAFF2006/mixyard/blob/b3731ce51af02cfbcd0ad6fb7080694f08b6a0bd/docs/remote-control.md) in the service PR #76.
 2. Transfer the invitation JSON through your existing trusted channel. In the
    desktop, expand **Pair and manage devices**, enter a display name and the exact
    `https://PRIVATE_NUMERIC_IP:PORT`, and paste the JSON. Verify its device ID and
@@ -84,7 +84,7 @@ error; it is never reported as saved pairing.
 [The dedicated workflow](../.github/workflows/desktop-paired.yml) builds the actual
 production library on Linux/Windows/macOS and uses
 [the qualification runner](../verification/desktop-paired/qualify.py) against the
-actual frozen production control CLI (`812eee1479702635dc51994dc795ca9f8a655351`).
+actual frozen production control CLI (`b3731ce51af02cfbcd0ad6fb7080694f08b6a0bd`).
 It provisions the CLI's real self-signed rcgen identity rather than a public CA.
 Only the vault boundary is an API double. Tests cover pairing, session identity,
 stored writes with A/B isolation, permission denial, native/controller and service
@@ -93,8 +93,10 @@ mismatch before secret HTTP bytes, raw number preservation, redirects and storag
 failure. Additional adversarial TLS responders supplement the actual service.
 
 A successful harness proves production native TLS/service behavior with a vault
-API double. It does **not** prove successful Secret Service, Windows Credential
-Manager or macOS Keychain persistence, Tauri webview onboarding/OS prompts, physical
+API double. A separate owned Windows/macOS platform-vault2303-byte smoke proves
+binary secret write/read/reopen/delete on those hosted systems; it does not qualify
+physical device lock/hardware security. The TLS harness does **not** prove successful
+Linux Secret Service persistence, actual Tauri webview onboarding/OS prompts, physical
 network reachability, accessibility, tray behavior, capture, playback, audio quality,
 signing, installer execution, store publishing or deployment. Linux's deliberately
 absent owned bus separately checks the actual platform-vault failure path.
@@ -103,3 +105,9 @@ Only one desktop process may own paired management for a per-user app data
 location. An OS-released advisory lock protects multi-record vault index updates;
 a second window/process receives an actionable error and can still use its local
 console. The lock contains no credentials and is never a plaintext vault fallback.
+
+Stale open/request completions can clean only their captured/returned native
+generation. Their abort/rejection cannot invalidate a newer explicit reconnect.
+The qualification includes actual shared Api/ConsoleSession late-open and
+late-request success/rejection regressions with retained drafts, current validation
+and an actual subsequent native-dispatch read.
