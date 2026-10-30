@@ -802,12 +802,24 @@
   "testSource": {
     "boat_recording.py": {
       "executedSha256": "3f256a9406128ffc22d330435a2fd22a55b1c95e65d7ea788b3106ba31f5b7e9",
-      "publishedSha256": "7bfd75d9744517435d2b47478c4a6b072b001ba14af702c4bcc7bca0dc827771"
+      "publishedSha256": "ff1e159ebc19b2314013d8a6f61b9e367397d410362cbefaa929ab535798e82d",
+      "firstPublishedHead": "59b149381f9b83d2e65adf63b91312a89ee706e4",
+      "firstPublishedSha256": "7bfd75d9744517435d2b47478c4a6b072b001ba14af702c4bcc7bca0dc827771"
     },
     "registry_snapshot.c": {
       "executedSha256": "060608170daa72c35a76b8cdb7961d4c7f0578f6ee8e3a33b90406f4654efa02",
       "publishedSha256": "060608170daa72c35a76b8cdb7961d4c7f0578f6ee8e3a33b90406f4654efa02"
     }
   },
-  "interpretation": "File sample offsets do not bind a native epoch or physical clock. Zero marker counts include startup/tail zeros. Return-only positive Record marker count is1800."
+  "interpretation": "File sample offsets do not bind a native epoch or physical clock. Zero marker counts include startup/tail zeros. Return-only positive Record marker count is1800.",
+  "reviewRepair": {
+    "reviewedPredecessorHead": "59b149381f9b83d2e65adf63b91312a89ee706e4",
+    "review": "https://github.com/MGRAFF2006/mixyard/pull/115#pullrequestreview-5712100837",
+    "changes": [
+      "complete RIFF extent, chunk header and odd-padding checks",
+      "existing bounded native-host pipe capture instead of ordinary runtime log files and unbounded retained-log reads"
+    ],
+    "verification": "five focused pure-file and owned Python-child tests; all six retained WAVs rechecked; no SDK/controller/cloud recording rerun",
+    "historicalEvidenceUnchanged": true
+  }
 }

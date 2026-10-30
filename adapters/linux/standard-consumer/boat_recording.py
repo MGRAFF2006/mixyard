@@ -25,6 +25,7 @@ NATIVE = ROOT / "adapters/linux/native-host"
 sys.path.insert(0, str(NATIVE))
 import comparison_sdk as sdk
 from request import request
+from process_capture import Capture
 from qualify import isolation, parse_report, snapshot_bytes, verify_retirement
 
 SOURCE = "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24"
@@ -157,12 +158,16 @@ def pcm_oracle(path, route):
     raw = sdk.read_bounded(path, 8 * 1024**2)
     if not raw:
         raise RuntimeError("invalid bounded F32 stereo recording")
-    if raw[:4] != b"RIFF" or raw[8:12] != b"WAVE":
+    if len(raw) < 12 or raw[:4] != b"RIFF" or raw[8:12] != b"WAVE":
         raise RuntimeError("recording is not an actual WAV file")
+    if struct.unpack_from("<I", raw, 4)[0] + 8 != len(raw):
+        raise RuntimeError("incomplete or inconsistent RIFF extent")
     offset, chunks = 12, {}
-    while offset + 8 <= len(raw):
+    while offset < len(raw):
+        if len(raw) - offset < 8:
+            raise RuntimeError("incomplete WAV chunk header")
         kind, size = struct.unpack_from("<4sI", raw, offset); offset += 8
-        if size > len(raw) - offset or len(chunks) >= 32:
+        if size + size % 2 > len(raw) - offset or len(chunks) >= 32:
             raise RuntimeError("invalid WAV chunks")
         if kind in chunks: raise RuntimeError("duplicate WAV chunk")
         chunks[kind] = raw[offset:offset+size]; offset += size + size % 2
@@ -223,6 +228,46 @@ def sdk_binding(process, role, prefix):
             "beforeMonotonicNs": before, "afterMonotonicNs": time.monotonic_ns(), "objects": objects}
 
 
+def start_capture(name, command, env):
+    """Graph reports get the existing client cap; other runtime output is diagnostic."""
+    return Capture(command, env, name, "client" if name == "graph" else "daemon")
+
+
+def collect_diagnostics(captures, directory, report):
+    """Persist only live-bounded buffers after owned readers finish, never raw files."""
+    diagnostics = {}
+    def reject(reason):
+        report.setdefault("diagnosticFailures", []).append(reason)
+        if report.get("result") != "failure":
+            report["result"], report["failure"] = "failure", reason
+    for capture in captures:
+        try:
+            capture.finish()
+        except Exception:
+            reject("diagnostic capture did not finish")
+            diagnostics[capture.name] = {"finished": False, "captureProblem": "incomplete"}
+            continue
+        if capture.problem:
+            reject("owned diagnostic capture failed")
+        for channel in ("stdout", "stderr"):
+            raw = bytes(capture.buffers[channel])
+            limit = capture.limits[channel]
+            if len(raw) > limit + 1:
+                raise RuntimeError("bounded diagnostic capture invariant failed")
+            if channel == "stderr" and raw:
+                reject("unexpected " + capture.name + " diagnostic")
+            # A single overflow witness byte is retained, never an unbounded log.
+            descriptor = os.open(directory / (capture.name + "." + channel),
+                                 os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as file:
+                file.write(raw)
+            diagnostics[capture.name + "." + channel] = {
+                "bytes": len(raw), "limit": limit, "captureProblem": capture.problem,
+                "finished": capture.finished, "sha256": hashlib.sha256(raw).hexdigest(),
+                "prefix": raw[:2048].decode("utf-8", errors="replace")}
+    return diagnostics
+
+
 def run_recording(sandbox_id, attempt):
     host(sandbox_id)
     descriptor = json.loads((WORK / "boat-descriptor.json").read_bytes())
@@ -247,21 +292,22 @@ context.modules = [
 ]
 """)
     env = environment(prefix, directory)
-    owned, logs = [], []
+    owned, captures = [], []
     report = {"provider": "Boat", "sandboxId": sandbox_id, "sourceHead": SOURCE,
               "experimentSha256": sdk.digest(Path(__file__)), "claims": {"productRuntimeAudio": False,
               "physicalDevices": False, "nativeApps": False, "hardwareClock": False, "backendAvailable": False}}
 
     def start(name, command, extra=None):
-        stdout = (directory / (name + ".stdout")).open("xb")
-        stderr = (directory / (name + ".stderr")).open("xb")
-        logs.extend((stdout, stderr))
-        p = subprocess.Popen(command, env=extra or env, stdout=stdout, stderr=stderr)
-        owned.append((name, p)); return p
+        capture = start_capture(name, command, extra or env)
+        captures.append(capture)
+        owned.append((name, capture.process))
+        return capture.process
 
     def await_condition(condition, seconds=10):
         end = time.monotonic() + seconds
         while not condition():
+            if any(c.problem for c in captures):
+                raise RuntimeError("owned diagnostic capture failed")
             failed = [(n, p.returncode) for n, p in owned if p.poll() is not None]
             if failed: raise RuntimeError("owned process exited before admission: " + repr(failed))
             if time.monotonic() >= end: raise RuntimeError("bounded standard consumer admission timeout")
@@ -334,8 +380,12 @@ context.modules = [
             if name in NAMES:
                 p.wait(timeout=5)
                 report["recorderStops"][name].update(returncode=p.returncode, reapedAtMonotonicNs=time.monotonic_ns())
-        for stream in logs: stream.flush()
-        native = parse_report((directory / "graph.stdout").read_text())
+        graph_capture = next(c for c in captures if c.name == "graph")
+        graph_capture.finish()
+        graph_stdout, graph_stderr = graph_capture.decoded()
+        if graph_stderr:
+            raise RuntimeError("unexpected graph diagnostic")
+        native = parse_report(graph_stdout)
         verify_retirement(native)
         if native["error"] or native["sampleMismatches"] or not native["sourceStopBeforeDestroy"] or not native["sourceRemovalObserved"]:
             raise RuntimeError("native source/mixer/loss oracle failed")
@@ -357,17 +407,8 @@ context.modules = [
         for name, p in reversed(owned):
             try: p.wait(timeout=3)
             except subprocess.TimeoutExpired: p.kill(); p.wait(timeout=2)
-        for stream in logs: stream.close()
         report["cleanup"] = [{"name": n, "pid": p.pid, "returncode": p.returncode, "reaped": p.poll() is not None} for n, p in owned]
-        report["diagnostics"] = {}
-        for name, _ in owned:
-            for channel in ("stdout", "stderr"):
-                path = directory / (name + "." + channel)
-                raw = path.read_bytes()
-                if len(raw) > 1024**2: report["result"], report["failure"] = "failure", "diagnostic exceeds byte cap"
-                if channel == "stderr" and raw:
-                    report["result"], report["failure"] = "failure", "unexpected " + name + " diagnostic"
-                report["diagnostics"][name + "." + channel] = {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "prefix": raw[:2048].decode("utf-8", errors="replace")}
+        report["diagnostics"] = collect_diagnostics(captures, directory, report)
         sdk.write_json(directory / "report.json", report)
         print(json.dumps({"result": report["result"], "report": str(directory / "report.json"), "failure": report.get("failure"), "recordings": report.get("recordings")}), flush=True)
     if report["result"] != "success": raise RuntimeError(report["failure"])

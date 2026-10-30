@@ -122,7 +122,15 @@ The observed SDK build was bootstrapped with those operations; the standalone
 `prepare` subcommand was not independently rerun. Existing actual `run` attempts
 used the retained controller source SHA; publication additionally fixed only a
 pure WAV parser whole-file alignment assumption and added bounded reads, tested
-against all six retained recordings and generated malformed files. No further
+against all six retained recordings and generated malformed files. The subsequent
+review repair also validates the complete RIFF extent and chunk padding, and
+reuses `native-host/process_capture.py` for live bounded runtime diagnostics
+(64 KiB graph stdout, 16 KiB other stdout/stderr, plus one overflow witness byte).
+An overflowing owned child is stopped; only bounded buffers are persisted after
+the readers finish. This replaces the former ordinary-file logging and unbounded
+post-run reads. Generated malformed-container and owned Python flood checks cover
+these repairs; neither the repaired controller nor its pipe wiring has been run
+with the SDK. Historical executed hashes and results remain unchanged. No further
 cloud recording was run just to turn a failure green.
 
 Always copy bounded selected recordings/evidence out and stop the explicit
