@@ -34,13 +34,42 @@ class StopIncomplete(RuntimeError):
 pending_command = None
 
 
+def owned_process_evidence(label, child, budget):
+    report = {'phase':label, 'state':'unavailable', 'processes':[]}
+    try:
+        if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS' or budget <= 0:
+            raise RuntimeError('owned-host-required')
+        if child.poll() is not None:
+            report['state'] = 'owner-exited-pipes-unproved'
+        else:
+            result = subprocess.run(['ps','-axo','pid=,ppid=,uid=,stat=,comm='],check=True,capture_output=True,text=True,timeout=budget)
+            if len(result.stdout)>1_048_576: raise RuntimeError('owned-process-bound')
+            rows=[]
+            for line in result.stdout.splitlines():
+                fields=line.strip().split(None,4)
+                if len(fields)!=5 or not all(value.isdecimal() for value in fields[:3]): continue
+                name=Path(fields[4]).name
+                if name not in ('sudo','security') or not re.fullmatch(r'[A-Za-z+<>-]{1,8}',fields[3]): continue
+                rows.append({'pid':int(fields[0]),'parentPid':int(fields[1]),'uid':int(fields[2]),'state':fields[3],'comm':name})
+            owned={child.pid}
+            for _ in range(8):
+                owned.update(row['pid'] for row in rows if row['parentPid'] in owned)
+            report['processes']=[row for row in rows if row['pid'] in owned][:16]
+            report['state']='captured'
+    except (RuntimeError,OSError,subprocess.SubprocessError): pass
+    print('MIXYARD_OWNED_PROCESS ' + json.dumps(report,separators=(',',':')),file=sys.stderr,flush=True)
+
+
 def privileged_capture(command, timeout):
     global pending_command
+    if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
+        raise RuntimeError('owned-host-required')
     if pending_command is not None:
         raise StopIncomplete('owned-security-command-still-active')
     child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, start_new_session=True)
     pending_command = child
+    deadline = time.monotonic() + timeout
     reserve = min(0.5, timeout / 4)
     try:
         output, errors = child.communicate(timeout=max(0.001, timeout - reserve))
@@ -48,8 +77,11 @@ def privileged_capture(command, timeout):
         # SIGTERM is relayed by sudo. SIGKILL of the monitor would not relay and
         # could leave a privileged Security child writing after our readback.
         try:
+            owned_process_evidence('before-privileged-term',child,min(0.1,max(0,deadline-time.monotonic())))
             child.terminate()
-            child.communicate(timeout=reserve)
+            remaining=deadline-time.monotonic()
+            if remaining<=0: raise subprocess.TimeoutExpired('owned-security-stop',timeout)
+            child.communicate(timeout=min(reserve, remaining))
         except (OSError, subprocess.TimeoutExpired):
             raise StopIncomplete('owned-security-stop-incomplete') from None
         pending_command = None
@@ -68,7 +100,10 @@ def drain_command(deadline):
     remaining = deadline - time.monotonic()
     try:
         if remaining <= 0: raise TimeoutError()
+        owned_process_evidence('cleanup-privileged-term',child,min(0.2,remaining/4))
         child.terminate()
+        remaining=deadline-time.monotonic()
+        if remaining<=0: raise TimeoutError()
         child.communicate(timeout=min(1, remaining))
     except (OSError, TimeoutError, subprocess.TimeoutExpired):
         phase('cleanup-command', 'failed')

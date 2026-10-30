@@ -54,15 +54,17 @@ class OwnedAdmin:
             if len(raw) > 512: raise ValueError()
             value = json.loads(raw)
             statuses = value['statuses']
-            if set(value) != {'statuses','ownedTrustAbsent'} or not isinstance(statuses,list) or len(statuses) != 3 or any(type(code) is not int or not -2**31 < code < 2**31 for code in statuses): raise ValueError()
+            if set(value) != {'statuses','ownedTrustAbsent','adminCount','adminStatus'} or not isinstance(statuses,list) or len(statuses) != 3 or any(type(code) is not int or not -2**31 < code < 2**31 for code in statuses): raise ValueError()
+            count, status = value['adminCount'], value['adminStatus']
+            if type(count) is not int or not -1 <= count <= 2**53-1 or type(status) is not int or not -2**31 < status < 2**31: raise ValueError()
             absent = all(code in ABSENT for code in statuses)
             if type(value['ownedTrustAbsent']) is not bool or value['ownedTrustAbsent'] != absent: raise ValueError()
         except (ValueError,KeyError,TypeError):
             print('MIXYARD_PHASE ' + label + '-failed', file=sys.stderr, flush=True)
             raise RuntimeError('owned-admin-readback-invalid') from None
         # Only bounded numeric statuses and our fixed phase/absence boolean.
-        print('MIXYARD_TRUST_STATE ' + json.dumps({'phase':label,'absent':absent,'statuses':statuses},separators=(',',':')), file=sys.stderr, flush=True)
-        if any(code != 0 and code not in ABSENT for code in statuses):
+        print('MIXYARD_TRUST_STATE ' + json.dumps({'phase':label,'absent':absent,'statuses':statuses,'adminCount':count,'adminStatus':status},separators=(',',':')), file=sys.stderr, flush=True)
+        if any(code != 0 and code not in ABSENT for code in statuses) or (status != 0 and status not in ABSENT) or count < 0 or (status in ABSENT and count != 0):
             print('MIXYARD_PHASE ' + label + '-failed', file=sys.stderr, flush=True)
             raise RuntimeError('owned-admin-readback-unavailable')
         return statuses
@@ -93,7 +95,9 @@ class OwnedAdmin:
         failed = False
         try: before = self.state('admin-precleanup', deadline, maximum=2)
         except RuntimeError: before = None; failed = True
-        for name in self.attempted:
+        # One controlled discriminator: reverse ONLY the same owned certificates.
+        # This is not a cleanup success/fallback or an ownership grant from count.
+        for name in reversed(self.attempted):
             if before is not None and before[self.names.index(name)] in ABSENT: continue
             try:
                 self.verify(name); path,_ = self.certificates[name]

@@ -3,7 +3,7 @@ import Darwin
 import Security
 import CryptoKit
 
-// Read only the three fingerprint-bound owned certificates in the ADMIN domain.
+// Read only the three owned fingerprint statuses and aggregate ADMIN count.
 // No dump, trust mutation, exception text, certificate or path is ever output.
 @main struct OwnedTrustReadback {
     static func main() {
@@ -20,7 +20,15 @@ import CryptoKit
             statuses.append(SecTrustSettingsCopyTrustSettings(certificate, .admin, &settings))
         }
         let absent = statuses.allSatisfy { $0 == errSecItemNotFound || $0 == errSecNoTrustSettings }
-        let report: [String: Any] = ["statuses": statuses.map { Int($0) }, "ownedTrustAbsent": absent]
+        var domainCertificates: CFArray?
+        let domainStatus = SecTrustSettingsCopyCertificates(.admin, &domainCertificates)
+        let count: Int
+        if domainStatus == errSecSuccess { count = domainCertificates.map { CFArrayGetCount($0) } ?? -1 }
+        else if domainStatus == errSecNoTrustSettings || domainStatus == errSecItemNotFound { count = 0 }
+        else { count = -1 }
+        // Count/status only: no unrelated certificate identity or trust dump.
+        let report: [String: Any] = ["statuses": statuses.map { Int($0) }, "ownedTrustAbsent": absent,
+                                    "adminCount": count, "adminStatus": Int(domainStatus)]
         guard let encoded = try? JSONSerialization.data(withJSONObject: report) else { exit(2) }
         FileHandle.standardOutput.write(encoded)
         FileHandle.standardOutput.write(Data([10]))
