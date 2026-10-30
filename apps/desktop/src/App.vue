@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import Console from '../../web/src/App.vue'
+import PairedDevices from './PairedDevices.vue'
+import { pairedApi } from './paired.ts'
+import type { PairedTarget } from './paired.ts'
+import type { DeviceTarget } from '../../web/src/App.vue'
 import { Api } from '../../web/src/api.ts'
 import { desktopFetcher } from './transport.ts'
 import { closeInterface } from './lifecycle.ts'
@@ -9,6 +13,49 @@ import type { SessionSummary } from './bridge.ts'
 import { connectionLabel, disconnected } from './runtime.ts'
 
 const api = new Api(inDesktopShell ? desktopFetcher(nativeInvoke) : undefined)
+const paired = ref<PairedTarget[]>([])
+let targetApis: DeviceTarget[] = [{ id: 'local', displayName: 'This device · loopback service', api }]
+const targets = shallowRef<readonly DeviceTarget[]>(targetApis)
+let loadingTargets = false, targetRefreshPending = false
+let targetListError: string | null = null
+const ready = ref(!inDesktopShell)
+const targetKey = (target: PairedTarget) => `paired:${target.deviceId}:${target.credentialId}`
+function canRemove(id: string) {
+  const target = paired.value.find(target => target.deviceId === id)
+  return !target || !(consoleView.value?.hasUnsavedDrafts(targetKey(target)) ?? false)
+}
+async function loadTargets() {
+  // One in-flight read + ONE coalesced notification, no timer or growing queue.
+  targetRefreshPending = true
+  if (loadingTargets) return
+  loadingTargets = true
+  try {
+    while (targetRefreshPending) {
+      targetRefreshPending = false
+      try {
+        const saved = await nativeInvoke<PairedTarget[]>('paired_list')
+        // A Pair/Forget/list notification after dispatch owns newer native data.
+        // Never publish its preceding snapshot, even briefly before the followup.
+        if (targetRefreshPending) continue
+        const next: DeviceTarget[] = [{ id: 'local', displayName: 'This device · loopback service', api }, ...saved.map(target => {
+          const old = targetApis.find(old => old.id === targetKey(target))
+          return { ...old, id: targetKey(target), displayName: target.displayName, api: old?.api ?? pairedApi(nativeInvoke, target) }
+        })]
+        if (notice.value === targetListError) notice.value = ''
+        targetListError = null
+        paired.value = saved
+        targetApis = next
+        targets.value = targetApis
+      } catch (error) {
+        if (!targetRefreshPending) {
+          targetListError = `Saved paired devices unavailable: ${String(error)}`
+          notice.value = targetListError
+        }
+      }
+    }
+  } finally { loadingTargets = false; ready.value = true }
+}
+function disconnectedTarget(id: string, credentialId: string) { targetApis.find(target => target.id === `paired:${id}:${credentialId}`)?.api.disconnect('Disconnected through native device management; refresh to reconnect.') }
 const consoleView = ref<InstanceType<typeof Console> | null>(null)
 const connection = ref(disconnected())
 const instance = ref('default')
@@ -65,8 +112,8 @@ async function sessionState(summary: SessionSummary) {
     catch (error) { notice.value = `Tray status update failed: ${String(error)}` }
   }
 }
-onMounted(() => { void poll() })
-onUnmounted(() => { mounted = false; generation++; clearTimeout(timer) })
+onMounted(() => { if (inDesktopShell) void loadTargets(); void poll() })
+onUnmounted(() => { mounted = false; generation++; clearTimeout(timer); for (const target of targetApis) target.api.disconnect() })
 </script>
 
 <template>
@@ -81,10 +128,11 @@ onUnmounted(() => { mounted = false; generation++; clearTimeout(timer) })
       <button id="quit-ui" :disabled="!inDesktopShell" @click="action('quit_ui')">Quit UI</button>
     </header>
     <p v-if="notice" class="desktop-notice" role="alert">{{ notice }}</p>
-    <p class="desktop-boundary">Window controls leave the independent runtime alone. This connection uses the local console service; paired remote TLS control is unavailable in this shell.</p>
+    <p class="desktop-boundary">Window controls leave the independent runtime alone. Choose the local loopback service or an explicitly paired TLS device. Management targets are independent of audio destinations.</p>
     <p class="desktop-boundary">{{ trayCreated ? 'Tray object created; visibility is unverified.' : 'Tray unavailable or disabled.' }} Full and compact windows work without a tray host or desktop extension. Linux/Windows Close exits the UI; macOS Close hides it for Dock reopen. Quit UI exits the interface.</p>
 
-    <Console ref="consoleView" :api="api" @session-state="sessionState" />
+    <PairedDevices :targets="paired" :can-remove="canRemove" @changed="loadTargets" @disconnected="disconnectedTarget" />
+    <Console v-if="ready" ref="consoleView" :targets="targets" @session-state="sessionState" />
 
     <section class="desktop-runtime" aria-label="Separate local lifecycle diagnostics" :aria-busy="checking">
       <h2>Separate local runtime diagnostics</h2>
