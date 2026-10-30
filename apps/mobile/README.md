@@ -12,6 +12,13 @@ the app does not bypass PKI. Credentials remain in Android Keystore-backed encry
 storage or iOS Keychain, never WebView storage. The bundle contains no configured
 endpoint or credentials. Hosted builds do not connect to any personal service.
 
+Android uses the shipping `android/http` module (OkHttp 4.12.0) unchanged in JVM
+qualification: TLS 1.3, platform PKI plus the exact leaf pin and hostname,
+one-shot POST bodies, no retries/redirects/proxy/authentication follow-ups/cookies,
+and bounded calls/raw UTF-8 replies. It preserves real HTTP 401 JSON without
+buffered-POST replay. Android SDK compilation and JVM execution are separate from
+Android runtime/Keystore qualification. Platforms without TLS 1.3 fail closed.
+
 Backgrounding, disconnect/forget and pairing changes invalidate native authority,
 unmount the old controller and discard pending completions. Reopen explicitly;
 requests are never automatically replayed. Forget removes the local credential;
