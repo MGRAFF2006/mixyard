@@ -8,15 +8,20 @@ import MobileCore
 struct OobCertificate {
     let certificate: SecCertificate
     init(pem: String, pin: String) throws {
-        guard pem.utf8.count <= 65536, pin.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else { throw MobileError.invalid("explicit-oob-certificate-required") }
+        guard pem.utf8.count <= 65536 else { throw MobileError.invalid("oob-certificate-too-large") }
+        guard pin.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else { throw MobileError.invalid("oob-pin-format") }
         let text = pem.trimmingCharacters(in: .whitespacesAndNewlines)
         let begin = "-----BEGIN CERTIFICATE-----", end = "-----END CERTIFICATE-----"
         guard text.hasPrefix(begin), text.hasSuffix(end) else { throw MobileError.invalid("one-explicit-oob-certificate-required") }
         let body = text.dropFirst(begin.count).dropLast(end.count)
         guard body.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || [43,47,61,32,13,10].contains($0) }) else { throw MobileError.invalid("certificate-base64-invalid") }
-        let encoded = body.filter { !" \r\n".contains($0) }
-        guard let bytes = Data(base64Encoded: encoded), bytes.base64EncodedString() == encoded,
-              let certificate = SecCertificateCreateWithData(nil, bytes as CFData), SecCertificateCopyData(certificate) as Data == bytes else { throw MobileError.invalid("exact-certificate-der-required") }
+        // ASCII PEM whitespace is bytes, not Swift Character membership: CRLF
+        // is one grapheme, so a CRLF-containing Character set can miss lone LF.
+        let encoded = String(decoding: body.utf8.filter { ![32,13,10].contains($0) }, as: UTF8.self)
+        guard let bytes = Data(base64Encoded: encoded) else { throw MobileError.invalid("certificate-base64-decode") }
+        guard bytes.base64EncodedString() == encoded else { throw MobileError.invalid("certificate-base64-canonical") }
+        guard let certificate = SecCertificateCreateWithData(nil, bytes as CFData) else { throw MobileError.invalid("certificate-decode") }
+        guard SecCertificateCopyData(certificate) as Data == bytes else { throw MobileError.invalid("certificate-der-roundtrip") }
         let actual = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         guard actual == pin.lowercased() else { throw MobileError.invalid("oob-certificate-fingerprint-mismatch") }
         self.certificate = certificate

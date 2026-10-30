@@ -42,6 +42,7 @@ test('shipping single-OOB-anchor public SSL policy rejects invalid certificates 
     if(mode==='malformed-der'){const der=Buffer.from([0x30,0]);trustRecord=JSON.stringify({...record,certificatePem:'-----BEGIN CERTIFICATE-----\n'+der.toString('base64')+'\n-----END CERTIFICATE-----\n',certificateSha256:createHash('sha256').update(der).digest('hex')})}
     const result=await native!.call({op:'pair',endpoint:`https://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`,trustRecord,deviceId:(mode==='cross-device'?'1':'0').repeat(64),invitation:'owned-negative-must-not-dispatch'})
     console.log('Owned public SDK negative:',mode,'httpRequests='+requests,'tlsConnections='+connections,'nativeAccepted='+result.ok)
+    if (['expired','future','wrong-target-anchor','tls-signature-algorithm','tls12-only'].includes(mode)) assert.ok(connections>0,mode+' must actually reach owned TLS, not reject every preflight')
     assert.equal(requests,0,mode+' must reject BEFORE invitation HTTP')
     assert.equal(result.ok,false,mode+' must fail closed')
    }finally{for(const socket of sockets)socket.destroy();await new Promise<void>(ok=>server.close(()=>ok()))}

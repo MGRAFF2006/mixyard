@@ -103,8 +103,33 @@ jobs:
         run: |
           node --test verification/mobile-native/lifecycle.test.ts verification/mobile-native/certificate-fixture.test.ts
           python3 -B -m unittest discover -s verification/mobile-native -p 'test_*.py'
+      - name: Causal actual previous Swift LF preflight regression in isolated output
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/swift-pem-before" "$RUNNER_TEMP/oob-evidence"
+          git fetch --no-tags --depth=1 origin 5d38dc5b4fd8a35d6ad513b8c92061eef0ad3bee
+          git show 5d38dc5b4fd8a35d6ad513b8c92061eef0ad3bee:apps/mobile/ios/App/ControlClient.swift > "$RUNNER_TEMP/swift-pem-before/ControlClient.swift"
+          MIXYARD_SWIFT_BUILD_DIR="$RUNNER_TEMP/swift-pem-before/build" MIXYARD_SWIFT_CONTROL_SOURCE="$RUNNER_TEMP/swift-pem-before/ControlClient.swift" bash verification/mobile-native/build-swift.sh
+          export MIXYARD_NATIVE_COMMAND
+          MIXYARD_NATIVE_COMMAND="$(node -e 'console.log(JSON.stringify([process.env.RUNNER_TEMP+"/swift-pem-before/build/native-control-qualification"]))')"
+          if node --test --test-reporter=tap verification/mobile-native/swift-preflight.test.ts > "$RUNNER_TEMP/oob-evidence/swift-pem-before.tap" 2>&1; then
+            echo 'Previous production Swift source unexpectedly passed LF preflight'
+            exit 1
+          fi
+          node --input-type=module -e '
+            import assert from "node:assert/strict";import{readFileSync}from"node:fs";
+            const tap=readFileSync(process.env.RUNNER_TEMP+"/oob-evidence/swift-pem-before.tap","utf8");
+            for(const line of tap.split("\n"))if(/^# Owned Swift PEM preflight: (LF|CRLF) accepted=(true|false) phase=(oob-record|oob-certificate|native|tls-platform|none) reason=[a-z0-9-]+$/.test(line))console.log(line.slice(2));
+            assert.ok(tap.includes("LF certificate preflight must accept the actual valid owned certificate"));
+            assert.match(tap,/# fail 2(?:\r?\n|$)/,"only LF and parent must fail; CRLF/redaction must pass");
+            console.log("CAUSAL_RED exact5d shipping initializer rejects LF while CRLF succeeds");'
       - name: Compile shipping Swift client and platform test driver
         run: bash verification/mobile-native/build-swift.sh
+      - name: Current shipping Swift LF and CRLF positive preflight and fixed diagnostics
+        env:
+          MIXYARD_NATIVE_COMMAND: '["bash","verification/mobile-native/run-swift-anchor.sh"]'
+        run: node --test verification/mobile-native/swift-preflight.test.ts
       - name: Build pinned production control service
         run: cargo build --locked --manifest-path .qualification-control/control/Cargo.toml --bin mixyard-control --jobs 2
       - name: Actual Swift URLSession and shipping Security pin/dispatch/serializer against actual TLS services

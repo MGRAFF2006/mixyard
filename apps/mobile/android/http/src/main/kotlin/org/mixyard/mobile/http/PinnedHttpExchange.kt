@@ -98,6 +98,10 @@ class OobCertificate(pem: String, pin: String) {
         require(certificate.subjectAlternativeNames?.any { it.size == 2 && it[0] == 2 && it[1] == "mixyard-control" } == true) { "oob-server-name-mismatch" }
         val actual = MessageDigest.getInstance("SHA-256").digest(der).joinToString("") { "%02x".format(it) }
         require(actual == pin.lowercase()) { "oob-certificate-fingerprint-mismatch" }
+        // Canonical control/src/identity.rs generates a self-signed identity.
+        // Trust anchors may skip this signature; public JCA verifies it here.
+        require(certificate.issuerX500Principal == certificate.subjectX500Principal) { "canonical-self-signed-control-certificate-required" }
+        certificate.verify(certificate.publicKey)
     }
     fun trustManager(): X509TrustManager {
         val anchor = this
@@ -111,10 +115,10 @@ class OobCertificate(pem: String, pin: String) {
             override fun getAcceptedIssuers(): Array<X509Certificate> = anchored.acceptedIssuers
             override fun checkClientTrusted(chain: Array<X509Certificate>, type: String) = anchored.checkClientTrusted(chain, type)
             override fun checkServerTrusted(chain: Array<X509Certificate>, type: String) {
-                anchored.checkServerTrusted(chain, type)
-                if (chain.isEmpty() || !MessageDigest.isEqual(chain.first().encoded, anchor.certificate.encoded)) {
-                    throw java.security.cert.CertificateException("certificate-pin-mismatch")
+                if (chain.size != 1 || !MessageDigest.isEqual(chain.first().encoded, anchor.certificate.encoded)) {
+                    throw java.security.cert.CertificateException("canonical-certificate-path-or-pin-mismatch")
                 }
+                anchored.checkServerTrusted(chain, type)
                 // Public X509 validity checks include a self-signed leaf used
                 // as the sole anchor; normal platform path/name checks remain.
                 chain.forEach { it.checkValidity() }; anchor.certificate.checkValidity()

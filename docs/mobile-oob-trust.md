@@ -85,3 +85,33 @@ review remain mandatory. Audio/worker consent/native availability flags unchange
 
 Public API references: [Apple configuring trust](https://developer.apple.com/documentation/security/configuring-a-trust),
 [anchor restriction](https://developer.apple.com/documentation/security/sectrustsetanchorcertificatesonly(_:_:)).
+
+
+## Exact5d actual results and direct repair checkpoint
+
+Root independently read5d jobs123923635166 and123923635465/run41013242619.
+Kotlin compiled, its original nine functional cases passed, and the actual
+bad-self-signature case sent one HTTP request (the sink500 prevented native success).
+Expired/future cases rejected with one TLS connection/zero HTTP; the system
+certificate evaluator passed. This is a proven anchor-signature gap, not a test
+success. The canonical backend explicitly generates a self-signed identity.
+Android now requires equal public issuer/subject principals, public
+[`Certificate.verify`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/security/cert/Certificate.html#verify(java.security.PublicKey)) with the certificate public key, one exact pinned peer certificate,
+and retains platform TrustManager/time/hostname/TLS1.3. General CA-issued paths
+are explicitly unsupported; no DER/crypto parser or algorithm implementation.
+The unchanged matching-key bad-self-signature before-HTTP assertion must pass
+on the new actual shipping execution before acceptance.
+
+Swift5d compiled but valid pairing failed preflight (MobileError), all negative
+TLS connection counts were zero, and the evaluator was unavailable. Those
+negative counts provide NO public-policy credit. Fixed reason/phase allowlists
+now distinguish record/certificate/native/platform failure, never associated
+unknown data, arbitrary error descriptions or provisioning. The PEM Character
+filter contained CRLF as a grapheme, potentially missing lone LF. ASCII byte
+whitespace removal preserves the intended exact base64/DER/hash guards. Hosted
+qualification compiles exact5d ControlClient into a SEPARATE target and requires
+a causal LF failure with CRLF/redaction success, then compiles CURRENT shipping
+source and requires LF+CRLF positives before TLS. Until actual execution verifies
+that mechanism, it remains a source-supported diagnosis, not a claimed SDK fix.
+If Swift later accepts a forbidden signature/date case, stop and report the exact
+public SDK gap before any parser/dependency/minimum-target change.

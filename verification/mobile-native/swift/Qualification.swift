@@ -43,6 +43,10 @@ final class MemoryVault: CredentialVault {
                 switch op {
                 case "pair":
                     try await client.pair(endpoint: text("endpoint"), trustRecord: text("trustRecord"), device: text("deviceId"), invitation: text("invitation"), name: "Owned native qualification", expected: expected)
+                case "preflightCertificate":
+                    let record = try OobRecord.parse(text("trustRecord"), expectedDevice: text("deviceId"))
+                    _ = try OobCertificate(pem: record.certificatePem, pin: record.certificateSha256)
+                case "diagnosticFixture": throw MobileError.invalid("PRIVATE_PROVISIONING_MUST_NEVER_BE_EXPORTED")
                 case "evaluateSystemCertificate":
                     let record = try OobRecord.parse(text("trustRecord"), expectedDevice: text("deviceId"))
                     let anchor = try OobCertificate(pem: record.certificatePem, pin: record.certificateSha256)
@@ -87,9 +91,17 @@ final class MemoryVault: CredentialVault {
                 // Export classification only, never arbitrary errors containing
                 // credentials, invitations or native provisioning.
                 reply["ok"] = false
-                let native = error as NSError
-                let known = [NSURLErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain]
-                reply["failure"] = known.contains(native.domain) ? "\(native.domain):\(native.code)" : String(describing: type(of: error))
+                let recordCodes: Set<String> = ["oob-record-too-large", "strict-oob-json-required", "oob-json-string", "oob-string-required", "oob-unknown-or-duplicate-field", "oob-json-object", "oob-selected-device-or-record-mismatch", "oob-trailing-json", "oob-missing-field", "oob-expected-device-format", "oob-selected-device-mismatch", "oob-server-name-mismatch"]
+                let certificateCodes: Set<String> = ["explicit-oob-certificate-required", "one-explicit-oob-certificate-required", "certificate-base64-invalid", "exact-certificate-der-required", "oob-certificate-fingerprint-mismatch", "oob-certificate-too-large", "oob-pin-format", "certificate-base64-decode", "certificate-base64-canonical", "certificate-decode", "certificate-der-roundtrip"]
+                let evaluatorCodes: Set<String> = ["system-certificate-evaluation-unavailable", "private-anchor-accepted-unrelated-system-certificate"]
+                if case MobileError.invalid(let code) = error, recordCodes.contains(code) || certificateCodes.contains(code) || evaluatorCodes.contains(code) {
+                    reply["phase"] = recordCodes.contains(code) ? "oob-record" : certificateCodes.contains(code) ? "oob-certificate" : "public-evaluator"; reply["failure"] = code
+                } else {
+                    let native = error as NSError
+                    let known = [NSURLErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain]
+                    reply["phase"] = known.contains(native.domain) ? "tls-platform" : "native"
+                    reply["failure"] = known.contains(native.domain) ? "\(native.domain):\(native.code)" : "native-invalid"
+                }
             }
             reply["hasAuthority"] = client.ticket.authority != nil
             if let legacyCredential { reply["recordRetained"] = vault.saved?.credential == legacyCredential }

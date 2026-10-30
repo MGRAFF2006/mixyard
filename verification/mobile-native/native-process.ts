@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { dspJson } from '../../apps/web/src/dsp-json.ts'
 
-export type NativeReply = { ok: boolean; raw?: string; status?: number; hasAuthority: boolean; failure?: string; recordRetained?: boolean; systemCertificateObservedTrusted?: boolean; privateAnchorRejected?: boolean; evaluatorOnly?: boolean }
+export type NativeReply = { ok: boolean; raw?: string; status?: number; hasAuthority: boolean; failure?: string; phase?: string; recordRetained?: boolean; systemCertificateObservedTrusted?: boolean; privateAnchorRejected?: boolean; evaluatorOnly?: boolean }
 export class Native {
   readonly child: ChildProcess
   private terminal = false
@@ -149,7 +149,8 @@ export class Native {
   }
   async ok(body: unknown): Promise<NativeReply> {
     const reply = await this.call(body)
-    assert.equal(reply.ok, true, `Native operation failed (${reply.failure ?? 'unknown'})`)
+    const phase = ['oob-record','oob-certificate','native','tls-platform','public-evaluator'].includes(reply.phase ?? '') ? reply.phase : 'unclassified'
+    assert.equal(reply.ok, true, `Native operation failed (${reply.failure ?? 'unknown'}; phase ${phase})`)
     return reply
   }
   async session() {

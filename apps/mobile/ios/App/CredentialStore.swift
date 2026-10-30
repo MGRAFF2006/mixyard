@@ -43,10 +43,13 @@ struct OobRecord {
             if bytes[at] == 125 { at += 1; break }; try take(44)
         }
         white()
-        guard at == bytes.count, Set(values.keys) == keys,
-              let device = values["deviceId"], expectedDevice.utf8.count == 64, expectedDevice.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
-              device == expectedDevice, let name = values["serverName"], name == "mixyard-control",
-              let pem = values["certificatePem"], let pin = values["certificateSha256"] else { throw MobileError.invalid("oob-selected-device-or-record-mismatch") }
+        guard at == bytes.count else { throw MobileError.invalid("oob-trailing-json") }
+        guard Set(values.keys) == keys else { throw MobileError.invalid("oob-missing-field") }
+        guard let device = values["deviceId"], expectedDevice.utf8.count == 64,
+              expectedDevice.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { throw MobileError.invalid("oob-expected-device-format") }
+        guard device == expectedDevice else { throw MobileError.invalid("oob-selected-device-mismatch") }
+        guard let name = values["serverName"], name == "mixyard-control" else { throw MobileError.invalid("oob-server-name-mismatch") }
+        guard let pem = values["certificatePem"], let pin = values["certificateSha256"] else { throw MobileError.invalid("oob-missing-field") }
         return OobRecord(deviceId: device, serverName: name, certificatePem: pem, certificateSha256: pin)
     }
 }
