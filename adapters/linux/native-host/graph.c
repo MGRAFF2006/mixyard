@@ -26,6 +26,7 @@
 #include "generation_stop.h"
 #include "stop_signals.h"
 #include "os_clock.h"
+#include "shared_map_diagnostics.h"
 
 #define ROUTES 3
 #define FRAMES 128
@@ -59,7 +60,9 @@ struct port {
 struct buffer_registration {
     unsigned role, direction, port;
     struct mx_buffer_layout layout;
-    _Atomic bool removed;
+    _Atomic bool removed, published;
+    uint64_t range_revision;
+    struct mx_map_target regions[3]; // Internal scalar addresses only; never dereferenced later.
 };
 struct buffer_write_report {
     bool pending, written;
@@ -82,7 +85,10 @@ struct app {
     struct endpoint nodes[3];
     struct format_report formats[3][2][ROUTES];
     struct mx_native_first_failure chunk_failure, mismatch_failure;
-    _Atomic unsigned registration_count;
+    _Atomic unsigned registration_count, buffer_events_inflight;
+    _Atomic uint64_t buffer_event_epoch;
+    struct mx_map_snapshot backing[2]; // Control-only, immutable after recheck; never used for callback liveness.
+    bool backing_warm_attempted;
     struct buffer_registration registrations[MX_NATIVE_REGISTRATIONS];
     struct buffer_write_report writes[2][ROUTES]; // Exclusive DataLoop; freeze after first fatal error.
     struct consumer_ingress_report ingress[ROUTES]; // Pre-validation observation, not readiness authority.
@@ -188,25 +194,67 @@ static struct mx_buffer_layout buffer_layout(struct pw_buffer *b) {
     layout.header = mx_relative_region(data->data, data->maxsize, header(b), sizeof(struct spa_meta_header));
     return layout;
 }
-// Public add/remove notifications register only opaque keys and scalar layout.
-// Atomic ID publication permits RT lookup without logging, allocation or waits;
-// metadata/payload pointers are inspected only while the SDK grants that borrow.
+static void buffer_regions(struct pw_buffer *buffer, uint64_t id, struct mx_map_target regions[3]) {
+    memset(regions, 0, 3*sizeof(*regions));
+    for (unsigned i = 0; i < 3; ++i) { regions[i].registration = id; regions[i].region = i; }
+    if (!buffer || !buffer->buffer || buffer->buffer->n_datas != 1 || !buffer->buffer->datas) return;
+    const struct spa_data *d = &buffer->buffer->datas[0];
+    regions[0].address = (uintptr_t)d->data; regions[0].length = d->maxsize;
+    regions[1].address = (uintptr_t)d->chunk; regions[1].length = sizeof(struct spa_chunk);
+    regions[2].address = (uintptr_t)header(buffer); regions[2].length = sizeof(struct spa_meta_header);
+}
+static void buffer_event_begin(struct app *a) {
+    atomic_fetch_add(&a->buffer_events_inflight, 1); atomic_fetch_add(&a->buffer_event_epoch, 1);
+}
+static void buffer_event_end(struct app *a) {
+    atomic_fetch_add(&a->buffer_event_epoch, 1); atomic_fetch_sub(&a->buffer_events_inflight, 1);
+}
+// SDK registration may occur on an RT thread: scalar stores/atomics only here.
+// No maps I/O, allocation, wait, logging or pointer refresh outside a live borrow.
 static void buffer_added(void *userdata, void *port_data, struct pw_buffer *buffer) {
     struct endpoint *e = userdata; struct port *port = port_data;
-    if (!port || !buffer) { fail(e->app, 97); return; }
+    buffer_event_begin(e->app);
+    if (!port || !buffer) { fail(e->app, 97); goto done; }
     unsigned index = atomic_fetch_add(&e->app->registration_count, 1);
-    if (index >= MX_NATIVE_REGISTRATIONS) { fail(e->app, 97); return; }
-    e->app->registrations[index] = (struct buffer_registration){
-        .role = e->role, .direction = port->direction, .port = port->index,
-        .layout = buffer_layout(buffer) };
+    if (index >= MX_NATIVE_REGISTRATIONS) { fail(e->app, 97); goto done; }
+    struct buffer_registration *r = &e->app->registrations[index];
+    r->role = e->role; r->direction = port->direction; r->port = port->index;
+    r->layout = buffer_layout(buffer); r->range_revision = 1;
+    buffer_regions(buffer, index+1, r->regions);
+    for (unsigned i = 0; i < 3; ++i) r->regions[i].revision = r->range_revision;
     if (!mx_buffer_register(&port->identities, buffer, index+1)) fail(e->app, 97);
+    else atomic_store_explicit(&r->published, true, memory_order_release);
+done:
+    buffer_event_end(e->app);
 }
 static void buffer_removed(void *userdata, void *port_data, struct pw_buffer *buffer) {
     struct endpoint *e = userdata; struct port *port = port_data;
-    if (!port || !buffer) { fail(e->app, 97); return; }
+    buffer_event_begin(e->app);
+    if (!port || !buffer) { fail(e->app, 97); goto done; }
     uint64_t id = mx_buffer_unregister(&port->identities, buffer);
     if (!id || id > MX_NATIVE_REGISTRATIONS) fail(e->app, 97);
     else atomic_store(&e->app->registrations[id-1].removed, true);
+done:
+    buffer_event_end(e->app);
+}
+static void remember_buffer_regions(struct endpoint *e, unsigned route, bool input, struct pw_buffer *buffer) {
+    const struct port *port = input ? e->in[route] : e->out[route];
+    uint64_t id = mx_buffer_identity(&port->identities, buffer);
+    if (!id || id > MX_NATIVE_REGISTRATIONS) return;
+    struct buffer_registration *r = &e->app->registrations[id-1];
+    if (!atomic_load_explicit(&r->published, memory_order_acquire) || atomic_load(&r->removed)) return;
+    struct mx_map_target current[3]; buffer_regions(buffer, id, current);
+    bool changed = false;
+    for (unsigned i = 0; i < 3; ++i)
+        if (current[i].address != r->regions[i].address || current[i].length != r->regions[i].length) changed = true;
+    if (changed) {
+        if (r->range_revision == UINT64_MAX) { atomic_store(&r->published, false); return; } // Diagnostics unavailable.
+        ++r->range_revision;
+    }
+    for (unsigned i = 0; i < 3; ++i) {
+        current[i].revision = r->range_revision; current[i].observed_ns = callback_monotonic_ns;
+        r->regions[i] = current[i];
+    }
 }
 static struct mx_native_observation describe_buffer(struct endpoint *e, unsigned port, bool input,
                             struct pw_buffer *b, uint32_t frames,
@@ -261,6 +309,7 @@ static void begin_write_report(struct endpoint *e, unsigned route, struct pw_buf
 static double *samples(struct endpoint *e, unsigned port, struct pw_buffer *b,
                        bool input, uint32_t frames, const struct spa_io_position *pos) {
     struct app *a = e->app;
+    remember_buffer_regions(e, port, input, b);
     unsigned error = 0;
     if (b->buffer->n_datas != 1 || !b->buffer->datas[0].data || frames > FRAMES) error = 10;
     else {
@@ -326,6 +375,7 @@ static void receive_consumer(struct endpoint *e, const struct spa_io_position *p
         if (!admitted && (q->active || q->count)) mx_consumer_close(q);
         struct pw_buffer *b = pw_filter_dequeue_buffer(e->in[r]);
         if (!b) continue;
+        remember_buffer_regions(e, r, true, b);
         if (!atomic_load_explicit(&a->error, memory_order_acquire)) {
             a->ingress[r] = (struct consumer_ingress_report){ .recorded = true,
                 .host_admitted = admitted, .queue_active = q->active, .queue_started = q->started,
@@ -468,6 +518,7 @@ static void process_inner(void *userdata, struct spa_io_position *pos) {
         }
         input[s] = pw_filter_dequeue_buffer(e->in[s]);
         if (!input[s]) { fresh = false; continue; }
+        remember_buffer_regions(e, s, true, input[s]);
         if (!admitted && !warming) { fresh = false; continue; } // revoked: drain/ack only
         if (mx_native_startup_unavailable(!admitted && warming, input[s]->buffer, n)) {
             atomic_fetch_add_explicit(&a->startup_unavailable[e->role][s], 1, memory_order_relaxed);
@@ -812,12 +863,71 @@ static bool compiled_spec(mx_host *host, bool output, size_t index, json_object 
     if (actual) json_object_put(actual);
     return valid;
 }
+struct map_capture_request { struct app *a; struct mx_map_snapshot *snapshot; bool recheck; };
+static int capture_map_targets(struct spa_loop *loop, bool async, uint32_t seq,
+        const void *data, size_t size, void *userdata) {
+    (void)loop; (void)async; (void)seq; (void)data; (void)size;
+    struct map_capture_request *r = userdata; struct app *a = r->a; struct mx_map_snapshot *s = r->snapshot;
+    if (!pw_data_loop_in_thread(a->data_loop)) return -EINVAL;
+    uint64_t epoch = atomic_load(&a->buffer_event_epoch);
+    if (atomic_load(&a->buffer_events_inflight)) { mx_map_unknown(s, MX_MAP_CHANGED); return 0; }
+    unsigned registered = atomic_load(&a->registration_count);
+    if (registered > MX_NATIVE_REGISTRATIONS) { mx_map_unknown(s, MX_MAP_CHANGED); return 0; }
+    if (r->recheck) {
+        if (epoch != s->event_epoch) { mx_map_unknown(s, MX_MAP_CHANGED); return 0; }
+        for (unsigned i = 0; i < s->count; ++i) {
+            const struct mx_map_target *t = &s->targets[i];
+            if (!t->registration || t->registration > registered || t->region > 2) { mx_map_unknown(s, MX_MAP_CHANGED); return 0; }
+            const struct buffer_registration *b = &a->registrations[t->registration-1];
+            if (!atomic_load_explicit(&b->published, memory_order_acquire) || atomic_load(&b->removed) ||
+                b->range_revision != t->revision || !mx_map_target_matches(t, &b->regions[t->region])) { mx_map_unknown(s, MX_MAP_CHANGED); return 0; }
+        }
+        s->targets_stable = true;
+    } else {
+        s->event_epoch = epoch;
+        for (unsigned i = 0; i < registered; ++i) {
+            const struct buffer_registration *b = &a->registrations[i];
+            if (!atomic_load_explicit(&b->published, memory_order_acquire)) { mx_map_unknown(s, MX_MAP_CHANGED); return 0; }
+            if (atomic_load(&b->removed)) continue;
+            for (unsigned kind = 0; kind < 3; ++kind) s->targets[s->count++] = b->regions[kind];
+        }
+        if (!s->count) mx_map_unknown(s, MX_MAP_NO_TARGETS);
+    }
+    if (atomic_load(&a->buffer_events_inflight) || atomic_load(&a->buffer_event_epoch) != epoch) {
+        s->targets_stable = false; mx_map_unknown(s, MX_MAP_CHANGED);
+    }
+    return 0;
+}
+// Main/control only. These two owner barriers prove stable target association,
+// NOT backing lifetime between observations. All later callback backing is UNKNOWN.
+static void collect_backing_snapshot(struct app *a, unsigned index) {
+    struct mx_map_snapshot *s = &a->backing[index]; s->id = index+1;
+    struct map_capture_request request = { .a = a, .snapshot = s };
+    if (!mx_os_monotonic_ns(&s->capture_before_ns) ||
+        pw_data_loop_invoke(a->data_loop, capture_map_targets, 0, NULL, 0, true, &request) < 0 ||
+        !mx_os_monotonic_ns(&s->capture_after_ns)) { mx_map_unknown(s, MX_MAP_OWNER); return; }
+    if (s->reason != MX_MAP_PENDING || !s->count) return;
+    if (!mx_os_monotonic_ns(&s->maps_before_ns)) { mx_map_unknown(s, MX_MAP_CLOCK); return; }
+    FILE *file = fopen("/proc/self/maps", "re");
+    if (!file) { mx_map_unknown(s, MX_MAP_OPEN); return; }
+    bool observed = mx_map_read(file, s, MX_MAP_BYTE_LIMIT, MX_MAP_RECORD_LIMIT);
+    if (fclose(file) || !mx_os_monotonic_ns(&s->maps_after_ns)) { mx_map_unknown(s, MX_MAP_READ); return; }
+    if (!observed) return;
+    request.recheck = true;
+    if (pw_data_loop_invoke(a->data_loop, capture_map_targets, 0, NULL, 0, true, &request) < 0 ||
+        !mx_os_monotonic_ns(&s->applied_after_ns)) { s->targets_stable = false; mx_map_unknown(s, MX_MAP_OWNER); return; }
+    if (!(s->capture_before_ns <= s->capture_after_ns && s->capture_after_ns <= s->maps_before_ns &&
+          s->maps_before_ns <= s->maps_after_ns && s->maps_after_ns <= s->applied_after_ns)) {
+        s->targets_stable = false; mx_map_unknown(s, MX_MAP_CLOCK);
+    }
+}
 static bool install_host(struct app *a, uint64_t generation) {
     struct warm_request warm = { .a = a, .generation = generation };
     if (pw_data_loop_invoke(a->data_loop, begin_warm, 0, NULL, 0, true, &warm) < 0) {
         fail(a, 55); return false;
     }
     if (!warm.ready) return false; // no host/authority from startup EMPTY or stale headers
+    if (!a->backing_warm_attempted) { a->backing_warm_attempted = true; collect_backing_snapshot(a, 0); }
     char path[512]; snprintf(path, sizeof(path), "%s/request.json", a->directory);
     json_object *request = json_object_from_file(path);
     if (!request) return false;
@@ -1098,6 +1208,18 @@ static void print_format_reports(const struct app *a) {
             r->minimum_frame, r->queued, r->clock_frame, r->callback_ns);
     }
     printf("]");
+    uint64_t selected[7] = { atomic_load(&a->chunk_failure.state) == 2 ? a->chunk_failure.value.registration_id : 0 };
+    unsigned selected_count = 1;
+    for (unsigned role = 0; role < 2; ++role) for (unsigned route = 0; route < ROUTES; ++route) {
+        const struct buffer_write_report *r = &a->writes[role][route];
+        if (r->written) selected[selected_count++] = r->before.registration_id;
+    }
+    printf(",\"backingSnapshots\":[");
+    for (unsigned index = 0; index < 2; ++index) {
+        if (index) printf(",");
+        mx_print_map_snapshot(&a->backing[index], selected, selected_count);
+    }
+    printf("]");
     unsigned registered = atomic_load(&a->registration_count);
     printf(",\"bufferRegistrationOverflow\":%s,\"bufferRegistrations\":[", registered > MX_NATIVE_REGISTRATIONS ? "true" : "false");
     for (unsigned i = 0; i < registered && i < MX_NATIVE_REGISTRATIONS; ++i) {
@@ -1188,6 +1310,7 @@ int main(int argc, char **argv) {
     struct replacement replacement = { .a = &a };
     if (pw_data_loop_invoke(a.data_loop, replace_host, 0, NULL, 0, true, &replacement) < 0 || !replacement.complete) return 2;
     if (replacement.old) mx_host_destroy(replacement.old);
+    if (atomic_load(&a.error)) collect_backing_snapshot(&a, 1); // Host retired; SDK buffers not yet destroyed.
     a.expected_loss = true;
     for (unsigned l = 0; l < ROUTES*2; ++l) if (a.links[l]) pw_proxy_destroy(a.links[l]);
     for (unsigned n = 0; n < 3; ++n) if (a.nodes[n].filter) pw_filter_destroy(a.nodes[n].filter);

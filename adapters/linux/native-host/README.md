@@ -363,3 +363,40 @@ can show whether an active epoch had already accepted a validated native packet;
 a closed queue's cleared `started` bit cannot prove it never had valid data.
 No ordinary EMPTY acceptance changes. The earlier zero-byte ordinary consumer
 failure and the malformed 10c descriptor remain separate unresolved outcomes.
+
+
+Shared-backing diagnosis adds two **snapshot-time-only candidate** observations:
+first warm readiness, and after a fatal error following host/owned-copy retirement
+but before SDK destruction. The existing DataLoop copies bounded scalar target
+ranges for published live registration IDs; control reads only its own
+`/proc/self/maps` off RT, then the same owner rechecks registration/event epoch,
+range revision and scalar ranges. Removed/changed/in-flight targets invalidate
+that observation. No retired native pointer is dereferenced to refresh it.
+
+The parser requires actual EOF within 1MiB/4096 records. It retains no paths;
+reporting emits no addresses, device numbers or inodes. Only file-backed shared
+mappings get per-snapshot opaque cookies and checked file-offset coordinates.
+Private/COW/anonymous/uncovered mappings remain unknown for shared backing.
+The report includes capture/maps/recheck OS-clock brackets, snapshot generation,
+event epoch and selected fault/last-writer registration coverage. Cross-buffer
+PCM-versus-chunk/header candidate relations are bounded at16; overflow emits an
+explicit unknown relation set rather than a truncated complete claim. Existing
+64KiB report and4MiB evidence limits remain unchanged.
+
+These barriers establish target association only. Unchanged registration IDs or
+virtual ranges cannot prove absence of unmap/remap between observations. Cookies
+are valid only inside one maps snapshot; they do not establish physical pages,
+subsequent callback backing/liveness, native authority or the cause of corruption.
+The report explicitly marks later callback backing unknown. Callback work is
+bounded scalar copies/atomics only; no added callback file access, allocation,
+logging, waiting or locking. No mapping result changes processing/admission or
+first-failure handling.
+
+CPU-only checks use their own memfd shared views, a private COW view, anonymous
+storage and safe owned-address reuse after unmap. They verify candidate equality,
+COW/anonymous/cross-snapshot negatives, range/registration revision invalidation,
+EOF/record/byte/offset bounds, relation overflow and redacted serialization. These
+are diagnostic-method checks, not PipeWire SDK or root-cause qualification. Clean
+b443 hosted runs exercised ingress serialization but reproduced neither the10c
+malformed admitted descriptor nor the7d ordinary zero-byte EMPTY; both outcomes
+remain open. No ordinary EMPTY acceptance rule is changed here.
