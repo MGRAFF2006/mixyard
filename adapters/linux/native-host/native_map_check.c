@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <spa/utils/hook.h>
 #include <pipewire/mem.h>
 #include <pipewire/version.h>
 #include <spa/buffer/buffer.h>
