@@ -7,8 +7,8 @@ import plistlib
 import re
 import subprocess
 import time
-from architecture import admit_destination, remaining, verify_artifacts
-from rejection_observation import observe_rejection
+from architecture import remaining, verify_artifacts
+from owned_simulator_state import require_booted_simulator, capture_runtime_catalogue
 
 
 def version(value):
@@ -220,7 +220,7 @@ def main():
     print('Owned simulator toolchain: ' + json.dumps({'xcode':xcode, 'sdk':sdk, 'arch':arch}), flush=True)
     toolchain_evidence()
     process_evidence('before-runtime-discovery')
-    runtimes = json.loads(capture('runtime-discovery', 'xcrun', 'simctl', 'list', 'runtimes', '--json'))['runtimes']
+    runtimes = json.loads(capture_runtime_catalogue())['runtimes']
     runtime = select_runtime(sdk, runtimes, arch)
     print('Owned simulator selection: ' + json.dumps({'xcode':xcode, 'sdk':sdk, 'runtime':runtime['version'], 'arch':arch}), flush=True)
     device_type = 'com.apple.CoreSimulator.SimDeviceType.iPhone-16'
@@ -241,24 +241,7 @@ def main():
         # Explicit prepared-device contract, not a discovery-cause claim.
         step('boot', ['xcrun', 'simctl', 'boot', identifier], 30)
         step('bootstatus', ['xcrun', 'simctl', 'bootstatus', identifier, '-b'], 180)
-        destinations = capture('owned-destinations', 'xcodebuild', '-showdestinations', *common)
-        evidence=destination_evidence(destinations,identifier)
-        print('Owned simulator destination evidence: '+json.dumps(evidence),flush=True)
-        print('Owned simulator destination structure: '+json.dumps(destination_structure(destinations,identifier)),flush=True)
-        try:
-            admitted = admit_destination(evidence,arch)
-        except RuntimeError:
-            try:
-                observe_rejection(destinations,identifier,runtime['identifier'],device_type)
-            except BaseException:
-                # Diagnostic bugs/cancellation cannot replace the ORIGINAL
-                # rejection or prevent its existing independent cleanup.
-                try:
-                    print('Owned simulator rejected-admission observation: {"phase":"rejected-destination-admission","observationOnly":true,"status":"UNKNOWN","reason":"internal"}',flush=True)
-                except BaseException:
-                    pass # Even a broken diagnostic output sink preserves rejection.
-            raise
-        print('Owned simulator text architecture: '+admitted,flush=True)
+        require_booted_simulator(identifier,runtime['identifier'],device_type)
         # One actual supported simulator architecture for app, local package and
         # UI-test target. No EXCLUDED_ARCHS, suppressed import or skipped test.
         budget=time.monotonic()+900

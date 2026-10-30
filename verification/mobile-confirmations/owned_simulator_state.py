@@ -1,4 +1,9 @@
-"""Failure-path-only observation. No result from this module admits a destination."""
+"""Bounded own-child I/O, required simulator state gate and discovery adapter.
+
+require_booted_simulator is a strict qualification gate, not production trust or
+OS capture authority. Legacy catalogue/rejection helpers remain non-authorizing
+historical diagnostics and are never used by this gate or the normal runner.
+"""
 import json
 import os
 import re
@@ -7,6 +12,8 @@ import subprocess
 import time
 
 BUDGET_SECONDS = 3.0
+RUNTIME_SECONDS = 30.0
+RUNTIMES = ('xcrun','simctl','list','runtimes','--json')
 STOP_RESERVE = 0.6
 MAX_STDOUT = 256 * 1024
 MAX_STDERR = 16 * 1024
@@ -115,7 +122,7 @@ def read_devices(deadline, command=SIMCTL):
     """One own child; IO and stop/reap share the caller's SAME total budget."""
     global _HELD_CHILD
     receipt={'status':'UNKNOWN','reason':'not-started','toolValue':0,
-             'directChildReaped':False,'ownedChildRetained':False,'pipesEof':False,
+             'directChildReaped':False,'ownedChildRetained':False,'pipesEof':False,'localPipesClosed':False,
              'stdoutBytes':0,'stderrBytes':0}
     if command==SIMCTL and (os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_OS')!='macOS'):
         receipt['reason']='hosted-mac-required';return None,receipt
@@ -174,6 +181,7 @@ def read_devices(deadline, command=SIMCTL):
             finally:
                 for stream in (process.stdout,process.stderr):
                     if not stream.closed:stream.close()
+                receipt['localPipesClosed']=all(stream.closed for stream in (process.stdout,process.stderr))
         receipt['pipesEof']=eof=={'stdout','stderr'}
         receipt['stdoutBytes']=len(buffers['stdout']);receipt['stderrBytes']=len(buffers['stderr'])
         if not receipt['directChildReaped'] and process is not None:
@@ -194,3 +202,71 @@ def observe_rejection(text, owned, runtime, device_type):
     print('Owned simulator rejected-admission observation: '+json.dumps({
         'phase':'rejected-destination-admission','observationOnly':True,
         'catalogue':catalogue,'capture':capture,'ownedState':state}),flush=True)
+
+
+def require_booted_simulator(owned, runtime, device_type):
+    """Require one fresh complete exact-owned Booted+available matching record."""
+    deadline=time.monotonic()+BUDGET_SECONDS
+    try:
+        data,capture=read_devices(deadline)
+        complete=complete_capture(data,capture)
+        state=inspect_device_json(data,owned,runtime,device_type) if data is not None and complete else unknown_state('capture-incomplete')
+    except BaseException:
+        capture={'status':'UNKNOWN','reason':'internal','directChildReaped':False,
+                 'pipesEof':False,'ownedChildRetained':_HELD_CHILD is not None}
+        state=unknown_state('internal')
+    reason=state['reason']
+    if time.monotonic()>deadline:
+        state=unknown_state('budget-exhausted');reason=state['reason']
+    elif state['status']=='OBSERVED':
+        if state['exactOwnedCount']!=1 or state['matchCountCapped']:reason='owned-count-invalid'
+        elif state['runtimeGroup']!='MATCH':reason='runtime-mismatch'
+        elif state['deviceType']!='MATCH':reason='device-type-mismatch'
+        elif state['isAvailable'] is not True:reason='owned-unavailable'
+        elif state['state']!='Booted':reason='owned-not-booted'
+        elif state['availabilityErrorPresent'] is not False:reason='availability-error-present'
+        else:reason='ok'
+    satisfied=state['status']=='OBSERVED' and reason=='ok'
+    print('Owned simulator required state: '+json.dumps({'phase':'owned-booted-precondition',
+        'preconditionSatisfied':satisfied,'reason':reason,'capture':capture,'ownedState':state}),flush=True)
+    if not satisfied:raise RuntimeError('Owned booted simulator precondition failed') from None
+
+
+def complete_capture(data, receipt):
+    return (isinstance(data,bytes) and receipt.get('status')=='COMPLETE' and receipt.get('reason')=='ok'
+            and type(receipt.get('toolValue')) is int and receipt['toolValue']==0
+            and receipt.get('directChildReaped') is True and receipt.get('pipesEof') is True
+            and receipt.get('localPipesClosed') is True and receipt.get('ownedChildRetained') is False
+            and type(receipt.get('stdoutBytes')) is int and len(data)==receipt['stdoutBytes']<=MAX_STDOUT
+            and type(receipt.get('stderrBytes')) is int and receipt['stderrBytes']==0)
+
+
+def capture_runtime_catalogue():
+    """Discovery-only adapter: bounded Python waits/output under one30s budget.
+
+    Process creation/kernel scheduling are not hard realtime bounded. Local pipe
+    closure is not EOF or descendant completion. A retained direct-child handle
+    does not promise ownership/cleanup after runner exit. No service/group kill.
+    """
+    deadline=time.monotonic()+RUNTIME_SECONDS
+    print('Owned simulator capture: runtime-discovery-start',flush=True)
+    if os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_OS')!='macOS':
+        raise RuntimeError('Owned runtime discovery requires a disposable hosted Mac') from None
+    try:
+        data,receipt=read_devices(deadline,RUNTIMES)
+        success=complete_capture(data,receipt)
+        reason=('capture-incomplete' if receipt.get('status')=='COMPLETE' else receipt['reason']) if not success else 'ok'
+        text=None
+        if success:
+            try:text=data.decode('utf-8',errors='strict').strip()
+            except UnicodeError:success=False;reason='utf8-invalid'
+    except BaseException:
+        receipt={'status':'UNKNOWN','reason':'internal','directChildReaped':False,
+                 'localPipesClosed':False,'pipesEof':False,'ownedChildRetained':_HELD_CHILD is not None}
+        success=False;reason='internal';text=None
+    if time.monotonic()>deadline:success=False;reason='budget-exhausted'
+    print('Owned simulator runtime capture: '+json.dumps({'phase':'runtime-discovery',
+        'configuredSeconds':RUNTIME_SECONDS,'complete':success,'reason':reason,'capture':receipt}),flush=True)
+    if not success:raise RuntimeError('Owned runtime discovery capture failed') from None
+    print('Owned simulator capture: runtime-discovery-done',flush=True)
+    return text

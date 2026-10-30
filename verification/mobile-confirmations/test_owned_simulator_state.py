@@ -9,7 +9,7 @@ import sys
 import time
 import unittest
 from unittest.mock import patch
-import rejection_observation as observation
+import owned_simulator_state as observation
 
 OWNED='11111111-2222-3333-4444-555555555555'
 OTHER='22222222-2222-3333-4444-555555555555'
@@ -140,80 +140,135 @@ class BoundedOwnChild(unittest.TestCase):
         for token in [OWNED,'SECRET','/PRIVATE',RUNTIME,TYPE]:self.assertNotIn(token,output.getvalue())
 
 
-class AdmissionIntegration(unittest.TestCase):
+def complete_receipt(raw):
+    return {'status':'COMPLETE','reason':'ok','toolValue':0,'directChildReaped':True,
+            'ownedChildRetained':False,'pipesEof':True,'localPipesClosed':True,
+            'stdoutBytes':len(raw),'stderrBytes':0}
+
+
+class RequiredBootedGate(unittest.TestCase):
+    def exercise(self,raw,receipt=None,reject=False):
+        output=io.StringIO();receipt=complete_receipt(raw) if receipt is None else receipt
+        with patch.object(observation,'read_devices',return_value=(raw,receipt)) as read,contextlib.redirect_stdout(output):
+            if reject:
+                with self.assertRaisesRegex(RuntimeError,'Owned booted simulator precondition failed'):
+                    observation.require_booted_simulator(OWNED,RUNTIME,TYPE)
+            else:observation.require_booted_simulator(OWNED,RUNTIME,TYPE)
+        read.assert_called_once()
+        for secret in [OWNED,RUNTIME,TYPE,'SECRET','/PRIVATE']:self.assertNotIn(secret,output.getvalue())
+        return json.loads(output.getvalue().split(': ',1)[1])
+    def test_only_complete_exact_owned_available_booted_matching_state_passes(self):
+        result=self.exercise(data([device(state='Booted')]))
+        self.assertTrue(result['preconditionSatisfied'])
+        cases=[data([]),data([device(state='Booted')]*2),data([device(udid=OTHER,state='Booted')]),
+            data([device(state='Shutdown')]),data([device(state='Booting')]),data([device(state='Booted',isAvailable=False)]),
+            data([device(state='Booted',deviceTypeIdentifier='other')]),data([device(state='Booted')],group=RUNTIME+'-other'),
+            data([device(state='Booted',availabilityError=None)]),b'{',b'{"devices":{},"devices":{}}',b'\xff']
+        missing=device(state='Booted');missing.pop('deviceTypeIdentifier');cases.append(data([missing]))
+        cases.append(data([device(udid=f'{i:08x}-2222-3333-4444-555555555555',state='Booted') for i in range(257)]))
+        for raw in cases:
+            with self.subTest(length=len(raw)):self.assertFalse(self.exercise(raw,reject=True)['preconditionSatisfied'])
+    def test_capture_unknown_cap_tool_reap_eof_or_localclose_cannot_qualify(self):
+        raw=data([device(state='Booted')])
+        for update in [{'status':'UNKNOWN'},{'toolValue':7},{'directChildReaped':False},{'pipesEof':False},
+                       {'localPipesClosed':False},{'ownedChildRetained':True},{'stdoutBytes':observation.MAX_STDOUT+1},{'stdoutBytes':0},{'stderrBytes':1}]:
+            receipt=complete_receipt(raw);receipt.update(update)
+            with self.subTest(fields=list(update)):self.assertFalse(self.exercise(raw,receipt,reject=True)['preconditionSatisfied'])
+    def test_every_gate_reads_fresh_and_unexpected_errors_are_redacted(self):
+        booted=data([device(state='Booted')]);stopped=data([device(state='Shutdown')])
+        output=io.StringIO()
+        with patch.object(observation,'read_devices',side_effect=[(booted,complete_receipt(booted)),(stopped,complete_receipt(stopped))]) as read,contextlib.redirect_stdout(output):
+            observation.require_booted_simulator(OWNED,RUNTIME,TYPE)
+            with self.assertRaises(RuntimeError):observation.require_booted_simulator(OWNED,RUNTIME,TYPE)
+        self.assertEqual(read.call_count,2)
+        with patch.object(observation,'read_devices',side_effect=RuntimeError('SECRET_PAYLOAD')),contextlib.redirect_stdout(output):
+            with self.assertRaises(RuntimeError):observation.require_booted_simulator(OWNED,RUNTIME,TYPE)
+        self.assertNotIn('SECRET',output.getvalue())
+
+
+class ExactExecutionIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        spec=importlib.util.spec_from_file_location('failure_runner',Path(__file__).with_name('run-ios.py'))
+        spec=importlib.util.spec_from_file_location('state_runner',Path(__file__).with_name('run-ios.py'))
         cls.runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(cls.runner)
-    def exercise(self,rejection=None,probe_error=None,cleanup_errors=False,preparation_failure=None):
-        module=self.runner;events=[];requested={};output=io.StringIO()
+    def exercise(self,state_raw=None,capture_receipt=None,action_failure=None,artifact_failure=None,cleanup_errors=False,expect_state_failure=False):
+        module=self.runner;events=[];commands=[];requested={};output=io.StringIO()
+        raw=data([device(state='Booted')]) if state_raw is None else state_raw
+        receipt=complete_receipt(raw) if capture_receipt is None else capture_receipt
         def capture(label,*args,**kwargs):
             events.append(label)
             if label=='selected-xcode':return 'Xcode 16.4'
             if label=='selected-sdk':return '18.5'
-            if label=='runtime-discovery':return json.dumps({'runtimes':[{'identifier':RUNTIME,'isAvailable':True,'version':'18.5'}]})
             if label=='owned-create':requested['type']=args[-2];requested['runtime']=args[-1];return OWNED
-            if label=='owned-destinations':
-                self.assertEqual(args[args.index('-destination')+1],'platform=iOS Simulator,id='+OWNED)
-                self.assertIn('ARCHS=arm64',args);self.assertIn('ONLY_ACTIVE_ARCH=YES',args)
-                return 'Available destinations for Owned:\n{ platform:iOS Simulator, arch:arm64, id:'+OWNED+' }'
-            raise AssertionError('Unexpected capture')
+            raise AssertionError('Unexpected capture, including retired textual enumeration')
+        def runtimes():
+            events.append('runtime-discovery')
+            return json.dumps({'runtimes':[{'identifier':RUNTIME,'isAvailable':True,'version':'18.5'}]})
         def step(label,args,timeout):
-            events.append(label)
-            if label=='boot':
-                self.assertEqual(args,['xcrun','simctl','boot',OWNED]);self.assertEqual(timeout,30)
-            if label=='bootstatus':
-                self.assertEqual(args,['xcrun','simctl','bootstatus',OWNED,'-b']);self.assertEqual(timeout,180)
-            if preparation_failure and label==preparation_failure[0]:raise preparation_failure[1]
+            events.append(label);commands.append((label,args,timeout))
+            if label=='boot':self.assertEqual((args,timeout),(['xcrun','simctl','boot',OWNED],30))
+            if label=='bootstatus':self.assertEqual((args,timeout),(['xcrun','simctl','bootstatus',OWNED,'-b'],180))
+            if action_failure and label==action_failure[0]:raise action_failure[1]
             if cleanup_errors and label in ('cleanup-shutdown','cleanup-delete'):raise subprocess.TimeoutExpired('owned-cleanup',timeout)
-        def admission(_evidence,_arch):
-            events.append('admit')
-            if rejection:raise rejection
-            return 'admitted'
-        def probe(text,owned,runtime,device_type):
-            events.append('probe');self.assertEqual((owned,runtime,device_type),(OWNED,requested['runtime'],requested['type']))
-            if probe_error:raise probe_error
+        def gate(owned,runtime,device_type):
+            events.append('owned-state')
+            self.assertEqual((owned,runtime,device_type),(OWNED,requested['runtime'],requested['type']))
+            return observation.require_booted_simulator(owned,runtime,device_type)
+        def artifacts(*_args):
+            events.append('artifact-proof')
+            if artifact_failure:raise artifact_failure
         with patch.dict(module.os.environ,{'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), \
              patch.object(module.platform,'machine',return_value='arm64'),patch.object(module,'capture',side_effect=capture), \
-             patch.object(module,'step',side_effect=step),patch.object(module,'toolchain_evidence'),patch.object(module,'process_evidence'), \
-             patch.object(module,'verify_artifacts',side_effect=lambda *_args:events.append('artifact-proof')),patch.object(module,'observe_rejection',side_effect=probe) as observe, \
-             patch.object(module,'admit_destination',side_effect=admission),contextlib.redirect_stdout(output):
-            failure=preparation_failure[1] if preparation_failure else rejection
-            if failure:
-                with self.assertRaises(type(failure)) as caught:module.main()
-                self.assertIs(caught.exception,failure)
+             patch.object(module,'capture_runtime_catalogue',side_effect=runtimes),patch.object(module,'step',side_effect=step), \
+             patch.object(module,'toolchain_evidence'),patch.object(module,'process_evidence'), \
+             patch.object(module,'verify_artifacts',side_effect=artifacts),patch.object(module,'require_booted_simulator',side_effect=gate), \
+             patch.object(observation,'read_devices',return_value=(raw,receipt)) as read,contextlib.redirect_stdout(output):
+            expected=action_failure[1] if action_failure else artifact_failure
+            if expected:
+                with self.assertRaises(type(expected)) as caught:module.main()
+                self.assertIs(caught.exception,expected)
+            elif expect_state_failure:
+                with self.assertRaisesRegex(RuntimeError,'Owned booted simulator precondition failed'):module.main()
             else:module.main()
-        return events,observe.call_count,output.getvalue()
-    def test_success_has_exact_boot_first_single_capture_order_and_no_probe(self):
-        events,count,_=self.exercise()
-        self.assertEqual(count,0)
+        return events,commands,read.call_count,output.getvalue()
+    def test_valid_state_executes_exact_same_owned_selector_for_both_actions(self):
+        events,commands,count,_=self.exercise()
+        self.assertEqual(count,1)
         self.assertEqual(events,['locked-trust-package','selected-xcode','selected-sdk','runtime-discovery','owned-create',
-            'locked-package-resolution','boot','bootstatus','owned-destinations','admit','actual-build-for-testing',
+            'locked-package-resolution','boot','bootstatus','owned-state','actual-build-for-testing',
             'artifact-proof','actual-shared-trust-link-proof','actual-ui-test','cleanup-shutdown','cleanup-delete'])
-    def test_same_original_rejection_survives_probe_success_failure_and_cleanup(self):
-        for problem in [None,RuntimeError('SECRET_DIAGNOSTIC'),SystemExit('SECRET_EXIT')]:
-            rejection=RuntimeError('original-admission')
-            events,count,output=self.exercise(rejection,problem,cleanup_errors=True)
-            self.assertEqual(count,1);self.assertNotIn('SECRET',output)
-            self.assertEqual(events[-3:],['probe','cleanup-shutdown','cleanup-delete'])
-            self.assertEqual(events.count('boot'),1);self.assertEqual(events.count('bootstatus'),1)
-            self.assertEqual(events.count('owned-destinations'),1)
-            self.assertLess(events.index('bootstatus'),events.index('owned-destinations'))
-            self.assertLess(events.index('owned-destinations'),events.index('admit'))
-            self.assertLess(events.index('admit'),events.index('probe'))
+        actions=[args for label,args,_ in commands if label in ('actual-build-for-testing','actual-ui-test')]
+        self.assertEqual(len(actions),2);self.assertEqual(actions[0][2:],actions[1][2:])
+        self.assertEqual(actions[0][:2],['xcodebuild','build-for-testing'])
+        self.assertEqual(actions[1][:2],['xcodebuild','test-without-building'])
+        for args in actions:
+            self.assertEqual(args[args.index('-destination')+1],'platform=iOS Simulator,id='+OWNED)
+            self.assertIn('ARCHS=arm64',args);self.assertIn('ONLY_ACTIVE_ARCH=YES',args)
+            self.assertIn('-onlyUsePackageVersionsFromResolvedFile',args)
+        self.assertFalse(any('-showdestinations' in args for _,args,_ in commands))
+    def test_wrong_missing_duplicate_unavailable_unbooted_or_unknown_state_prevents_build(self):
+        cases=[data([]),data([device(state='Booted')]*2),data([device(udid=OTHER,state='Booted')]),
+               data([device(state='Shutdown')]),data([device(state='Booted',isAvailable=False)]),
+               data([device(state='Booted',deviceTypeIdentifier='other')]),data([device(state='Booted')],group=RUNTIME+'-other'),b'{']
+        for raw in cases:
+            events,_,count,output=self.exercise(state_raw=raw,expect_state_failure=True,cleanup_errors=True)
+            self.assertEqual(count,1);self.assertNotIn('actual-build-for-testing',events)
+            self.assertEqual(events[-2:],['cleanup-shutdown','cleanup-delete']);self.assertNotIn('SECRET',output)
+        for changes in [{'pipesEof':False},{'stdoutBytes':observation.MAX_STDOUT+1},{'status':'UNKNOWN'},{'ownedChildRetained':True}]:
+            receipt=complete_receipt(data([device(state='Booted')]));receipt.update(changes)
+            events,_,_,_=self.exercise(capture_receipt=receipt,expect_state_failure=True)
             self.assertNotIn('actual-build-for-testing',events)
-            self.assertEqual(len(rejection.__cause__.exceptions),2)
-
-    def test_each_preparation_failure_stays_fatal_before_capture_and_runs_both_cleanups(self):
-        for label,failure in [('boot',subprocess.CalledProcessError(70,'owned-boot')),
-                              ('bootstatus',subprocess.TimeoutExpired('owned-bootstatus',180))]:
-            with self.subTest(phase=label):
-                events,count,_=self.exercise(preparation_failure=(label,failure),cleanup_errors=True)
-                self.assertEqual(count,0)
-                self.assertEqual(events[-2:],['cleanup-shutdown','cleanup-delete'])
-                self.assertEqual(events.count('boot'),1)
-                self.assertLess(events.index('locked-package-resolution'),events.index('boot'))
-                self.assertNotIn('owned-destinations',events);self.assertNotIn('admit',events)
-                self.assertNotIn('actual-build-for-testing',events);self.assertNotIn('actual-ui-test',events)
-                self.assertEqual(events.count('bootstatus'),0 if label=='boot' else 1)
-                self.assertEqual(len(failure.__cause__.exceptions),2)
+            self.assertEqual(events[-2:],['cleanup-shutdown','cleanup-delete'])
+    def test_preparation_build_artifact_static_and_ui_failures_stay_fatal_with_both_cleanups(self):
+        for label in ('boot','bootstatus','actual-build-for-testing','actual-shared-trust-link-proof','actual-ui-test'):
+            failure=subprocess.CalledProcessError(70,'owned-'+label)
+            events,_,count,_=self.exercise(action_failure=(label,failure),cleanup_errors=True)
+            self.assertEqual(events[-2:],['cleanup-shutdown','cleanup-delete'])
+            self.assertEqual(len(failure.__cause__.exceptions),2)
+            if label in ('boot','bootstatus'):
+                self.assertEqual(count,0);self.assertNotIn('owned-state',events);self.assertNotIn('actual-build-for-testing',events)
+            if label!='actual-ui-test':self.assertNotIn('actual-ui-test',events)
+        failure=RuntimeError('owned-artifact-proof')
+        events,_,_,_=self.exercise(artifact_failure=failure,cleanup_errors=True)
+        self.assertNotIn('actual-shared-trust-link-proof',events);self.assertNotIn('actual-ui-test',events)
+        self.assertEqual(events[-2:],['cleanup-shutdown','cleanup-delete'])

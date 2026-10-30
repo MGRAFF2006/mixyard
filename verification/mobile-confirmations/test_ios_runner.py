@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import unittest
 from unittest.mock import patch
+from architecture import admit_destination
 
 spec = importlib.util.spec_from_file_location('confirmation_runner', Path(__file__).with_name('run-ios.py'))
 module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -55,7 +56,7 @@ class SimulatorSelection(unittest.TestCase):
         self.assertFalse(witness['uuidInDestinationSections'])
         self.assertEqual(witness['exactOwnedIdMatches'],0)
         self.assertEqual(witness['candidates'][0]['braceShape'],'none')
-        with self.assertRaises(RuntimeError):module.admit_destination(original,'arm64')
+        with self.assertRaises(RuntimeError):admit_destination(original,'arm64')
         # Even a real available section containing only a different device is
         # not evidence that the command's owned UUID has a destination entry.
         text=echo+'\nAvailable destinations for Owned:\n{ platform:iOS Simulator, arch:arm64, id:OTHER, name:SECRET }'
@@ -75,7 +76,7 @@ class SimulatorSelection(unittest.TestCase):
         self.assertEqual(witness['candidates'][0]['braceShape'],'close-only')
         self.assertTrue(witness['candidates'][0]['keysOnLine']['id'])
         self.assertEqual(witness['candidates'][0]['ownedRecords'],[])
-        with self.assertRaises(RuntimeError):module.admit_destination(module.destination_evidence(text,owned),'arm64')
+        with self.assertRaises(RuntimeError):admit_destination(module.destination_evidence(text,owned),'arm64')
 
     def test_structure_preserves_native_and_missing_text_arch_admission(self):
         owned='11111111-2222-3333-4444-555555555555'
@@ -87,7 +88,7 @@ class SimulatorSelection(unittest.TestCase):
             expected=2 if suffix else 1
             self.assertEqual(witness['exactOwnedIdMatches'],expected)
             self.assertEqual(len(witness['candidates']),expected)
-            self.assertIn('still required' if suffix else 'UNKNOWN',module.admit_destination(original,'arm64'))
+            self.assertIn('still required' if suffix else 'UNKNOWN',admit_destination(original,'arm64'))
 
     def test_owned_error_duplicate_and_privacy_evidence_is_bounded(self):
         owned='11111111-2222-3333-4444-555555555555'
@@ -98,7 +99,7 @@ class SimulatorSelection(unittest.TestCase):
         record=witness['candidates'][0]['ownedRecords'][0]
         self.assertTrue(record['errorPresent']);self.assertTrue(record['duplicateFields'])
         self.assertTrue(record['exactIdEqual'])
-        with self.assertRaises(RuntimeError):module.admit_destination(module.destination_evidence(text,owned),'arm64')
+        with self.assertRaises(RuntimeError):admit_destination(module.destination_evidence(text,owned),'arm64')
         text='Available destinations for SECRET_SCHEME:\n'+'\n'.join([line]*100)
         witness=module.destination_structure(text,owned)
         self.assertEqual(len(witness['candidates']),8)
@@ -142,7 +143,7 @@ class SimulatorSelection(unittest.TestCase):
         def run(args, **kwargs):
             calls.append(args)
             if args[:2] == ['xcodebuild','test-without-building']: raise subprocess.CalledProcessError(65, 'owned-xcodebuild')
-        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform, 'machine', return_value='arm64'), patch.object(module, 'capture', side_effect=capture), patch.object(module, 'process_evidence'),patch.object(module,'toolchain_evidence'),patch.object(module,'verify_artifacts'), patch.object(module.subprocess, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
+        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform, 'machine', return_value='arm64'), patch.object(module, 'capture', side_effect=capture), patch.object(module, 'process_evidence'),patch.object(module,'toolchain_evidence'),patch.object(module,'capture_runtime_catalogue',return_value=json.dumps({'runtimes':[runtime('18.5')]})),patch.object(module,'verify_artifacts'), patch.object(module,'require_booted_simulator'), patch.object(module.subprocess, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(subprocess.CalledProcessError): module.main()
         command=next(args for args in calls if args[:2]==['xcodebuild','test-without-building'])
         self.assertIn('SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE',command)
@@ -165,7 +166,7 @@ class SimulatorSelection(unittest.TestCase):
             if any(value in args for value in ['bootstatus','shutdown','delete']):
                 raise subprocess.TimeoutExpired(args, kwargs['timeout'])
         evidence=io.StringIO()
-        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform,'machine',return_value='arm64'), patch.object(module,'capture',side_effect=capture), patch.object(module,'process_evidence'),patch.object(module,'toolchain_evidence'),patch.object(module,'verify_artifacts'), patch.object(module.subprocess,'run',side_effect=run), contextlib.redirect_stdout(evidence):
+        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform,'machine',return_value='arm64'), patch.object(module,'capture',side_effect=capture), patch.object(module,'process_evidence'),patch.object(module,'toolchain_evidence'),patch.object(module,'capture_runtime_catalogue',return_value=json.dumps({'runtimes':[runtime('18.5')]})),patch.object(module,'verify_artifacts'), patch.object(module.subprocess,'run',side_effect=run), contextlib.redirect_stdout(evidence):
             with self.assertRaises(subprocess.TimeoutExpired) as failure: module.main()
         self.assertEqual(failure.exception.timeout,180)
         self.assertIn('bootstatus',failure.exception.cmd)
@@ -182,7 +183,7 @@ class SimulatorSelection(unittest.TestCase):
         for label in ['bootstatus','cleanup-shutdown','cleanup-delete']:
             self.assertIn('"phase": "'+label+'", "kind": "timeout"',evidence.getvalue())
 
-    def test_discovery_capture_keeps_30s_bound_and_filters_process_evidence_without_retry(self):
+    def test_legacy_general_capture_argument_and_redaction_are_not_discovery_ownership_proof(self):
         raw = '7 1 /private/SECRET/CoreSimulatorService\n8 1 /private/SECRET/unrelated-app\n9 1 /usr/bin/simctl\n'
         evidence=io.StringIO()
         with patch.object(module.subprocess,'check_output',side_effect=subprocess.TimeoutExpired(['owned-simctl'],30,output='SECRET-OUTPUT')) as run, patch.object(module.subprocess,'run',return_value=subprocess.CompletedProcess([],0,stdout=raw)), contextlib.redirect_stdout(evidence):
