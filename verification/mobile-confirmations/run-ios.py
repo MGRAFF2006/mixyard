@@ -7,6 +7,7 @@ import plistlib
 import re
 import subprocess
 import time
+from architecture import admit_destination, remaining, verify_artifacts
 
 
 def version(value):
@@ -47,7 +48,7 @@ def process_evidence(label):
 def capture(label, *args, timeout=30):
     print('Owned simulator capture: ' + label + '-start', flush=True)
     try:
-        value = subprocess.check_output(args, text=True, timeout=timeout, stdin=subprocess.DEVNULL).strip()
+        value = subprocess.check_output(args, text=True, timeout=timeout, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE).strip()
     except subprocess.TimeoutExpired:
         print('Owned simulator capture failure: ' + json.dumps({'phase':label, 'kind':'timeout', 'value':timeout}), flush=True)
         process_evidence(label + '-failed'); raise
@@ -178,14 +179,17 @@ def main():
                   '-configuration', 'Debug', '-sdk', 'iphonesimulator', '-destination', destination,
                   '-derivedDataPath', str(output), 'ONLY_ACTIVE_ARCH=YES', f'ARCHS={arch}', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE', 'CODE_SIGNING_ALLOWED=NO']
         destinations = capture('owned-destinations', 'xcodebuild', '-showdestinations', *common)
-        print('Owned simulator destination evidence: '+json.dumps(destination_evidence(destinations,identifier)),flush=True)
-        if not any(identifier in line and re.search(r'\barch:\s*' + re.escape(arch) + r'\b', line) for line in destinations.splitlines()):
-            raise RuntimeError('Owned simulator destination does not advertise the native architecture')
+        evidence=destination_evidence(destinations,identifier)
+        print('Owned simulator destination evidence: '+json.dumps(evidence),flush=True)
+        print('Owned simulator text architecture: '+admit_destination(evidence,arch),flush=True)
         step('boot', ['xcrun', 'simctl', 'boot', identifier], 30)
         step('bootstatus', ['xcrun', 'simctl', 'bootstatus', identifier, '-b'], 180)
         # One actual supported simulator architecture for app, local package and
         # UI-test target. No EXCLUDED_ARCHS, suppressed import or skipped test.
-        step('actual-ui-test', ['xcodebuild', 'test', *common], 900)
+        budget=time.monotonic()+900
+        step('actual-build-for-testing',['xcodebuild','build-for-testing',*common],remaining(budget,900))
+        verify_artifacts(output,arch,budget,capture)
+        step('actual-ui-test',['xcodebuild','test-without-building',*common],remaining(budget,900))
     except BaseException as error:
         first_failure = error
     finally:
