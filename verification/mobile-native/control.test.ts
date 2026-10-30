@@ -28,7 +28,7 @@ function deadline<T>(promise: Promise<T>, label: string, ms = 20_000): Promise<T
     timer = setTimeout(() => reject(new Error(`${label} deadline`)), ms)
   })]).finally(() => clearTimeout(timer))
 }
-type Trust = { deviceId: string; certificatePem: string; certificateSha256: string }
+type Trust = { serverName: string; deviceId: string; certificatePem: string; certificateSha256: string }
 class Device {
   readonly directory: string
   readonly permissions: string
@@ -73,7 +73,7 @@ class Device {
   provisioning() {
     const invitation = this.invitations.shift()
     assert.ok(invitation)
-    return { op: 'pair', endpoint: this.endpoint, pin: this.trust.certificateSha256, deviceId: this.trust.deviceId, invitation }
+    return { op: 'pair', endpoint: this.endpoint, trustRecord: JSON.stringify(this.trust), deviceId: this.trust.deviceId, invitation }
   }
   async post(path: string, body: unknown, credential?: string): Promise<any> {
     return deadline(new Promise((resolveReply, reject) => {
@@ -108,8 +108,8 @@ test('shipping native pinned control client against owned production TLS service
     const a = new Device(join(directory, 'a'), 'view,control,settings'); devices.push(a)
     const b = new Device(join(directory, 'b'), 'view,control,settings'); devices.push(b)
     const viewer = new Device(join(directory, 'viewer'), 'view'); devices.push(viewer)
-    // Adapter launches provision a private JVM truststore or a private hosted
-    // macOS test keychain. Provisioning never changes this developer's PKI.
+    // Actual shipping providers accept explicit OOB certificates from stdin.
+    // No user/admin/JVM truststore or keychain search list is changed.
     await Promise.all(devices.map(device => device.start()))
     native = new Native(directory, command)
     const client = native
@@ -222,7 +222,8 @@ test('shipping native pinned control client against owned production TLS service
       assert.equal(revoked.ok, false); assert.equal(revoked.hasAuthority, false)
     })
     await t.test('pin mismatch and PKI hostname mismatch never pair', async () => {
-      assert.equal((await client.call({ ...a.provisioning(), pin: b.trust.certificateSha256 })).ok, false)
+      const wrong = a.provisioning()
+      assert.equal((await client.call({ ...wrong, trustRecord: JSON.stringify({ ...a.trust, certificateSha256: b.trust.certificateSha256 }) })).ok, false)
       // Production fixture certs include localhost/127.0.0.1. Use owned IPv6
       // loopback with that same trusted cert to make the hostname actually wrong.
       const state = JSON.parse(readFileSync(join(a.directory, 'identity/state.json'), 'utf8'))

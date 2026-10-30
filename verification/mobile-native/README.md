@@ -197,3 +197,15 @@ remaining descendants unproved. No global-quiescence or trust-removal claim is
 inferred. When owned ADMIN cleanup is not confirmed, the owned recovery keychain
 is retained alongside immutable fingerprint-bound DER/fixture data; qualification
 still fails and independent service shutdown remains attempted.
+
+
+## Separate production OOB contract (draft, not accepted)
+
+The branch above current92 replaces system-trust preparation with the actual
+shipping private-anchor contract described in [mobile-oob-trust](../../docs/mobile-oob-trust.md).
+The public record/expected target are independently checked before invitation HTTP;
+PEM/hash are explicit OOB input, never challenge-learned. The new Swift launcher
+execs the shipping actor directly with ZERO Security CLI/admin/user-trust edits.
+Old system-trust cleanup failures/recovery evidence remain failed historical
+results. Current platform-policy negatives may expose a gap and must fail, not
+trigger a parser, policy exception or deadline change without root's decision.

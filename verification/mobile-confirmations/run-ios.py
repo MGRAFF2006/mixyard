@@ -7,7 +7,8 @@ import plistlib
 import re
 import subprocess
 import time
-from architecture import admit_destination, remaining, verify_artifacts
+from architecture import remaining, verify_artifacts
+from owned_simulator_state import require_booted_simulator, capture_runtime_catalogue
 
 
 def version(value):
@@ -136,6 +137,61 @@ def destination_evidence(text, identifier):
     return {'ownedUuidMentioned':identifier in text,'records':records[:8],'recordLimitExceeded':len(records)>8}
 
 
+def destination_structure(text, identifier):
+    """Non-authorizing bounded witness; never used by destination admission."""
+    section='unknown';sections={'available':False,'ineligible':False}
+    braces={'available':0,'ineligible':0,'unknown':0}
+    command_mention=False;section_mention=False;outside_mention=False
+    exact=0;owned_lines=0;candidates=[]
+    known={'id','platform','arch','name','error','OS','variant'}
+    for index,line in enumerate(text.splitlines(),1):
+        if 'Available destinations for' in line:
+            section='available';sections[section]=True
+        if 'Ineligible destinations for' in line:
+            section='ineligible';sections[section]=True
+        mentioned=identifier in line
+        command_like='xcodebuild' in line and '-showdestinations' in line
+        entries=re.findall(r'\{([^{}]+)\}',line)
+        owned_records=[];owned_braces=0
+        for entry in entries:
+            braces[section]+=1
+            pairs=[part.strip().split(':',1) for part in entry.split(',') if ':' in part]
+            fields={key.strip():value.strip() for key,value in pairs}
+            if fields.get('id')==identifier:exact+=1
+            if identifier in entry:
+                owned_braces+=1
+                if len(owned_records)<4:
+                    owned_records.append({'fieldCount':min(len(pairs),16),'fieldCountCapped':len(pairs)>16,
+                        'knownKeyCount':min(sum(key.strip() in known for key,_ in pairs),16),
+                        'idPresent':'id' in fields,'exactIdEqual':fields.get('id')==identifier,
+                        'platform':fields.get('platform') if fields.get('platform') in ('iOS Simulator','iOS','macOS') else 'other',
+                        'arch':fields.get('arch') if fields.get('arch') in ('arm64','x86_64') else 'missing-or-other',
+                        'archPresent':'arch' in fields,'errorPresent':'error' in fields,
+                        'duplicateFields':len(fields)!=len(pairs)})
+        if not mentioned:continue
+        owned_lines+=1
+        command_mention |= command_like
+        section_mention |= section!='unknown'
+        outside_mention |= section=='unknown'
+        if len(candidates)<8:
+            opened=line.count('{');closed=line.count('}')
+            shape='none' if opened==closed==0 else 'balanced' if opened==closed else 'open-only' if not closed else 'close-only' if not opened else 'unbalanced'
+            candidates.append({'lineIndex':min(index,65535),'lineIndexCapped':index>65535,
+                'section':section,'commandEchoLike':command_like,'braceShape':shape,
+                'braceRecords':min(len(entries),8),'braceRecordLimitExceeded':len(entries)>8,
+                'keysOnLine':{key:bool(re.search(r'\b'+key+r'\s*:',line)) for key in ('id','platform','arch','error')},
+                'ownedBraceRecords':min(owned_braces,4),'ownedBraceRecordLimitExceeded':owned_braces>4,
+                'ownedRecords':owned_records})
+    return {'availableSection':sections['available'],'ineligibleSection':sections['ineligible'],
+            'uuidInCommandEchoLike':command_mention,'uuidInDestinationSections':section_mention,
+            'uuidOutsideDestinationSections':outside_mention,
+            'braceRecordsBySection':{key:min(value,64) for key,value in braces.items()},
+            'braceCountLimitExceeded':any(value>64 for value in braces.values()),
+            'exactOwnedIdMatches':min(exact,64),'exactMatchLimitExceeded':exact>64,
+            'ownedBearingLines':min(owned_lines,64),'candidateLimitExceeded':owned_lines>8,
+            'candidates':candidates}
+
+
 def shutdown_owned(identifier):
     deadline=time.monotonic()+30
     try:
@@ -156,6 +212,7 @@ def shutdown_owned(identifier):
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
         raise RuntimeError('Disposable hosted Mac required')
+    step('locked-trust-package', ['python3', '-B', 'verification/mobile-native/swift-package-lock.py', '--xcode'], 30)
     xcode = capture('selected-xcode', 'xcodebuild', '-version')
     sdk = capture('selected-sdk', 'xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version')
     validate_comparison(xcode,sdk)
@@ -163,11 +220,12 @@ def main():
     print('Owned simulator toolchain: ' + json.dumps({'xcode':xcode, 'sdk':sdk, 'arch':arch}), flush=True)
     toolchain_evidence()
     process_evidence('before-runtime-discovery')
-    runtimes = json.loads(capture('runtime-discovery', 'xcrun', 'simctl', 'list', 'runtimes', '--json'))['runtimes']
+    runtimes = json.loads(capture_runtime_catalogue())['runtimes']
     runtime = select_runtime(sdk, runtimes, arch)
     print('Owned simulator selection: ' + json.dumps({'xcode':xcode, 'sdk':sdk, 'runtime':runtime['version'], 'arch':arch}), flush=True)
+    device_type = 'com.apple.CoreSimulator.SimDeviceType.iPhone-16'
     identifier = capture('owned-create', 'xcrun', 'simctl', 'create', 'mixyard-confirmations',
-                         'com.apple.CoreSimulator.SimDeviceType.iPhone-16', runtime['identifier'])
+                         device_type, runtime['identifier'])
     if not re.fullmatch(r'[0-9A-Fa-f-]{36}', identifier):
         raise RuntimeError('Owned simulator returned invalid identifier')
     first_failure = None
@@ -177,18 +235,19 @@ def main():
         destination = f'platform=iOS Simulator,id={identifier}'
         common = ['-project', 'apps/mobile/ios/Mixyard.xcodeproj', '-scheme', 'MixyardConfirmations',
                   '-configuration', 'Debug', '-sdk', 'iphonesimulator', '-destination', destination,
+                  '-onlyUsePackageVersionsFromResolvedFile', '-disableAutomaticPackageResolution',
                   '-derivedDataPath', str(output), 'ONLY_ACTIVE_ARCH=YES', f'ARCHS={arch}', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE', 'CODE_SIGNING_ALLOWED=NO']
-        destinations = capture('owned-destinations', 'xcodebuild', '-showdestinations', *common)
-        evidence=destination_evidence(destinations,identifier)
-        print('Owned simulator destination evidence: '+json.dumps(evidence),flush=True)
-        print('Owned simulator text architecture: '+admit_destination(evidence,arch),flush=True)
+        step('locked-package-resolution', ['xcodebuild', '-resolvePackageDependencies', *common], 120)
+        # Explicit prepared-device contract, not a discovery-cause claim.
         step('boot', ['xcrun', 'simctl', 'boot', identifier], 30)
         step('bootstatus', ['xcrun', 'simctl', 'bootstatus', identifier, '-b'], 180)
+        require_booted_simulator(identifier,runtime['identifier'],device_type)
         # One actual supported simulator architecture for app, local package and
         # UI-test target. No EXCLUDED_ARCHS, suppressed import or skipped test.
         budget=time.monotonic()+900
         step('actual-build-for-testing',['xcodebuild','build-for-testing',*common],remaining(budget,900))
         verify_artifacts(output,arch,budget,capture)
+        step('actual-shared-trust-link-proof', ['python3', '-B', 'verification/mobile-native/xcode-trust-evidence.py', str(output), arch], remaining(budget,120))
         step('actual-ui-test',['xcodebuild','test-without-building',*common],remaining(budget,900))
     except BaseException as error:
         first_failure = error
