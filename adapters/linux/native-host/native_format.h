@@ -15,12 +15,14 @@ static inline bool mx_native_format_matches(int parse_result, const struct spa_a
         info->position[0] == SPA_AUDIO_CHANNEL_FL && info->position[1] == SPA_AUDIO_CHANNEL_FR;
 }
 // Only a new, unadmitted candidate may classify a fully described native EMPTY
-// buffer as unavailable. This never reads PCM or proves a source clock/header.
+// buffer as unavailable. SPA chunk.size is valid-data bytes; EMPTY may carry
+// zero bytes or a full neutral quantum. Positive partial sizes remain invalid.
+// This never reads PCM or proves a source clock/header.
 static inline bool mx_native_startup_empty(bool warming, const struct spa_buffer *buffer, uint32_t frames) {
     if (!warming || !buffer || buffer->n_datas != 1 || !buffer->datas || !frames || frames > 128) return false;
     const struct spa_data *d = &buffer->datas[0];
     return d->data && d->chunk && d->maxsize >= frames * 16 && d->chunk->offset == 0 &&
-        d->chunk->size == frames * 16 && d->chunk->stride == 16 &&
+        (d->chunk->size == 0 || d->chunk->size == frames * 16) && d->chunk->stride == 16 &&
         d->chunk->flags == SPA_CHUNK_FLAG_EMPTY &&
         spa_buffer_find_meta_data(buffer, SPA_META_Header, sizeof(struct spa_meta_header)) != NULL;
 }

@@ -284,3 +284,16 @@ revision still requires error 46 for server loss: it does not accept error 12
 or overwrite its first-cause record. A witnessed ordering/geometry decision,
 negative pre-stop/unrelated-corruption checks, and another gated SDK run are
 required before considering any narrower expected-teardown classification.
+
+
+Before the first host admission only, an exact native EMPTY descriptor may have
+zero valid-data bytes or one full neutral quantum. The pinned SPA definition
+makes `chunk.size` the valid-data byte count; the actual 1.0.5 audiomixer excludes
+EMPTY inputs from PCM mixing and can propagate size zero. Both states are
+**unavailable**: return the borrowed token without reading PCM, installing a host,
+claiming a fresh header/clock, or scheduling silence. Positive partial/oversized
+sizes, wrong offset/stride, missing metadata, and unknown/corrupted flags still
+fault. The existing warming/never-admitted caller guards and all exact format
+checks remain. Any admitted EMPTY still fails; no server-loss exception is added.
+The SDK regressions exercise actual POD/descriptor boundaries and the real SPA
+plugin's zero-byte EMPTY output; local SDK execution remains unavailable.

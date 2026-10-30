@@ -55,7 +55,19 @@ int main(void) {
     assert(mx_native_startup_empty(true, &buffer, 128));
     assert(!mx_native_startup_empty(false, &buffer, 128)); // admitted/revoked: no startup exception
     assert(!mx_native_header_current(&h, 123, 456)); // unavailable is not fresh clock evidence
-    chunk.size--; assert(!mx_native_startup_empty(true, &buffer, 128)); chunk.size++;
+    // Actual startup observation: valid-data length is zero with exact EMPTY,
+    // not a partial PCM quantum. It stays unavailable and proves no header time.
+    chunk.size = 0;
+    assert(mx_native_startup_empty(true, &buffer, 128)); // old full-size-only predicate rejects
+    assert(!mx_native_startup_empty(false, &buffer, 128));
+    assert(!mx_native_header_current(&h, 123, 456));
+    chunk.flags = 0; assert(!mx_native_startup_empty(true, &buffer, 128));
+    chunk.flags = SPA_CHUNK_FLAG_EMPTY;
+    for (uint32_t size = 1; size < sizeof(untouched); ++size) {
+        chunk.size = size; assert(!mx_native_startup_empty(true, &buffer, 128));
+    }
+    chunk.size = sizeof(untouched)+1; assert(!mx_native_startup_empty(true, &buffer, 128));
+    chunk.size = sizeof(untouched);
     chunk.offset = 16; assert(!mx_native_startup_empty(true, &buffer, 128)); chunk.offset = 0;
     chunk.stride = 8; assert(!mx_native_startup_empty(true, &buffer, 128)); chunk.stride = 16;
     chunk.flags |= SPA_CHUNK_FLAG_CORRUPTED; assert(!mx_native_startup_empty(true, &buffer, 128));
