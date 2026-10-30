@@ -17,7 +17,8 @@ int main() {
   assert(rejected("{\"a\":1} {\"a\":2}"));
   assert(rejected("{\"a\":NaN}"));
   assert(rejected(std::string(wire::limit + 1, ' ')));
-  assert(rejected(std::string("{\"a\":\"x\0y\"}", 13)));
+  constexpr char embedded_nul[] = "{\"a\":\"x\0y\"}";
+  assert(rejected(std::string(embedded_nul, sizeof(embedded_nul) - 1)));
   std::string raw;
   auto j =
       wire::parse("{\"action\":{\"kind\":\"prepare\",\"snapshot\":{\"config\":{"

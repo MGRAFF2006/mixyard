@@ -112,7 +112,7 @@
     "adapters/linux/private-audio/review-repairs.json": "9f401256f224f5741b5d8e7865322b4be0f915da15f9a6c24f8c0c2b14658c9c",
     "adapters/linux/private-audio/sha256.h": "4366b1629d55205939f4d974402005406c0910b12ce4d7dc0a4a03605b647499",
     "adapters/linux/private-audio/test.sh": "e3ee70a32f8bdf64d3fc856b429d9306eb30340330e22dedf6cb19078f5036a9",
-    "adapters/linux/private-audio/test_json.cpp": "413b609bc08dae5e7c546ff24ddb3060ce64571206b17df86fcecac0c75de0aa",
+    "adapters/linux/private-audio/test_json.cpp": "0ceb4d00b0b4d05d5bdce28c463af10239c23975238ae2f68326dc80ccb8821a",
     "adapters/linux/private-audio/test_owner.c": "5f0e229644153ce9e2d64f2c063bd66ba1b6c91683d37f81efd3445d47104b51",
     "src/bin/mixyard-runtime.rs": "3cfbc9c1c32bfb3aa5e006f5a8ccd8d7468e9e8e5b9390712b42c9989bb65b48",
     "src/main.rs": "9fab453d2d5fcde26b8e7a31c1aff015ec3f7a19abc86e24732a8a89715a70a5",
@@ -229,5 +229,54 @@
     ],
     "currentValidation": "Source/diff/manifest checks only. No local compiler/test, cloud retry or helper launched for this followup; changed companion remains uncompiled.",
     "remaining": "Link/size/JSON/native handlers/four consumers/product R1/R2/heap/scrub and all90/115/cause/SDK/recorder holds remain."
+  },
+  "compiledCompanionJsonFixtureFollowup": {
+    "sourceHead": "1834dc4f39381668f73a727423e37e8072253c48",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6528250798",
+    "overallOutcome": "FAIL at JSON fixture compiler after companion compile/link/size PASS; no retry or helper/native execution.",
+    "companion": {
+      "compileAndLinkPassed": true,
+      "exitCode": 0,
+      "seconds": 2.04478,
+      "stdoutBytes": 0,
+      "stderrBytes": 0,
+      "binaryBytes": 1315640,
+      "binarySha256": "91eada3b9b1b25ce33c61408ddad4939ffa14c5412c7c4348f9f60757f063658",
+      "recipe2MiBLimitPassed": true,
+      "strictFlagsUnchanged": true,
+      "executed": false
+    },
+    "jsonFixture": {
+      "compileExitCode": 1,
+      "seconds": 0.30553,
+      "stderrBytes": 1016,
+      "stderrSha256": "c73bc6e8f4b64470ad0d93fa7a9a3be5424410aef12560681a977099cca853a6",
+      "cause": "test_json.cpp20: length13 requests bytes beyond a const char[12] literal; GCC13 -Werror=array-bounds",
+      "executed": false
+    },
+    "preflight": "Fresh static archive04a,23 scoped host inputs,347 prefix files/11 links/10517488bytes/57ELF build IDs/header/runtime/pkg/compiler checks passed; historical host reuse only.",
+    "report": {
+      "bytes": 543422,
+      "sha256": "c2d41a29b20f318217e7d4beb0654b9be95193b8ca38428e6b754213508c69c9",
+      "prechecks": 798,
+      "allStartedLeadersReaped": true,
+      "remainingOwnedGroupMembers": 0,
+      "processScanUnavailableEntries": 0,
+      "sampledCompileAreaPeakBytes": 1987458
+    },
+    "artifactPreservation": "Not invoked because both stages did not pass; compiled binary was not copied to persistent root or host, future availability UNKNOWN.",
+    "rootStopVerification": {
+      "state": "stopped",
+      "status": "completed",
+      "forced": false,
+      "stoppedAt": "2026-10-30T16:46:43.368Z",
+      "completedAt": "2026-10-30T16:46:43.391Z",
+      "snapshotVerifiedAt": "2026-10-30T16:46:43.325Z",
+      "note": "Author immediate verification remained pending; root independently observed completion afterward."
+    },
+    "currentFixtureRepair": "Use a constexpr char array and sizeof(array)-1 for the embedded-NUL negative, preserving all intended JSON bytes without an out-of-bounds read. No warning suppression or parser weakening.",
+    "sourceApplicability": "Current companion translation unit, headers, build flags and host inputs remain byte-identical to compiled1834; only test_json.cpp plus verification metadata change.",
+    "currentVerification": "Source/diff/manifest checks only; corrected JSON helper is uncompiled/unexecuted locally. Local compiler/test hold active.",
+    "remaining": "JSON helper compile/run and actual native handlers/four consumers/product R1/R2/heap/scrub execution,90/115 and other historical holds remain."
   }
 }
