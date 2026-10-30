@@ -63,6 +63,8 @@ test('stderr accepts only fixed typed Security classifications and suppresses ra
   process.stderr.write = ((chunk: unknown) => { output.push(String(chunk)); return true }) as typeof write
   const native = fixture(`
     process.stderr.write('SECRET-RAW\\n');
+    process.stderr.write('MIXYARD_TRUST_STATE {"phase":"admin-after","absent":true,"statuses":[-25300,-25300,-25263]}\\n');
+    process.stderr.write('MIXYARD_TRUST_STATE {"phase":"admin-after","absent":true,"statuses":[-25300,-25300,-25263],"certificate":"SECRET"}\\n');
     process.stderr.write('MIXYARD_SECURITY {"phase":"trust-a","kind":"timeout","value":4000}\\n');
     process.stderr.write('MIXYARD_SECURITY {"phase":"trust-a","kind":"SECRET-KIND","value":1}\\n');
     process.stderr.write('MIXYARD_SECURITY {"phase":"trust-a","kind":"exit","value":1,"stderr":"SECRET"}\\n');
@@ -74,5 +76,6 @@ test('stderr accepts only fixed typed Security classifications and suppresses ra
   try { await native.ok({op:'pair'}); await reaped(native) }
   finally { process.stderr.write = write; if (native.child.exitCode === null) await reaped(native) }
   assert.match(output.join(''), /Owned Security failure: trust-a timeout 4000/)
+  assert.match(output.join(''), /Owned admin trust readback: admin-after absent=true statuses=-25300,-25300,-25263/)
   assert.doesNotMatch(output.join(''), /SECRET|stderr/)
 })

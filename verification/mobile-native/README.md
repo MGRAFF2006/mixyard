@@ -90,3 +90,31 @@ keychain. Apple's [trust implementation](https://github.com/apple-oss-distributi
 documents that setting trust may block for authorization. This establishes tooling
 semantics, NOT the cause of the observed runner failure. User/admin trust policies,
 normal PKI and exact production pinning remain unchanged pending the new evidence.
+
+## Disposable admin fixture lane
+
+The actual2b/a306 Swift runs classified the first user-domain add as timeout4000;
+they did not establish an OS/UI cause and never started the Swift client. Root
+authorized a separate explicit disposable-hosted admin fixture mechanism. Fresh
+owned certificate DER snapshots are SHA256-bound. A read-only Security helper
+checks their ADMIN trust records are absent BEFORE any add; preexisting or unknown
+state fails without modifying/removing it. Certificates are stored by the owner
+in its private keychain; only exact new ADMIN SSL trust records use
+sudo -n /usr/bin/security. There is no user-domain fallback, interactive sudo,
+SIP/authdb/policy change, ignored validation error or production verifier change.
+
+Search-list restoration and verification occur FIRST during cleanup. Partial adds
+are tracked before dispatch; matching ADMIN records are removed only for attempted
+owned fingerprints, followed by actual Security absence readback. Only fixed
+phase/kind, numeric statuses and boolean absence leave memory. Captured trust state,
+certificates, argv, passwords and private paths are never diagnostic output.
+Cleanup failure fails qualification and retains fixture ownership.
+
+Privileged commands keep an owned supervisor handle: timeout sends SIGTERM and
+reserves part of the existing bound for drain. SIGKILL of sudo would not relay to
+its command ([upstream monitor](https://github.com/sudo-project/sudo/blob/main/src/exec_monitor.c)).
+An unproved stop retains ownership, blocks cleanup mutations and fails explicitly;
+no admin-removal success is claimed while an add may still run. Overall18s startup,
+20s shared first-call budget and14s cleanup remain unchanged. Local mocked OS tests
+prove command-domain/ownership/failure behavior only. Actual hosted readback,
+normal URLSession PKI/name/pin/TLS exercise and successful cleanup are still required.

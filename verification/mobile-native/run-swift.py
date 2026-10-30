@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import time
+from admin_fixture import OwnedAdmin
 
 
 def phase(label, status):
@@ -19,11 +20,65 @@ def phase(label, status):
 
 
 SECURITY_PHASES = frozenset(['startup-list', 'startup-create', 'startup-unlock', 'startup-search',
-    'trust-a', 'trust-b', 'trust-viewer', 'cleanup-search', 'cleanup-verify',
-    'cleanup-trust-a', 'cleanup-trust-b', 'cleanup-trust-viewer', 'cleanup-keychain'])
+    'store-a', 'store-b', 'store-viewer', 'trust-a', 'trust-b', 'trust-viewer', 'cleanup-search', 'cleanup-verify',
+    'cleanup-trust-a', 'cleanup-trust-b', 'cleanup-trust-viewer', 'cleanup-keychain',
+    'admin-before', 'admin-ready', 'admin-precleanup', 'admin-after', 'cleanup-command'])
 
 
-def security(label, deadline, *args, maximum=4):
+class StopIncomplete(RuntimeError):
+    pass
+
+
+# At most one sequential owned admin command. A timeout is not completion:
+# retain its handle until sudo's monitor AND inherited output pipes are drained.
+pending_command = None
+
+
+def privileged_capture(command, timeout):
+    global pending_command
+    if pending_command is not None:
+        raise StopIncomplete('owned-security-command-still-active')
+    child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, start_new_session=True)
+    pending_command = child
+    reserve = min(0.5, timeout / 4)
+    try:
+        output, errors = child.communicate(timeout=max(0.001, timeout - reserve))
+    except subprocess.TimeoutExpired:
+        # SIGTERM is relayed by sudo. SIGKILL of the monitor would not relay and
+        # could leave a privileged Security child writing after our readback.
+        try:
+            child.terminate()
+            child.communicate(timeout=reserve)
+        except (OSError, subprocess.TimeoutExpired):
+            raise StopIncomplete('owned-security-stop-incomplete') from None
+        pending_command = None
+        raise subprocess.TimeoutExpired('owned-security', timeout) from None
+    pending_command = None
+    if child.returncode:
+        raise subprocess.CalledProcessError(child.returncode, 'owned-security')
+    return subprocess.CompletedProcess('owned-security', 0, stdout=output, stderr=errors)
+
+
+def drain_command(deadline):
+    global pending_command
+    child = pending_command
+    if child is None: return True
+    phase('cleanup-command', 'start')
+    remaining = deadline - time.monotonic()
+    try:
+        if remaining <= 0: raise TimeoutError()
+        child.terminate()
+        child.communicate(timeout=min(1, remaining))
+    except (OSError, TimeoutError, subprocess.TimeoutExpired):
+        phase('cleanup-command', 'failed')
+        return False  # Handle/state ownership remains; never report removal.
+    pending_command = None
+    phase('cleanup-command', 'done')
+    return True
+
+
+def run_owned(label, deadline, command, maximum=4):
     if label not in SECURITY_PHASES:
         raise RuntimeError('owned-security-phase-invalid')
     phase(label, 'start')
@@ -33,8 +88,13 @@ def security(label, deadline, *args, maximum=4):
     try:
         if remaining <= 0:
             raise TimeoutError('owned-phase-budget')
-        result = subprocess.run(['security', *args], check=True, capture_output=True,
-                                text=True, timeout=timeout)
+        if command[:3] == ['sudo', '-n', '/usr/bin/security']:
+            result = privileged_capture(command, timeout)
+        else:
+            result = subprocess.run(command, check=True, capture_output=True,
+                                    text=True, timeout=timeout)
+    except StopIncomplete:
+        kind = 'stop-incomplete'
     except subprocess.TimeoutExpired:
         kind, value = 'timeout', max(0, round(timeout * 1000))
     except subprocess.CalledProcessError as error:
@@ -60,6 +120,10 @@ def security(label, deadline, *args, maximum=4):
     return result.stdout
 
 
+def security(label, deadline, *args, maximum=4):
+    return run_owned(label, deadline, ['/usr/bin/security', *args], maximum=maximum)
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
         raise RuntimeError('owned-host-required')
@@ -67,9 +131,8 @@ def main():
     keychain = fixture / 'qualification.keychain-db'
     if keychain.exists():
         raise RuntimeError('owned-keychain-already-exists')
-    certificates = [(name, fixture / name / 'certificate.pem') for name in ('a', 'b', 'viewer')]
     original = None
-    trusted = []
+    admin = None
     created = False
     child = None
     def interrupted(_signum, _frame):
@@ -78,15 +141,17 @@ def main():
     # Strictly inside the existing20s first-call total; no timeout increase.
     startup = time.monotonic() + 18
     try:
+        admin = OwnedAdmin(fixture, run_owned)
+        admin.admit(startup)
         original = re.findall(r'"([^"]+)"', security('startup-list', startup, 'list-keychains', '-d', 'user'))
         # Track ownership before commands that can partially complete and time out.
         created = True
         security('startup-create', startup, 'create-keychain', '-p', 'fixture-only', str(keychain))
         security('startup-unlock', startup, 'unlock-keychain', '-p', 'fixture-only', str(keychain))
         security('startup-search', startup, 'list-keychains', '-d', 'user', '-s', str(keychain), *original)
-        for name, certificate in certificates:
-            trusted.append((name, certificate))
-            security('trust-' + name, startup, 'add-trusted-cert', '-r', 'trustRoot', '-k', str(keychain), str(certificate))
+        for name in admin.names:
+            admin.add(name, keychain, startup)
+        admin.ready(startup)
         executable = Path(__file__).parent / 'swift' / '.build' / 'native-control-qualification'
         phase('child-start', 'start')
         try: child = subprocess.Popen([str(executable)])
@@ -123,10 +188,15 @@ def main():
                 if restored != original:
                     phase('cleanup-verify', 'failed'); failed = True
             except RuntimeError: failed = True
-        for name, certificate in trusted:
-            try: security('cleanup-trust-' + name, cleanup, 'remove-trusted-cert', str(certificate), maximum=2)
-            except RuntimeError: failed = True
-        if created:
+        stopped = drain_command(cleanup)
+        if not stopped: failed = True
+        if stopped and admin is not None:
+            if not admin.cleanup(cleanup): failed = True
+            # A timed-out REMOVE also owns a supervisor until actual drain.
+            stopped = drain_command(cleanup)
+            if not stopped: failed = True
+        # Never race keychain deletion/admin removal with an unproved stop.
+        if stopped and created:
             try: security('cleanup-keychain', cleanup, 'delete-keychain', str(keychain), maximum=2)
             except RuntimeError: failed = True
         phase('cleanup-complete', 'failed' if failed else 'done')
