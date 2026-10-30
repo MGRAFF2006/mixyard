@@ -7,19 +7,27 @@ on:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/audio.rs', 'src/audio/**', 'src/dsp/**', 'src/runtime/**', 'tests/runtime_worker.rs', 'tests/native_pipeline.rs', 'tests/native_linux_pcm.rs', '.github/workflows/native-worker.yml']
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   handoff:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 10
     env:
       CARGO_INCREMENTAL: 0
       CARGO_BUILD_JOBS: 2
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
       - uses: actions/checkout@v4
       - run: cargo test --locked --test runtime_worker --test native_pipeline
       - if: runner.os == 'Linux'

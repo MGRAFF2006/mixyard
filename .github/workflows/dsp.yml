@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dsp:
     name: DSP output, allocation and timing (${{ matrix.os }})
@@ -17,11 +21,15 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 15
     env:
       CARGO_BUILD_JOBS: 2
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
       - uses: actions/checkout@v4
       - name: Filter, dynamics, channel selection/matrix, reset, precision and allocation oracles
         run: cargo test --locked --test dsp_core --test dsp_allocations --test dsp_live --test latency

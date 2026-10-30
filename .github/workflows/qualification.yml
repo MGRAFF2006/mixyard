@@ -26,10 +26,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   offline:
     name: Synthetic PCM oracle only
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 5
     outputs:
       core_present: ${{ steps.inventory.outputs.core_present }}
@@ -103,11 +107,15 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -136,7 +144,7 @@ jobs:
     name: Linux adapter CLI check (no PipeWire audio)
     needs: offline
     if: needs.offline.outputs.linux_present == 'true'
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

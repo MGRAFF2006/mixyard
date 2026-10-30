@@ -7,6 +7,10 @@ on:
     paths: ['Cargo.toml', 'Cargo.lock', 'src/**', 'tests/runtime*.rs', 'tests/recording.rs', 'tests/runtime_support/**', 'scripts/install-inventory-runtime.*', 'adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', '.github/workflows/runtime.yml']
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lifecycle:
     name: Real local IPC (${{ matrix.os }})
@@ -14,13 +18,21 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.13'
       - uses: actions/checkout@v4
       - name: Require 10 GiB free
         shell: python

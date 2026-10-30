@@ -7,9 +7,13 @@ on:
     paths: ['adapters/windows/**', '.github/workflows/windows-worker.yml']
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   portable:
-    runs-on: ubuntu-24.04
+    runs-on: boat
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

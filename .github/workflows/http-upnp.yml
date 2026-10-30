@@ -11,9 +11,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   owned-loopback:
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 3
     env:
       PYTHONDONTWRITEBYTECODE: '1'

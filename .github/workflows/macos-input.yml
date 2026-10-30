@@ -19,10 +19,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   provenance:
     name: Git provenance fixtures (no SDK)
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

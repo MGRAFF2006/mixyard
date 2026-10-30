@@ -7,9 +7,13 @@ on:
     paths: ['control/**', 'src/**', 'apps/web/src/**', 'apps/web/package.json', 'apps/web/pnpm-lock.yaml', 'Cargo.toml', 'Cargo.lock', 'verification/device-control/**', '.github/workflows/device-control-integration.yml']
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   authenticated-control:
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 15
     env:
       CARGO_INCREMENTAL: 0

@@ -11,13 +11,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   raw-codec-session:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
@@ -25,6 +29,10 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.13'
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -42,7 +50,7 @@ jobs:
       - run: cargo test --locked --manifest-path network/Cargo.toml --no-default-features
 
   linux-linked-codec-session:
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
@@ -50,6 +58,10 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.13'
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:

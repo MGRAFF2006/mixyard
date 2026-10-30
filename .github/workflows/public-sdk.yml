@@ -18,9 +18,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sdk-contracts:
-    runs-on: ubuntu-latest
+    runs-on: boat
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v4

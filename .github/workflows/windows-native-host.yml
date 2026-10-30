@@ -12,15 +12,27 @@ env:
   CARGO_BUILD_JOBS: '1'
   CARGO_PROFILE_RELEASE_DEBUG: '0'
   CARGO_PROFILE_TEST_DEBUG: '0'
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linked:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-2022]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 20
     steps:
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.13'
       - uses: actions/checkout@v4
       - name: Select private disposable Rust target
         shell: pwsh

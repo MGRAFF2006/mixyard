@@ -24,9 +24,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   boundary:
-    runs-on: ubuntu-24.04
+    runs-on: boat
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: '2'

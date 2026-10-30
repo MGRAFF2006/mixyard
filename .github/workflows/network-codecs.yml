@@ -29,9 +29,13 @@ jobs:
       max-parallel: 2
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 10
     steps:
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.13'
       - uses: actions/checkout@v4
       - name: Set private target and require 10 GiB free
         shell: python
@@ -62,7 +66,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         link: [dylib, static]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     timeout-minutes: 25
     env:
       MIXYARD_ZSTD_LINK_KIND: ${{ matrix.link }}
@@ -76,6 +80,10 @@ jobs:
       HOMEBREW_NO_ANALYTICS: '1'
       HOMEBREW_MAKE_JOBS: '2'
     steps:
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.13'
       - uses: actions/checkout@v4
       - name: Allocate private hosted build and dependency paths before acquisition
         shell: python
