@@ -471,8 +471,17 @@ json-c tools, disables Meson fallbacks, uses j2 and a private RUNNER_TEMP prefix
 and checks planned installation paths before installing there. Optional hardware,
 service/session-manager integrations are disabled; no system install, ldconfig,
 service activation or personal graph. Tool identities, source inputs, installed
-file hashes/build IDs and a closed comparison descriptor are retained. The
-actual test merge must have exact ordered [approved actual base, declared head]
+file hashes/build IDs and a closed comparison descriptor are retained.
+
+The pinned 1.4.8 Meson tree requires audioconvert before audiomixer: the former
+unconditionally defines the latter's `test_inc`/`test_lib`, independently of the
+`tests` option. Both plugins are enabled for this build; `tests` and
+`installed_tests` remain disabled. Their three Meson wiring blobs are verified
+before setup. The installed audioconvert objects enter the complete prefix
+manifest; their presence does not admit conversion nodes, implicit conversion,
+or broader formats in the graph. No upstream source is patched.
+
+The actual test merge must have exact ordered [approved actual base, declared head]
 parents, complete real-object ancestry, and scoped working hashes matching the
 executed tree. Declared/actual/freshly fetched main bases, head/merge/tree and
 input hashes are separately recorded using #105's process-local no-graft,

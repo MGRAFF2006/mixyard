@@ -22,6 +22,9 @@ CRITICAL = {
     "meson.build": "70dfcea88d3d11821d9b5267d5012d00d03b5522",
     "meson_options.txt": "dc1b339f25563952deeaed86235c4deb80705184",
     "spa/include/spa/buffer/alloc.h": "dc8f4cc64e4845af96203382b24faf46fe1d74bf",
+    "spa/plugins/meson.build": "42aec7ed3f24e92f0c07d48a102b9553add16460",
+    "spa/plugins/audioconvert/meson.build": "394bc11ebb935b52ebd4386eb57644cb069870b5",
+    "spa/plugins/audiomixer/meson.build": "65aafee20de10473f06d295a296b980e6dffe7b8",
     "spa/plugins/audiomixer/audiomixer.c": "8cf7cfdffd9861b9e22ce5068a658e8aefc04781",
     "src/modules/module-client-node/client-node.c": "6c2137b0397dbfa6b481cff08166c4c68baed72f",
     "src/modules/module-client-node/remote-node.c": "52134eaa421491bcc828c97c76e2e537f9aa2011",
@@ -185,6 +188,8 @@ def prepare(work):
     inputs = manifest(source)
     write_json(work / "source-inputs.json", {"source": SOURCE, "criticalGitBlobs": CRITICAL, **inputs})
     prefix, build = work / "prefix", work / "build"
+    # Release 1.4.8 audiomixer uses test_inc/test_lib from audioconvert even
+    # with tests disabled. Building that prerequisite does not admit graph conversion.
     options = ["--buildtype=release", "--wrap-mode=nofallback", "--libdir=lib", "--sysconfdir=etc",
                "-Dauto_features=disabled", "-Ddocs=disabled", "-Dman=disabled", "-Dexamples=disabled",
                "-Dtests=disabled", "-Dinstalled_tests=disabled", "-Dsession-managers=[]",
@@ -192,7 +197,7 @@ def prepare(work):
                "-Ddbus=disabled", "-Dflatpak=disabled", "-Dlegacy-rtkit=false", "-Dpam-defaults-install=false",
                "-Drlimits-install=false", "-Dpipewire-alsa=disabled", "-Dpipewire-jack=disabled",
                "-Dpipewire-v4l2=disabled", "-Dalsa=disabled", "-Dudev=disabled", "-Dspa-plugins=enabled", "-Dsupport=enabled",
-               "-Daudiomixer=enabled", "-Daudioconvert=disabled", "-Dcontrol=disabled",
+               "-Daudiomixer=enabled", "-Daudioconvert=enabled", "-Dcontrol=disabled",
                "-Daudiotestsrc=disabled", "-Dvideoconvert=disabled", "-Dvideotestsrc=disabled"]
     subprocess.run(["meson", "setup", str(build), str(source), "--prefix=" + str(prefix), *options], check=True)
     installed = json.loads(subprocess.check_output(["meson", "introspect", "--installed", str(build)]))

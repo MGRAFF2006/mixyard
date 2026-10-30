@@ -119,6 +119,40 @@ class Comparison(unittest.TestCase):
                     process.terminate()
                     process.wait(timeout=2)
 
+    def test_setup_builds_mixer_prerequisite_without_enabling_tests(self):
+        """Exercise the actual setup boundary; no archive, SDK or Meson executes."""
+        class SetupObserved(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory(prefix="mixyard-sdk-recipe-", dir="/dev/shm") as temporary:
+            root = Path(temporary)
+            source = root / "source-fixture"
+            source.mkdir()
+            sdk.write_json(root / "fixed-sdk-source-provenance.json",
+                           {"valid": True, "executedMerge": "owned-test-merge"})
+
+            def inspect_setup(command, **kwargs):
+                self.assertEqual(command[:2], ["meson", "setup"])
+                self.assertTrue(kwargs["check"])
+                options = command[5:]
+                self.assertEqual(len(options), len(set(options)))
+                self.assertIn("-Daudiomixer=enabled", options)
+                self.assertIn("-Daudioconvert=enabled", options)
+                self.assertNotIn("-Daudioconvert=disabled", options)
+                self.assertIn("-Dtests=disabled", options)
+                self.assertIn("-Dinstalled_tests=disabled", options)
+                self.assertIn("-Dauto_features=disabled", options)
+                self.assertIn("--wrap-mode=nofallback", options)
+                raise SetupObserved
+
+            with mock.patch.dict(os.environ, RUNNER_TEMP=str(root), GITHUB_SHA="owned-test-merge"), \
+                 mock.patch.object(sdk, "require_hosted"), \
+                 mock.patch.object(sdk.urllib.request, "urlopen", return_value=io.BytesIO(b"owned-fixture-not-sdk")), \
+                 mock.patch.object(sdk, "extract_verified", return_value=source), \
+                 mock.patch.object(sdk.subprocess, "run", side_effect=inspect_setup):
+                with self.assertRaises(SetupObserved):
+                    sdk.prepare(root / "sdk")
+
     def test_archive_hash_checked_before_extraction_and_local_preparation_refused(self):
         with tempfile.TemporaryDirectory(prefix="mixyard-sdk-archive-check-", dir="/dev/shm") as temporary:
             root = Path(temporary); archive = root / "not-the-pinned-archive"
