@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from defined_swift_symbols import attest_defined
 
 
 def digest(path):
@@ -16,11 +17,8 @@ def main():
     executable = build / 'native-control-qualification'
     # Defined supplementary verifier must actually be linked into BOTH the
     # product archive and the final qualifier (not merely present in metadata).
-    for path in (archive, executable):
-        symbols = subprocess.check_output(['xcrun','nm','-g',str(path)], text=True, stderr=subprocess.PIPE, timeout=20)
-        for marker in ('CanonicalControlCertificate','SwiftASN1'):
-            if not any(marker in line and ' T ' in line for line in symbols.splitlines()):
-                raise RuntimeError('Defined shipping trust/parser code missing from linked product')
+    attest_defined([archive], 'trust-archive')
+    attest_defined([executable], 'qualifier')
     dependencies = subprocess.check_output(['xcrun','otool','-L',str(executable)], text=True, timeout=20)
     if any(name in dependencies for name in ('libMobileControlTrust.', 'libSwiftASN1.')):
         raise RuntimeError('Unexpected dynamic trust/parser dependency')

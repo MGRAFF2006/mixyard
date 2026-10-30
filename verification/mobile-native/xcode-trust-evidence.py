@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 from importlib.util import spec_from_file_location, module_from_spec
+from defined_swift_symbols import attest_defined
 
 
 def tool(*args):
@@ -40,8 +41,7 @@ def main():
         counts[name] = {'modules':len(modules),'objects':len(objects)}
     app = output / 'Build/Products/Debug-iphonesimulator/Mixyard.app'
     binaries = [app/'Mixyard'] + list(app.glob('*.debug.dylib'))
-    if not any(any('CanonicalControlCertificate' in line and ' T ' in line for line in tool('xcrun','nm','-g',str(path)).splitlines()) for path in binaries):
-        raise RuntimeError('App does not define the actual shared trust verifier')
+    attest_defined(binaries, 'app', required=('verifier',))
     for path in binaries:
         links = tool('xcrun','otool','-L',str(path))
         if any(name in links for name in ('MobileControlTrust.framework/','SwiftASN1.framework/','libMobileControlTrust.','libSwiftASN1.')):
