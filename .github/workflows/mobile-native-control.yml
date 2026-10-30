@@ -12,6 +12,37 @@ concurrency:
   group: native-mobile-control-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  swift-resolver-lock:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: PREPARATION ONLY generate missing real CLI and Xcode resolver locks
+        id: lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f apps/mobile/ios/Package.resolved || ! -f apps/mobile/ios/Mixyard.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved ]]; then
+            echo 'preparation=true' >> "$GITHUB_OUTPUT"
+            swift package --package-path apps/mobile/ios --scratch-path "$RUNNER_TEMP/trust-resolver" resolve
+            xcodebuild -resolvePackageDependencies -project apps/mobile/ios/Mixyard.xcodeproj -scheme Mixyard -derivedDataPath "$RUNNER_TEMP/trust-xcode-resolver"
+          fi
+          python3 -B verification/mobile-native/swift-package-lock.py --xcode
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mobile-control-trust-resolver-locks
+          include-hidden-files: true
+          path: |
+            apps/mobile/ios/Package.resolved
+            apps/mobile/ios/Mixyard.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+      - name: Require committed resolver provenance before any qualification
+        if: steps.lock.outputs.preparation == 'true'
+        run: |
+          echo 'PREPARATION ONLY: commit both real resolver locks, then qualify the new locked HEAD. No native test pass claimed.'
+          exit 1
   kotlin-production-tls:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -74,7 +105,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/oob-evidence"
           git rev-parse HEAD > "$RUNNER_TEMP/oob-evidence/source-head.txt"
-          git ls-files 'apps/mobile/android/http/**' 'apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt' 'apps/mobile/ios/App/ControlClient.swift' 'apps/mobile/ios/App/CredentialStore.swift' 'verification/mobile-native/**' | while IFS= read -r file; do shasum -a 256 "$file"; done > "$RUNNER_TEMP/oob-evidence/source-sha256.txt"
+          git ls-files 'apps/mobile/android/http/**' 'apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt' 'apps/mobile/ios/App/ControlClient.swift' 'apps/mobile/ios/App/CredentialStore.swift' 'apps/mobile/ios/Package.swift' 'apps/mobile/ios/Package.resolved' 'apps/mobile/ios/Sources/MobileControlTrust/**' 'verification/mobile-native/**' | while IFS= read -r file; do shasum -a 256 "$file"; done > "$RUNNER_TEMP/oob-evidence/source-sha256.txt"
       - uses: actions/upload-artifact@v6
         if: always()
         with:
@@ -83,9 +114,21 @@ jobs:
       - if: always()
         run: echo 'Production Kotlin client + real JSSE single-OOB-anchor PKI/pin/HTTP. JVM vault platform double, not Android Keystore or physical device qualification. PCM/audio roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"
   swift-production-tls:
-    runs-on: macos-15
+    needs: swift-resolver-lock
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            xcode: /Applications/Xcode_16.4.app/Contents/Developer
+            label: xcode16-4
+          - runner: macos-14
+            xcode: /Applications/Xcode_16.2.app/Contents/Developer
+            label: xcode16-2
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     env:
+      DEVELOPER_DIR: ${{ matrix.xcode }}
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
@@ -103,27 +146,9 @@ jobs:
         run: |
           node --test verification/mobile-native/lifecycle.test.ts verification/mobile-native/certificate-fixture.test.ts
           python3 -B -m unittest discover -s verification/mobile-native -p 'test_*.py'
-      - name: Causal actual previous Swift LF preflight regression in isolated output
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/swift-pem-before" "$RUNNER_TEMP/oob-evidence"
-          git fetch --no-tags --depth=1 origin 5d38dc5b4fd8a35d6ad513b8c92061eef0ad3bee
-          git show 5d38dc5b4fd8a35d6ad513b8c92061eef0ad3bee:apps/mobile/ios/App/ControlClient.swift > "$RUNNER_TEMP/swift-pem-before/ControlClient.swift"
-          MIXYARD_SWIFT_BUILD_DIR="$RUNNER_TEMP/swift-pem-before/build" MIXYARD_SWIFT_CONTROL_SOURCE="$RUNNER_TEMP/swift-pem-before/ControlClient.swift" bash verification/mobile-native/build-swift.sh
-          export MIXYARD_NATIVE_COMMAND
-          MIXYARD_NATIVE_COMMAND="$(node -e 'console.log(JSON.stringify([process.env.RUNNER_TEMP+"/swift-pem-before/build/native-control-qualification"]))')"
-          if node --test --test-reporter=tap verification/mobile-native/swift-preflight.test.ts > "$RUNNER_TEMP/oob-evidence/swift-pem-before.tap" 2>&1; then
-            echo 'Previous production Swift source unexpectedly passed LF preflight'
-            exit 1
-          fi
-          node --input-type=module -e '
-            import assert from "node:assert/strict";import{readFileSync}from"node:fs";
-            const tap=readFileSync(process.env.RUNNER_TEMP+"/oob-evidence/swift-pem-before.tap","utf8");
-            for(const line of tap.split("\n"))if(/^# Owned Swift PEM preflight: (LF|CRLF) accepted=(true|false) phase=(oob-record|oob-certificate|native|tls-platform|none) reason=[a-z0-9-]+$/.test(line))console.log(line.slice(2));
-            assert.ok(tap.includes("LF certificate preflight must accept the actual valid owned certificate"));
-            assert.match(tap,/# fail 2(?:\r?\n|$)/,"only LF and parent must fail; CRLF/redaction must pass");
-            console.log("CAUSAL_RED exact5d shipping initializer rejects LF while CRLF succeeds");'
+      # Exact5d LF RED/current a70 LF+CRLF GREEN is retained as historical
+      # executed evidence in PR113. Do not misclassify a new module-layout
+      # compile failure of old source as causal proof.
       - name: Compile shipping Swift client and platform test driver
         run: bash verification/mobile-native/build-swift.sh
       - name: Current shipping Swift LF and CRLF positive preflight and fixed diagnostics
@@ -144,11 +169,11 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/oob-evidence"
           git rev-parse HEAD > "$RUNNER_TEMP/oob-evidence/source-head.txt"
-          git ls-files 'apps/mobile/android/http/**' 'apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt' 'apps/mobile/ios/App/ControlClient.swift' 'apps/mobile/ios/App/CredentialStore.swift' 'verification/mobile-native/**' | while IFS= read -r file; do shasum -a 256 "$file"; done > "$RUNNER_TEMP/oob-evidence/source-sha256.txt"
+          git ls-files 'apps/mobile/android/http/**' 'apps/mobile/android/app/src/main/java/org/mixyard/mobile/PinnedControl.kt' 'apps/mobile/ios/App/ControlClient.swift' 'apps/mobile/ios/App/CredentialStore.swift' 'apps/mobile/ios/Package.swift' 'apps/mobile/ios/Package.resolved' 'apps/mobile/ios/Sources/MobileControlTrust/**' 'verification/mobile-native/**' | while IFS= read -r file; do shasum -a 256 "$file"; done > "$RUNNER_TEMP/oob-evidence/source-sha256.txt"
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: mobile-oob-swift-source
+          name: mobile-oob-swift-source-${{ matrix.label }}
           path: ${{ runner.temp }}/oob-evidence
       - if: always()
         run: echo 'Production Swift client + real URLSession/Security single-OOB-anchor PKI/pin/HTTP; ZERO user/admin trust or keychain mutation. Vault platform double, not iPhone Keychain/device-lock or physical qualification. PCM/audio roles remain unavailable.' >> "$GITHUB_STEP_SUMMARY"

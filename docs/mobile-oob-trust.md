@@ -115,3 +115,57 @@ source and requires LF+CRLF positives before TLS. Until actual execution verifie
 that mechanism, it remains a source-supported diagnosis, not a claimed SDK fix.
 If Swift later accepts a forbidden signature/date case, stop and report the exact
 public SDK gap before any parser/dependency/minimum-target change.
+
+
+## Supplementary Swift canonical self-signature target (preparatory candidate)
+
+Root selected SwiftASN1 **1.6.0**, exact revision
+`9f542610331815e29cc3821d3b6f488db8715517`, with public Security/SecKey.
+`MobileControlTrust` is one static product in the existing local iOS package;
+MobileCore retains no parser or Security dependency. The shipping App and actual
+ControlClient qualifier use that SAME target, not copies of parser/client code.
+SwiftASN1's selected manifest has no package dependencies. Actual resolution,
+linkage and deployment verification are mandatory hosted gates, not inferred
+from that source metadata. No local SwiftPM/SDK resolution/build occurred.
+
+The supplement accepts only the canonical backend self-signed v3 P256/SHA256
+profile. Typed DER parsing retains the ORIGINAL complete TBS TLV for
+`SecKeyVerifySignature(...ecdsaSignatureMessageX962SHA256...)`; there is no
+reserialization/prehash, custom crypto/curve math or low-S policy. Inner and
+outer signature AlgorithmIdentifiers must agree exactly, have ecdsa-with-SHA256
+OID and absent parameters. SPKI must declare id-ecPublicKey/prime256v1; public
+SecKey class/type/256-bit size/algorithm support must agree. Normalized public
+issuer/subject must be nonnull, nonempty and equal. Signature BITSTRING must be
+primitive, nonempty and zero-padding, containing exactly two minimal positive,
+nonzero, at-most256-bit DER integers; SecKey also checks cryptographic ranges.
+Unknown profiles/algorithms/curves reject; this is not general CA-path support.
+The normal endpoint/canonical-name SSL, BasicX509, dates, Only-anchor, no-AIA,
+TLS1.3 and exact leaf/pin checks remain. No date parser or iOS16/macOS13 floor
+change is introduced.
+
+Actual-adapter XCTest fixtures sign with public SecKey and cover valid canonical
+certificates, all byte-truncation boundaries, root length/trailing/extra/depth
+errors, algorithm/parameter/curve/key/name/profile mismatches, and malformed,
+negative/zero/overlong/extra signature integers and BITSTRING forms. These are
+SOURCE-PREPARED tests, not executed SDK proof at this preparatory head. The
+existing actual-TLS before-HTTP bad-self-signature gate and full31-test matrix
+remain unchanged.
+
+**Lock preparation boundary:** no lock contents were invented. The first hosted
+`swift-resolver-lock` job generates real CLI and Xcode resolver locks and uploads
+`mobile-control-trust-resolver-locks`, then deliberately fails the preparation
+gate. Those two actual files must be committed before subsequent locked
+current-head qualification can run. App/qualifier builds require exactly one
+resolved dependency at the selected revision, no floating branch/transitive
+expansion, and report real checkout/source/module/archive/executable identities.
+Both Xcode16.2 and16.4 TLS qualifier lanes and both actual iOS UI SDK lanes remain
+required. The minimum-target/static-link gates inspect actual built products.
+No binary-size, compile-time or runtime-cost measurement is claimed.
+
+Historical a70 evidence remains distinct: Kotlin31/31 passed after the JCA
+self-signature preflight; Swift valid positives and date negatives ran, but its
+matching-key bad-self-signature sent one HTTP request and failed. Exact5d LF RED
+and a70 LF+CRLF GREEN were actually executed; that old source-layout gate is not
+rerun against a new module layout to manufacture a compile-error RED. Old
+system-trust cleanup failures remain failures. This new candidate has no current
+native proof or independent final approval; PR113 remains DRAFT/HOLD.

@@ -107,7 +107,14 @@ class SimulatorSelection(unittest.TestCase):
         self.assertEqual(failure.exception.timeout,180)
         self.assertIn('bootstatus',failure.exception.cmd)
         self.assertEqual(len(failure.exception.__cause__.exceptions),2)
-        self.assertEqual([limit for args,limit in calls],[30,180,30,30])
+        # New lock admission/resolution precedes boot; the original simulator
+        # boot/HTTP-independent cleanup budgets and first-failure semantics stay.
+        simulator=[(args,limit) for args,limit in calls if args[0]=='xcrun']
+        self.assertEqual([limit for args,limit in simulator],[30,180,30,30])
+        resolutions=[(args,limit) for args,limit in calls if args[:2]==['xcodebuild','-resolvePackageDependencies']]
+        self.assertEqual(len(resolutions),1)
+        self.assertEqual(resolutions[0][1],120)
+        self.assertIn('-onlyUsePackageVersionsFromResolvedFile',resolutions[0][0])
         self.assertNotIn('actual-ui-test-start',evidence.getvalue())
         for label in ['bootstatus','cleanup-shutdown','cleanup-delete']:
             self.assertIn('"phase": "'+label+'", "kind": "timeout"',evidence.getvalue())

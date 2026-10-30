@@ -156,6 +156,7 @@ def shutdown_owned(identifier):
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
         raise RuntimeError('Disposable hosted Mac required')
+    step('locked-trust-package', ['python3', '-B', 'verification/mobile-native/swift-package-lock.py', '--xcode'], 30)
     xcode = capture('selected-xcode', 'xcodebuild', '-version')
     sdk = capture('selected-sdk', 'xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version')
     validate_comparison(xcode,sdk)
@@ -177,7 +178,9 @@ def main():
         destination = f'platform=iOS Simulator,id={identifier}'
         common = ['-project', 'apps/mobile/ios/Mixyard.xcodeproj', '-scheme', 'MixyardConfirmations',
                   '-configuration', 'Debug', '-sdk', 'iphonesimulator', '-destination', destination,
+                  '-onlyUsePackageVersionsFromResolvedFile', '-disableAutomaticPackageResolution',
                   '-derivedDataPath', str(output), 'ONLY_ACTIVE_ARCH=YES', f'ARCHS={arch}', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE', 'CODE_SIGNING_ALLOWED=NO']
+        step('locked-package-resolution', ['xcodebuild', '-resolvePackageDependencies', *common], 120)
         destinations = capture('owned-destinations', 'xcodebuild', '-showdestinations', *common)
         evidence=destination_evidence(destinations,identifier)
         print('Owned simulator destination evidence: '+json.dumps(evidence),flush=True)
@@ -189,6 +192,7 @@ def main():
         budget=time.monotonic()+900
         step('actual-build-for-testing',['xcodebuild','build-for-testing',*common],remaining(budget,900))
         verify_artifacts(output,arch,budget,capture)
+        step('actual-shared-trust-link-proof', ['python3', '-B', 'verification/mobile-native/xcode-trust-evidence.py', str(output), arch], remaining(budget,120))
         step('actual-ui-test',['xcodebuild','test-without-building',*common],remaining(budget,900))
     except BaseException as error:
         first_failure = error

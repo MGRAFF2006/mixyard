@@ -77,7 +77,11 @@ jobs:
           path: apps/mobile/ios/App/controller/
       - name: Swift byte/state loopback contracts
         working-directory: apps/mobile/ios
-        run: swift test --parallel
+        run: |
+          python3 -B ../../../verification/mobile-native/swift-package-lock.py --xcode
+          swift test --force-resolved-versions --parallel
+      - name: Resolve only the committed Xcode package graph
+        run: xcodebuild -resolvePackageDependencies -project apps/mobile/ios/Mixyard.xcodeproj -scheme Mixyard -derivedDataPath "$RUNNER_TEMP/mixyard-ios" -onlyUsePackageVersionsFromResolvedFile
       - name: Build iPhone/iPad SDK shell without signing
-        run: xcodebuild -project apps/mobile/ios/Mixyard.xcodeproj -scheme Mixyard -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/mixyard-ios" CODE_SIGNING_ALLOWED=NO build
+        run: xcodebuild -project apps/mobile/ios/Mixyard.xcodeproj -scheme Mixyard -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/mixyard-ios" -onlyUsePackageVersionsFromResolvedFile -disableAutomaticPackageResolution CODE_SIGNING_ALLOWED=NO build
       - run: echo 'Swift synthetic byte/state contracts and unsigned iOS/iPadOS simulator SDK build only. No physical device, route, mic, background, signing or store qualification.' >> "$GITHUB_STEP_SUMMARY"

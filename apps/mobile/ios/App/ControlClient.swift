@@ -2,9 +2,10 @@ import Foundation
 import Security
 import CryptoKit
 import MobileCore
+import MobileControlTrust
 
-// Public SDK trust evaluation only. No global/user/admin trust mutation, custom
-// parser, certificate exceptions, system-anchor fallback or learned certificate.
+// Normal platform PKI plus the shared canonical self-signature supplement.
+// No global trust mutation, system-anchor fallback or learned certificate.
 struct OobCertificate {
     let certificate: SecCertificate
     init(pem: String, pin: String) throws {
@@ -24,6 +25,8 @@ struct OobCertificate {
         guard SecCertificateCopyData(certificate) as Data == bytes else { throw MobileError.invalid("certificate-der-roundtrip") }
         let actual = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         guard actual == pin.lowercased() else { throw MobileError.invalid("oob-certificate-fingerprint-mismatch") }
+        do { try CanonicalControlCertificate.verify(bytes) }
+        catch { throw MobileError.invalid("canonical-self-signature-required") }
         self.certificate = certificate
     }
     func admits(_ trust: SecTrust, host: String) -> Bool {
