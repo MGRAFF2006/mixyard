@@ -99,6 +99,16 @@ fn run(args: &[OsString], output: &mut impl Write) -> Result<(), CliError> {
     if command == "profiles" {
         return run_profiles(&args[1..], output);
     }
+    #[cfg(target_os = "linux")]
+    if command == "private-audio" {
+        return mixyard::runtime::private_audio::client::run(&args[1..], output).map_err(|error| {
+            if error.kind() == io::ErrorKind::InvalidInput {
+                CliError::new("usage", error.to_string(), 2)
+            } else {
+                CliError::io(error)
+            }
+        });
+    }
     let expected = if command == "validate" {
         2
     } else if command == "plan" || command == "inspect" || command == "explain" {
