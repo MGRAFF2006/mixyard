@@ -96,3 +96,16 @@ even when the separate private protocol is enabled. The pinned SDK descriptor
 is an explicit experimental test prerequisite, not a general minimum-version
 or backend-availability decision. PR90/115 and historical native cause holds
 remain separate; portable owner doubles do not qualify native processing.
+
+Private status has optional closed `privateCore` connection metadata:
+`{runtimeDirectory,configDirectory,remote:"mixyard-private"}`. Both directories
+are the actual owned spawn namespace (they may be equal), never a guessed
+default/personal server. Metadata is absent before child registration and
+cleared on retirement; explicit restart returns a new namespace. This grants
+no identity, format or admission proof. Ordinary recorders use the separately
+owned `recorder.conf` client config; the companion uses client.conf, and the
+daemon uses private.conf. Only the recorder client config adds its public
+adapter factory, not the six-module daemon or native mixer graph.
+
+The concrete unrun product acceptance and command sequence is in
+[product-flow.md](product-flow.md).

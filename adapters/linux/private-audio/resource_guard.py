@@ -20,7 +20,7 @@ def tree_bytes(root):
 def check(forecast, output=None):
     if not 0 <= forecast <= 2 * MIB:
         raise RuntimeError("forecast must fit the authorized <=2 MiB generated-output budget")
-    for mount, reserve in (("/", 2 * GIB), ("/tmp", 2 * GIB), ("/dev/shm", 10 * GIB + 16 * MIB)):
+    for mount, reserve in (("/", 2 * GIB + 16 * MIB), ("/tmp", 2 * GIB + 16 * MIB), ("/dev/shm", 10 * GIB + 16 * MIB)):
         stat = os.statvfs(mount)
         free = stat.f_bavail * stat.f_frsize
         if free - forecast < reserve:
@@ -38,7 +38,7 @@ def check(forecast, output=None):
             stat = path.lstat()
             if path.is_symlink() or not path.is_dir() or stat.st_uid != os.getuid() or stat.st_mode & 0o777 != 0o700:
                 raise RuntimeError("existing output must be an owned 0700 non-symlink directory")
-    print(f"guard OK: forecast={forecast} combinedNativeBytes={used}")
+    print(f"guard OK: forecast={forecast} scopedNativeSourceBytes={used}")
 
 
 if __name__ == "__main__":

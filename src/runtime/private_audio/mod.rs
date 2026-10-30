@@ -227,6 +227,9 @@ impl Service {
         coordinator
             .register_children(&processes.companion, &processes.daemon)
             .map_err(|e| io::Error::other(e.message))?;
+        coordinator
+            .register_private_core(processes.connection())
+            .map_err(|e| io::Error::other(e.message))?;
         Ok(Self {
             listener,
             peers: Vec::new(),
@@ -298,6 +301,8 @@ impl Service {
                     .map_err(|e| failure(ErrorCode::OwnerFailed, e.to_string()))?;
                     self.coordinator
                         .register_children(&processes.companion, &processes.daemon)?;
+                    self.coordinator
+                        .register_private_core(processes.connection())?;
                     self.processes = processes;
                     self.retired = false;
                     self.failed = false;

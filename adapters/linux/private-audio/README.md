@@ -126,7 +126,9 @@ The executable is restricted to little-endian hosts and uses public PipeWire
 filters/registry/port/link/DataLoop APIs plus json-c. Pkg-config's native search
 path is replaced with the explicitly supplied prefix. Parent owns the actual
 Rust host build and its exclusive target. Source forecasts reserve root 2 GiB,
-TMP 2 GiB, SHM 10 GiB + 16 MiB and cap combined native subtrees at 384 MiB.
+TMP 2 GiB, SHM 10 GiB + 16 MiB and cap the native area at 384 MiB. The helper guard counts only these source
+subtrees; the area lead separately accounts for isolated worktrees, retained
+evidence and the serialized portable Rust target.
 Build/helper outputs use owned SHM only and must total at most 2 MiB; an oversized
 build fails and preserves its output for inspection. The recipe's final linked
 size is **unmeasured**, so the forecast needs checking in the authorized SDK
@@ -154,3 +156,8 @@ borrow instrumentation, owner/fence races against the real SDK, dynamic fourth
 output, SDK scrub coverage and final linked footprint are UNRUN locally.** No
 passing helper is presented as native qualification. Those checks require the
 explicit reviewed prefix/static host and a separately authorized isolated run.
+
+The separate product launcher/private CLI/Store ownership flow and still-unrun
+R1/R2 ordinary-recorder acceptance are documented in
+[product-flow.md](product-flow.md). Parent private status exposes only the
+registered owned connection paths; this is not native admission/provenance.

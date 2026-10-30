@@ -11,7 +11,7 @@ use std::{
             process::CommandExt,
         },
     },
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -84,13 +84,14 @@ pub struct Processes {
     stdin: ChildStdin,
     stdout: ChildStdout,
     diagnostics: Vec<ChildStderr>,
+    namespace: PathBuf,
     cancel: UnixStream,
     normal: Outbound,
     priority: Outbound,
     input: Vec<u8>,
     pub qualified: Qualified,
     forced: bool,
-    retirement_started: bool,
+    daemon_term_sent: bool,
     #[cfg(test)]
     observer: Option<fn() -> io::Result<()>>,
 }
@@ -151,13 +152,14 @@ impl Processes {
             stdin,
             stdout,
             diagnostics: Vec::new(), // Explicit test doubles, never SDK evidence.
+            namespace: qualified.descriptor.sdk_prefix.clone(),
             cancel,
             normal: Outbound::new(),
             priority: Outbound::new(),
             input: Vec::new(),
             qualified,
             forced: false,
-            retirement_started: false,
+            daemon_term_sent: false,
             observer: Some(observer),
         })
     }
@@ -193,6 +195,15 @@ impl Processes {
             .open(namespace.join("client.conf"))?;
         client_config.write_all(b"context.properties = { support.dbus = false mem.warn-mlock = false }\ncontext.spa-libs = { support.* = support/libspa-support }\ncontext.modules = [\n    { name = libpipewire-module-protocol-native }\n    { name = libpipewire-module-client-node }\n    { name = libpipewire-module-metadata }\n]\n")?;
         drop(client_config);
+        // An ordinary pw-record stream needs its own public adapter factory.
+        // Keep it out of the native companion config and private daemon modules.
+        let mut recorder_config = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(namespace.join("recorder.conf"))?;
+        recorder_config.write_all(b"context.properties = { support.dbus = false mem.warn-mlock = false }\ncontext.spa-libs = { support.* = support/libspa-support }\ncontext.modules = [\n    { name = libpipewire-module-protocol-native }\n    { name = libpipewire-module-client-node }\n    { name = libpipewire-module-metadata }\n    { name = libpipewire-module-adapter }\n]\n")?;
+        drop(recorder_config);
         let mut server = Command::new(qualified.descriptor.sdk_prefix.join("bin/pipewire"));
         environment(&mut server, &qualified, &namespace);
         server.env("PIPEWIRE_CONFIG_NAME", "private.conf");
@@ -282,13 +293,14 @@ impl Processes {
             stdin,
             stdout,
             diagnostics: vec![daemon_stderr, companion_stderr],
+            namespace,
             cancel,
             normal: Outbound::new(),
             priority: Outbound::new(),
             input: Vec::new(),
             qualified,
             forced: false,
-            retirement_started: false,
+            daemon_term_sent: false,
             #[cfg(test)]
             observer: None,
         };
@@ -301,6 +313,13 @@ impl Processes {
             self.priority.queue(request)
         } else {
             self.normal.queue(request)
+        }
+    }
+    pub fn connection(&self) -> PrivateCore {
+        PrivateCore {
+            runtime_directory: self.namespace.clone(),
+            config_directory: self.namespace.clone(),
+            remote: "mixyard-private".into(),
         }
     }
     pub fn events(&mut self) -> io::Result<Vec<CompanionReply>> {
@@ -348,22 +367,30 @@ impl Processes {
         self.qualified.observe_bindings(self.companion.id(), false)
     }
     pub fn begin_graceful(&mut self, request: &CompanionRequest) -> io::Result<()> {
-        self.retirement_started = true;
         // A verified owner fence makes older normal commands permanently inert.
         self.normal = Outbound::new();
         self.normal.queue(request)?;
         self.normal.flush(&mut self.stdin)?;
-        if self.daemon.try_wait()?.is_none() {
-            unsafe {
-                libc::kill(self.daemon.id() as libc::pid_t, libc::SIGTERM);
-            }
-        }
         Ok(())
     }
     pub fn graceful_progress(&mut self) -> io::Result<bool> {
         self.check_diagnostics()?;
         if self.companion.try_wait()?.is_none() {
             self.normal.flush(&mut self.stdin)?;
+        } else if !self.daemon_term_sent {
+            // Preserve the shared collective 1s budget, but let the companion
+            // destroy its private client context before terminating its core.
+            // Otherwise our own normal Stop races a real core-error callback.
+            if self.daemon.try_wait()?.is_none() {
+                let result = unsafe { libc::kill(self.daemon.id() as libc::pid_t, libc::SIGTERM) };
+                if result != 0 {
+                    let error = io::Error::last_os_error();
+                    if error.raw_os_error() != Some(libc::ESRCH) {
+                        return Err(error);
+                    }
+                }
+            }
+            self.daemon_term_sent = true;
         }
         self.reaped()
     }
@@ -371,7 +398,6 @@ impl Processes {
         Ok(self.daemon.try_wait()?.is_some() && self.companion.try_wait()?.is_some())
     }
     pub fn begin_forced(&mut self) -> io::Result<()> {
-        self.retirement_started = true;
         self.forced = true;
         for child in [&mut self.daemon, &mut self.companion] {
             if child.try_wait()?.is_none() {
@@ -383,7 +409,6 @@ impl Processes {
         Ok(())
     }
     pub fn force_kill(&mut self) -> io::Result<()> {
-        self.retirement_started = true;
         for child in [&mut self.daemon, &mut self.companion] {
             if child.try_wait()?.is_none() {
                 self.forced = true;

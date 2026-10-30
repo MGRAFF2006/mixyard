@@ -78,6 +78,7 @@ impl Coordinator {
         Ok(Self {
             status: Status {
                 scope: Scope::OwnedPrivateGeneratedV1,
+                private_core: None,
                 phase: Phase::Idle,
                 stop_target: StopTarget {
                     instance_nonce: nonce,
@@ -110,6 +111,21 @@ impl Coordinator {
     }
     pub fn snapshot(&self) -> Status {
         self.status.clone()
+    }
+    pub fn register_private_core(&mut self, core: PrivateCore) -> Result<(), Failure> {
+        if self.children.is_none()
+            || self.status.private_core.is_some()
+            || !core.runtime_directory.is_absolute()
+            || !core.config_directory.is_absolute()
+            || core.remote != "mixyard-private"
+        {
+            return Err(failure(
+                ErrorCode::OwnerFailed,
+                "private core registration changed",
+            ));
+        }
+        self.status.private_core = Some(core);
+        Ok(())
     }
     pub fn check_instance(&self, nonce: &str) -> Result<(), Failure> {
         if nonce != self.status.stop_target.instance_nonce {
@@ -450,6 +466,7 @@ impl Coordinator {
             ));
         }
         self.status.installed = None;
+        self.status.private_core = None;
         self.status.prepared_token = None;
         self.status.outputs.clear();
         self.status.stop_target.active_generation = None;

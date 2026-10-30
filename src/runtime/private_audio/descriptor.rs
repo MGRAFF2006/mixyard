@@ -417,7 +417,7 @@ mod tests {
             let companion = root.join("companion");
             put(&companion, b"descriptor fixture, never executed", 0o700);
             let path = root.join("descriptor.json");
-            put(&path,&serde_json::to_vec(&json!({"schemaVersion":1,"scope":"owned-private-generated-v1","sdkPrefix":prefix,"prefixManifest":manifest,"prefixManifestSha256":digest(&root.join("manifest.json")).unwrap(),"companionExecutable":companion,"companionSha256":digest(&root.join("companion")).unwrap(),"sdkVersion":"1.4.8","sdkCommit":"8b43ed5c910e892d53de5a96aa01e9280a5b6650","generators":[{"sourceId":"generated","left":0.25,"right":-0.25,"markerPeriod":128,"frameLimit":0}],"limits":{"maxSources":4,"maxOutputs":4,"maxResidentBytes":1048576,"maxFrames":128}})).unwrap(),0o600);
+            put(&path,&serde_json::to_vec(&json!({"schemaVersion":1,"scope":"owned-private-generated-v1","sdkPrefix":prefix,"prefixManifest":manifest,"prefixManifestSha256":digest(&root.join("manifest.json")).unwrap(),"companionExecutable":companion,"companionSha256":digest(&root.join("companion")).unwrap(),"sdkVersion":"1.4.8","sdkCommit":"8b43ed5c910e892d53de5a96aa01e9280a5b6650","generators":[{"sourceId":"generated","left":0.25,"right":-0.25,"markerPeriod":128,"frameLimit":0}],"limits":{"maxSources":4,"maxOutputs":4,"maxResidentBytes":16777216,"maxFrames":128}})).unwrap(),0o600);
             Self { root, path }
         }
     }

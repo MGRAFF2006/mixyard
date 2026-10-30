@@ -95,6 +95,9 @@ impl Fixture {
         coordinator
             .register_children(&processes.companion, &processes.daemon)
             .unwrap();
+        coordinator
+            .register_private_core(processes.connection())
+            .unwrap();
         let listener =
             crate::runtime::transport::Listener::bind(root.join("private.sock").to_str().unwrap())
                 .unwrap();
@@ -363,6 +366,7 @@ fn stop_during_owned_install_bypasses_guard_and_waits_for_both_actual_child_reap
     };
     assert!(children_reaped);
     assert_eq!(status.phase, Phase::Stopped);
+    assert!(status.private_core.is_none());
     assert!(fixture.service().processes.reaped().unwrap());
     assert!(fixture.service().guard.is_none());
     fixture

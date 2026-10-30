@@ -334,3 +334,71 @@ fn empty_variants_and_exact_nullable_stop_fields_are_closed() {
     wire.as_object_mut().unwrap().remove("pendingInstall");
     assert!(serde_json::from_value::<StopTarget>(wire).is_err());
 }
+
+#[test]
+fn private_connection_metadata_requires_children_and_is_retired_before_restart() {
+    use std::process::{Command, Stdio};
+    fn child() -> Child {
+        Command::new("/bin/true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+    let mut c = Coordinator::new("a".repeat(64)).unwrap();
+    let core = PrivateCore {
+        runtime_directory: "/owned/private-r1".into(),
+        config_directory: "/owned/private-r1".into(),
+        remote: "mixyard-private".into(),
+    };
+    // These paths are scalar API-double metadata, not observed SDK paths.
+    assert!(c.register_private_core(core.clone()).is_err());
+    let (mut companion, mut daemon) = (child(), child());
+    c.register_children(&companion, &daemon).unwrap();
+    c.register_private_core(core.clone()).unwrap();
+    let old = c.snapshot().stop_target;
+    let fence = c.begin_stop(&old).unwrap();
+    let mut response = reply(
+        &fence,
+        CompanionEvent::Fenced {
+            receipt: Fenced {
+                instance_nonce: "a".repeat(64),
+                control_epoch: 2,
+                operation_id: fence.operation_id.clone(),
+                outcome: FenceOutcome::NoPending,
+                switched: None,
+                switch_evidence: None,
+                owner_quiesced: true,
+                pending_pcm_zero: true,
+                no_late_install: true,
+            },
+        },
+    );
+    response.control_epoch = 2;
+    c.accept(response).unwrap();
+    assert!(companion.wait().unwrap().success());
+    assert!(daemon.wait().unwrap().success());
+    assert!(c
+        .prove_children_reaped(&mut companion, &mut daemon)
+        .unwrap()
+        .allows_stop_complete());
+    assert!(c.snapshot().private_core.is_none());
+    assert!(c.register_private_core(core.clone()).is_err());
+    let (mut companion, mut daemon) = (child(), child());
+    c.register_children(&companion, &daemon).unwrap();
+    let fresh = PrivateCore {
+        runtime_directory: "/owned/private-r2".into(),
+        config_directory: "/owned/private-r2".into(),
+        ..core.clone()
+    };
+    c.register_private_core(fresh.clone()).unwrap();
+    assert_eq!(c.snapshot().private_core, Some(fresh));
+    assert_ne!(c.snapshot().private_core, Some(core));
+    assert_eq!(
+        c.begin_stop(&old).unwrap_err().code,
+        ErrorCode::StaleControlEpoch
+    );
+    assert!(companion.wait().unwrap().success());
+    assert!(daemon.wait().unwrap().success());
+}

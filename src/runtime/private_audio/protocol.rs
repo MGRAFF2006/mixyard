@@ -264,6 +264,8 @@ pub struct Fenced {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Status {
     pub scope: Scope,
+    /// Same-user connection metadata only; not native identity or admission.
+    pub private_core: Option<PrivateCore>,
     pub phase: Phase,
     pub stop_target: StopTarget,
     pub desired_store_revision: Option<u64>,
@@ -274,6 +276,14 @@ pub struct Status {
     pub outputs: Vec<PublishedOutput>,
     pub pending_operation: Option<String>,
     pub last_error: Option<Failure>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrivateCore {
+    pub runtime_directory: std::path::PathBuf,
+    pub config_directory: std::path::PathBuf,
+    pub remote: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

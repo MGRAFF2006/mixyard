@@ -42,7 +42,7 @@ export PKG_CONFIG_LIBDIR="${pc_dirs[0]}:$MIXYARD_JSON_C_PC_DIR"
 export TMPDIR="$MIXYARD_PRIVATE_BUILD"
 read -r -a native_cflags <<< "$(pkg-config --cflags libpipewire-0.3 json-c)"
 read -r -a native_libs <<< "$(pkg-config --libs libpipewire-0.3 json-c)"
-"${CXX:-c++}" -std=gnu++17 -O2 -g0 -Wall -Wextra -Wno-missing-field-initializers \
+"${CXX:-c++}" -std=gnu++17 -O2 -g0 -Wall -Wextra -Werror -Wno-missing-field-initializers \
   -ffunction-sections -fdata-sections -Wl,--gc-sections -s \
   "${native_cflags[@]}" -I"$root/adapters/engine/include" \
   "$here/companion.cpp" "$MIXYARD_HOST_LIBRARY" "${native_libs[@]}" \

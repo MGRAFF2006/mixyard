@@ -1280,6 +1280,8 @@ static json_object *status(App *a) {
   Generation *g = a->candidate;
   auto j = object();
   add(j, "scope", "owned-private-generated-v1");
+  // Only the product supervisor publishes registered child connection metadata.
+  add(j, "privateCore", static_cast<json_object *>(nullptr));
   add(j, "phase", a->phase);
   add(j, "stopTarget", stop_json(a));
   add(j, "desiredStoreRevision",
