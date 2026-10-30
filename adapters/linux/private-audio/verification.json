@@ -101,8 +101,8 @@
     "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
     "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
     "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
-    "adapters/linux/private-audio/companion.cpp": "c0813ae7e890384bbc171b722e0b5b282a37a3d54f50a2d386c74cbdcb38894c",
-    "adapters/linux/private-audio/compile-plan.json": "960b04107969177df814992d4f02cb394cbe73d3856d909c7462badce1e45e53",
+    "adapters/linux/private-audio/companion.cpp": "21be5ef2008325ce08282f3fd5fede9991ef3e12d625f2ac937738449efc740e",
+    "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "2d4985171a1bbb7fabc323db7fb9d5f125f011a50119c655a2215e7421e24876",
     "adapters/linux/private-audio/owner.h": "f425f97837160f0ab7f633616788512f93ff7bbbf963381004d8f54fc3e6e04d",
@@ -174,5 +174,60 @@
       "Actual companion SDK compile/link/native-handler/four-consumer R1/R2/heap/scrub execution remains unrun.",
       "Historical90/115/SDK/cause/recorder and Linux visibility holds remain."
     ]
+  },
+  "actualSdkCompileFollowup": {
+    "sourceHead": "1d56ac4f92f67352b95e78bb2002c0b81fc93521",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6527817270",
+    "outcome": "First companion compilation failed; link, final size and JSON stages not reached. No native companion/product execution.",
+    "archive": {
+      "kind": "static-ar-archive",
+      "bytes": 26178288,
+      "sha256": "04a3547066acd9e55d77b21e4d971e4b67041530b6720908f31578a9223d0a73",
+      "canonicalRegularNonSymlink": true,
+      "magicHex": "213c617263683e0a",
+      "freshRustBuild": false
+    },
+    "prefix": {
+      "files": 347,
+      "symlinks": 11,
+      "bytes": 10517488,
+      "elfBuildIds": 57,
+      "version": "1.4.8",
+      "librarySha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1",
+      "libraryBuildId": "05f1c03afc6324831bf032ed7274f34f70a16216",
+      "scope": "Compile inputs and identity-only public version query; no companion runtime binding or general SDK eligibility."
+    },
+    "compiler": {
+      "executable": "/usr/bin/x86_64-linux-gnu-g++-13",
+      "exitCode": 1,
+      "stderrBytes": 1435,
+      "stderrSha256": "8a2f9f5dd64fb047fe7f477f934ee09f2dbf60f4a8ff6723b1b88f075388063b",
+      "failure": "companion.cpp1087: const uint32_t* supplied to public pw_port_subscribe_params uint32_t* parameter",
+      "flagsUnchanged": true,
+      "retry": false
+    },
+    "report": {
+      "bytes": 545047,
+      "sha256": "958ec63c644f5f41a8dc8e7990e4f5619018a0e621e6547b0814c1043909833d",
+      "prechecks": 797,
+      "allStartedLeadersReaped": true,
+      "remainingOwnedGroupMembers": 0,
+      "processScanUnavailableEntries": 0
+    },
+    "rootStopVerification": {
+      "state": "stopped",
+      "status": "completed",
+      "forced": false,
+      "stoppedAt": "2026-10-30T16:25:36.525Z",
+      "completedAt": "2026-10-30T16:25:36.575Z",
+      "snapshotVerifiedAt": "2026-10-30T16:25:36.465Z",
+      "note": "Author immediate stop receipt was pending; root independently observed completion afterward."
+    },
+    "currentSourceRepair": [
+      "Mutable local uint32_t parameter agrees with the public API; no const_cast, warning relaxation or lifetime/ownership change.",
+      "Tracked compile-plan now pins the actual static archive04a rather than shared ELF0e8, with explicit artifact kind and evidence provenance."
+    ],
+    "currentValidation": "Source/diff/manifest checks only. No local compiler/test, cloud retry or helper launched for this followup; changed companion remains uncompiled.",
+    "remaining": "Link/size/JSON/native handlers/four consumers/product R1/R2/heap/scrub and all90/115/cause/SDK/recorder holds remain."
   }
 }

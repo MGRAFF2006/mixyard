@@ -47,17 +47,27 @@
     "jsonCPkgConfig": "/usr/lib/x86_64-linux-gnu/pkgconfig/json-c.pc"
   },
   "expectedArtifactPins": {
-    "hostArchiveSha256": "0e888406e418ef031d8a43a757df4c94c54efb17f0f58b3531d8aea1f8878824",
+    "hostArchiveSha256": "04a3547066acd9e55d77b21e4d971e4b67041530b6720908f31578a9223d0a73",
     "prefixManifestSha256": "929697e4c0c876facae1091cb342d16249d796036a9973f2643314bd3af0ded6",
     "pipewireVersion": "1.4.8",
     "pipewireCommit": "8b43ed5c910e892d53de5a96aa01e9280a5b6650",
     "pipewireBuildId": "05f1c03afc6324831bf032ed7274f34f70a16216",
-    "pipewireLibrarySha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1"
+    "pipewireLibrarySha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1",
+    "hostArchiveKind": "static-ar-archive"
   },
   "boundedDiscoveryFirst": [
     "Validate explicit owned runRoot and each expected artifact path before any compiler; emit one bounded path/pin report.",
     "Only if an expected archive path is absent, inspect at most the two previously observed rust/release and rust/release/deps candidate files; require unique hash match or STOP. No recursive/global search.",
     "Verify source-scope manifest applicability, actual archive SHA256, full prefix files/symlinks/manifest, resolved compiler/pkg-config identities and exact public header inputs.",
     "Only a new explicit root budget may compile the JSON helper and companion, stopping on the first setup/compiler/link boundary with bounded diagnostics. No SDK/Rust rebuild, install, runtime or retry."
-  ]
+  ],
+  "hostArchivePinProvenance": {
+    "artifact": "libmixyard_host.a",
+    "publicEvidenceCommit": "89f601800af6b555386f7c69d037908ad79a5865",
+    "publicEvidencePath": "adapters/linux/standard-consumer/evidence-2026-10-30.json",
+    "publicEvidenceField": "staticHostArchiveSha256",
+    "previousIncorrectPinWasFor": "libmixyard_host.so",
+    "actualFreshMatchAtSource": "1d56ac4f92f67352b95e78bb2002c0b81fc93521",
+    "actualFreshMatchReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6527817270"
+  }
 }

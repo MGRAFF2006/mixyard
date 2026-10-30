@@ -1083,7 +1083,7 @@ static void added(void *data, uint32_t id, uint32_t permissions,
       require(p->proxy, "owner-failed", "port bind failed");
       pw_port_add_listener((pw_port *)p->proxy, &p->hook, &port_events,
                            p.get());
-      const uint32_t param = SPA_PARAM_Format;
+      uint32_t param = SPA_PARAM_Format;
       require(pw_port_subscribe_params((pw_port *)p->proxy, &param, 1) >= 0,
               "owner-failed", "format subscription failed");
     }
