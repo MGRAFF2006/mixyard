@@ -100,6 +100,7 @@ class TrustLifecycle(unittest.TestCase):
 
     def test_unproved_privileged_stop_retains_ownership_until_bounded_drain_completes(self):
         child = unittest.mock.Mock()
+        child.returncode = -15
         child.communicate.side_effect = subprocess.TimeoutExpired('owned',1)
         with patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS'}), patch.object(module,'owned_process_evidence'), patch.object(module.subprocess,'Popen',return_value=child), patch.object(module,'phase'):
             with self.assertRaises(module.StopIncomplete): module.privileged_capture(['sudo','-n','/usr/bin/security'],4)
@@ -157,3 +158,24 @@ class TrustLifecycle(unittest.TestCase):
                     if child.poll() is None:child.kill() # Never a sudo/root monitor.
                     child.wait(timeout=1)
                     child.stdout.close()
+
+    def test_failed_owned_trust_cleanup_retains_recovery_keychain_and_still_fails(self):
+        base='/dev/shm' if Path('/dev/shm').is_dir() else tempfile.gettempdir()
+        with tempfile.TemporaryDirectory(prefix='owned-recovery-retention-',dir=base) as root:
+            calls=[]
+            def owned(label,*args,**kwargs):calls.append(label);return '"/owned-original"' if label in ('startup-list','cleanup-verify') else ''
+            with patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','MIXYARD_NATIVE_FIXTURE':root}),patch.object(module,'OwnedAdmin') as constructor,patch.object(module,'security',side_effect=owned),patch.object(module,'phase') as phase,patch.object(module.signal,'signal'),patch.object(module.subprocess,'Popen') as child:
+                admin=constructor.return_value;admin.names=('a','b','viewer');admin.cleanup.return_value=False
+                child.return_value.wait.return_value=0;child.return_value.poll.return_value=0
+                with self.assertRaisesRegex(RuntimeError,'owned-trust-cleanup-failed'):module.main()
+                self.assertNotIn('cleanup-keychain',calls)
+                phase.assert_any_call('cleanup-recovery-retained','done')
+    def test_direct_reap_receipt_never_claims_descendant_or_trust_absence(self):
+        child=unittest.mock.Mock();child.pid=41;child.returncode=-15
+        output=io.StringIO()
+        with contextlib.redirect_stderr(output):module.completion_receipt(child,'privileged-timeout-reaped')
+        value=json.loads(output.getvalue().removeprefix('MIXYARD_OWNED_RECEIPT '))
+        self.assertTrue(value['directChildReaped']);self.assertTrue(value['pipesEof']);self.assertEqual(value['descendants'],'unproved')
+        self.assertEqual(value['returncode'],-15)
+        child.returncode=None
+        with self.assertRaises(module.StopIncomplete):module.completion_receipt(child,'privileged-timeout-reaped')

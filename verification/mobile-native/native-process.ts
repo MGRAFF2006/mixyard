@@ -20,12 +20,25 @@ export class Native {
     let ready!: () => void, failed!: (error: Error) => void
     this.prepared = new Promise<void>((resolve, reject) => { ready = resolve; failed = reject })
     void this.prepared.catch(() => {})
-    const knownPhases = new Set(['startup-list', 'startup-create', 'startup-unlock', 'startup-search', 'store-a', 'store-b', 'store-viewer', 'trust-a', 'trust-b', 'trust-viewer', 'child-start', 'child-exit', 'cleanup-child', 'cleanup-search', 'cleanup-verify', 'cleanup-trust-a', 'cleanup-trust-b', 'cleanup-trust-viewer', 'cleanup-keychain', 'cleanup-complete', 'admin-before', 'admin-ready', 'admin-precleanup', 'admin-after', 'cleanup-command'].flatMap(base => ['start', 'done', 'failed'].map(status => `${base}-${status}`)))
+    const knownPhases = new Set(['startup-list', 'startup-create', 'startup-unlock', 'startup-search', 'store-a', 'store-b', 'store-viewer', 'trust-a', 'trust-b', 'trust-viewer', 'child-start', 'child-exit', 'cleanup-child', 'cleanup-search', 'cleanup-verify', 'cleanup-trust-a', 'cleanup-trust-b', 'cleanup-trust-viewer', 'cleanup-keychain', 'cleanup-recovery-retained', 'cleanup-complete', 'admin-before', 'admin-ready', 'admin-precleanup', 'admin-after', 'cleanup-command'].flatMap(base => ['start', 'done', 'failed'].map(status => `${base}-${status}`)))
     let stderr = '', phases = 0, reasons = 0
     this.child.stderr!.on('data', data => {
       // Drain all bytes, but expose only our small fixed phase vocabulary.
       const lines = (stderr + String(data)).split('\n'); stderr = lines.pop()!.slice(-4096)
       for (const line of lines) {
+        if (line.startsWith('MIXYARD_OWNED_RECEIPT ') && line.length < 512) {
+          try {
+            const value = JSON.parse(line.slice('MIXYARD_OWNED_RECEIPT '.length))
+            if (Object.keys(value).sort().join(',') === 'descendants,directChildReaped,phase,pid,pipesEof,returncode' &&
+                ['privileged-timeout-reaped','privileged-cleanup-reaped'].includes(value.phase) &&
+                value.directChildReaped === true && value.pipesEof === true && value.descendants === 'unproved' &&
+                Number.isSafeInteger(value.pid) && value.pid >= 0 && value.pid < 2 ** 31 &&
+                Number.isSafeInteger(value.returncode) && Math.abs(value.returncode) < 2 ** 31 && reasons++ < 16) {
+              process.stderr.write(`Owned direct wait/EOF receipt (NOT trust or descendant proof): ${JSON.stringify(value)}\n`)
+            }
+          } catch { /* No raw subprocess streams, paths or inferred global stop. */ }
+          continue
+        }
         if (line.startsWith('MIXYARD_OWNED_SIGNAL ') && line.length < 512) {
           try {
             const value = JSON.parse(line.slice('MIXYARD_OWNED_SIGNAL '.length))

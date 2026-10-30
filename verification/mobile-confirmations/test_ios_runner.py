@@ -73,15 +73,15 @@ class SimulatorSelection(unittest.TestCase):
             if '--show-sdk-version' in args: return '18.5'
             if 'runtimes' in args: return json.dumps({'runtimes':[runtime('26.2'), runtime('18.5')]})
             if 'create' in args: return owned
-            if '-showdestinations' in args: return '{ platform:iOS Simulator, arch:arm64, id:' + owned + ' }'
+            if '-showdestinations' in args: return 'Available destinations for Owned:\n{ platform:iOS Simulator, arch:arm64, id:' + owned + ' }'
             raise AssertionError('Unexpected owned command')
         calls=[]
         def run(args, **kwargs):
             calls.append(args)
-            if args[:2] == ['xcodebuild','test']: raise subprocess.CalledProcessError(65, 'owned-xcodebuild')
-        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform, 'machine', return_value='arm64'), patch.object(module, 'capture', side_effect=capture), patch.object(module, 'process_evidence'),patch.object(module,'toolchain_evidence'), patch.object(module.subprocess, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
+            if args[:2] == ['xcodebuild','test-without-building']: raise subprocess.CalledProcessError(65, 'owned-xcodebuild')
+        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform, 'machine', return_value='arm64'), patch.object(module, 'capture', side_effect=capture), patch.object(module, 'process_evidence'),patch.object(module,'toolchain_evidence'),patch.object(module,'verify_artifacts'), patch.object(module.subprocess, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(subprocess.CalledProcessError): module.main()
-        command=next(args for args in calls if args[:2]==['xcodebuild','test'])
+        command=next(args for args in calls if args[:2]==['xcodebuild','test-without-building'])
         self.assertIn('SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG OWNED_CONFIRMATION_EVIDENCE',command)
         self.assertIn('ARCHS=arm64', command); self.assertIn('ONLY_ACTIVE_ARCH=YES', command)
         self.assertIn('platform=iOS Simulator,id='+owned+',arch=arm64', command)
@@ -95,14 +95,14 @@ class SimulatorSelection(unittest.TestCase):
             if '--show-sdk-version' in args: return '18.5'
             if 'runtimes' in args: return json.dumps({'runtimes':[runtime('18.5')]})
             if 'create' in args: return identifier
-            if '-showdestinations' in args: return '{ arch:arm64, id:'+identifier+' }'
+            if '-showdestinations' in args: return 'Available destinations for Owned:\n{ platform:iOS Simulator, arch:arm64, id:'+identifier+' }'
             raise AssertionError('Unexpected owned capture')
         def run(args, **kwargs):
             calls.append((args,kwargs['timeout']))
             if any(value in args for value in ['bootstatus','shutdown','delete']):
                 raise subprocess.TimeoutExpired(args, kwargs['timeout'])
         evidence=io.StringIO()
-        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform,'machine',return_value='arm64'), patch.object(module,'capture',side_effect=capture), patch.object(module,'process_evidence'),patch.object(module,'toolchain_evidence'), patch.object(module.subprocess,'run',side_effect=run), contextlib.redirect_stdout(evidence):
+        with patch.dict(module.os.environ, {'GITHUB_ACTIONS':'true','RUNNER_OS':'macOS','RUNNER_TEMP':'/owned'}), patch.object(module.platform,'machine',return_value='arm64'), patch.object(module,'capture',side_effect=capture), patch.object(module,'process_evidence'),patch.object(module,'toolchain_evidence'),patch.object(module,'verify_artifacts'), patch.object(module.subprocess,'run',side_effect=run), contextlib.redirect_stdout(evidence):
             with self.assertRaises(subprocess.TimeoutExpired) as failure: module.main()
         self.assertEqual(failure.exception.timeout,180)
         self.assertIn('bootstatus',failure.exception.cmd)

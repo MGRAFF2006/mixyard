@@ -88,6 +88,17 @@ def command_with_default_term(command):
     return [sys.executable, '-B', '-c', launcher, *command]
 
 
+
+def completion_receipt(child, label):
+    # Only call AFTER communicate() returned. Its wait()/EOF receipt is not a
+    # census of detached privileged descendants and never proves trust removal.
+    if type(child.returncode) is not int or not -2**31 < child.returncode < 2**31:
+        raise StopIncomplete('owned-direct-child-reap-unproved')
+    report = {'phase':label, 'pid':child.pid if type(child.pid) is int and 0 < child.pid < 2**31 else 0,
+              'returncode':child.returncode, 'directChildReaped':True, 'pipesEof':True, 'descendants':'unproved'}
+    print('MIXYARD_OWNED_RECEIPT '+json.dumps(report,separators=(',',':')),file=sys.stderr,flush=True)
+
+
 def privileged_capture(command, timeout):
     global pending_command
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'macOS':
@@ -112,6 +123,7 @@ def privileged_capture(command, timeout):
             remaining=deadline-time.monotonic()
             if remaining<=0: raise subprocess.TimeoutExpired('owned-security-stop',timeout)
             child.communicate(timeout=min(reserve, remaining))
+            completion_receipt(child,'privileged-timeout-reaped')
         except (OSError, subprocess.TimeoutExpired):
             raise StopIncomplete('owned-security-stop-incomplete') from None
         pending_command = None
@@ -135,7 +147,8 @@ def drain_command(deadline):
         remaining=deadline-time.monotonic()
         if remaining<=0: raise TimeoutError()
         child.communicate(timeout=min(1, remaining))
-    except (OSError, TimeoutError, subprocess.TimeoutExpired):
+        completion_receipt(child,'privileged-cleanup-reaped')
+    except (OSError, TimeoutError, subprocess.TimeoutExpired, StopIncomplete):
         phase('cleanup-command', 'failed')
         return False  # Handle/state ownership remains; never report removal.
     pending_command = None
@@ -253,17 +266,21 @@ def main():
                 if restored != original:
                     phase('cleanup-verify', 'failed'); failed = True
             except RuntimeError: failed = True
+        trust_clean = False
         stopped = drain_command(cleanup)
         if not stopped: failed = True
         if stopped and admin is not None:
-            if not admin.cleanup(cleanup): failed = True
+            trust_clean = admin.cleanup(cleanup)
+            if not trust_clean: failed = True
             # A timed-out REMOVE also owns a supervisor until actual drain.
             stopped = drain_command(cleanup)
             if not stopped: failed = True
         # Never race keychain deletion/admin removal with an unproved stop.
-        if stopped and created:
+        if stopped and created and trust_clean:
             try: security('cleanup-keychain', cleanup, 'delete-keychain', str(keychain), maximum=2)
             except RuntimeError: failed = True
+        elif created:
+            phase('cleanup-recovery-retained','done')
         phase('cleanup-complete', 'failed' if failed else 'done')
         if failed:
             raise RuntimeError('owned-trust-cleanup-failed')

@@ -125,3 +125,18 @@ shutdown149/alreadyShutdown. Exit149 now requires exact unique owned-UUID Shutdo
 readback within the SAME30s shutdown budget to establish the desired cleanup
 postcondition; it is never a blanket allowed status. The original architecture
 failure stays primary. No compilation/native-dialog success is inferred.
+
+Actual comparison destination evidence now confirms that Xcode16.2 omits the
+architecture FIELD for its available, error-free, exact-owned simulator record;
+it does not report a conflicting architecture. Missing text remains UNKNOWN.
+Destination UUID/platform/availability/error/duplicate checks remain strict, but
+positive architecture proof moves to executable artifacts. The same native ARCHS,
+ONLY_ACTIVE_ARCH, exact SDK/runtime/UUID and diagnostic flag build-for-testing,
+then preinstalled lipo must verify the app, UI-test bundle/runner, compiled
+MobileCore module+objects and packaged Mach-O dependencies before any UI execution.
+Own compiled products must be native-only; universal SDK dependencies must contain
+that native arch. Missing/wrong/ambiguous proof fails. Artifact role counts and
+app/test SHA256 are logged without paths; no Apple tool is mocked in hosted proof.
+Build, artifact verification and test-without-building share the EXISTING900s
+build/test budget. Native UI assertions/readiness are unchanged. Local proof-gate
+units use clearly fake bytes/tool boundaries, not SDK compilation or UI evidence.
