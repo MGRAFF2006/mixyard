@@ -5,10 +5,12 @@ on:
   push:
     paths:
       - 'apps/desktop/**'
+      - 'apps/web/**'
       - '.github/workflows/desktop.yml'
   pull_request:
     paths:
       - 'apps/desktop/**'
+      - 'apps/web/**'
       - '.github/workflows/desktop.yml'
 
 permissions:
@@ -20,7 +22,7 @@ concurrency:
 
 jobs:
   frontend:
-    name: Typecheck, preview model tests and frontend build
+    name: Typecheck, shared console and native transport model tests, frontend build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -49,8 +51,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
       - name: Install locked local desktop dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Strict TypeScript and preview model checks
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir ../web install --frozen-lockfile
+      - name: Strict TypeScript, shared console and desktop bridge checks
         run: pnpm check
       - name: Production frontend build
         run: pnpm build
@@ -59,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo 'Frontend typecheck, fixture-model tests and static build only.'
+            echo 'Frontend typecheck, shared console/desktop transport model tests and static build only.'
             echo 'No native Tauri compilation, webview/tray execution or live runtime exercised.'
             echo 'Native interaction p95, accessibility, runtime lifecycle, virtual inputs and audio gaps remain unverified.'
           } >> "$GITHUB_STEP_SUMMARY"
