@@ -111,3 +111,19 @@ generation. Their abort/rejection cannot invalidate a newer explicit reconnect.
 The qualification includes actual shared Api/ConsoleSession late-open and
 late-request success/rejection regressions with retained drafts, current validation
 and an actual subsequent native-dispatch read.
+
+Native generation and session now live in one short authority-state critical
+section: admission/cancellation clears its own state atomically, and publication
+or revision updates verify generation under that SAME lock. The separate operation
+lock serializes TLS/vault work; authority state is never held across that I/O.
+Forget also invalidates opens admitted while its credential removal was pending.
+
+The hosted native suite runs deterministic worker barriers through production
+Paired methods and actual pinned control TLS services, with only the vault API
+doubled. It covers admission-before-operation replacement, delayed expected
+disconnect, and stale TLS publication during another admission, then requires the
+replacement's actual request to succeed. A historical exact-b2cb source gate adds
+ONLY scheduling hooks and these same tests, requiring exactly three native RED
+failures before current tests run. This is not the sequential stdin harness or a
+double of native generation atomics. Current-source Rust/TLS execution is pending
+until the hosted job actually runs; local formatting/source checks are not proof.

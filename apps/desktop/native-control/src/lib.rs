@@ -5,7 +5,7 @@ use serde_json::value::RawValue;
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
@@ -162,17 +162,63 @@ pub struct OpenReply {
     pub status: u16,
     pub body: String,
 }
+struct Authority {
+    generation: u64,
+    session: Option<Session>,
+}
 struct Host {
-    generation: AtomicU64,
+    // Admission, cancellation and publication share ONE short state lock.
+    // The operation lock serializes I/O, but never delays generation invalidation.
+    authority: Mutex<Authority>,
     operation: Mutex<()>,
-    session: Mutex<Option<Session>>,
+    #[cfg(test)]
+    hook: Mutex<Option<authority_tests::Hook>>,
 }
 impl Host {
     fn new() -> Self {
         Self {
-            generation: AtomicU64::new(0),
+            authority: Mutex::new(Authority {
+                generation: 0,
+                session: None,
+            }),
             operation: Mutex::new(()),
-            session: Mutex::new(None),
+            #[cfg(test)]
+            hook: Mutex::new(None),
+        }
+    }
+    fn advance(&self, expected: Option<u64>) -> Result<(u64, bool), String> {
+        let mut state = self
+            .authority
+            .lock()
+            .map_err(|_| "Paired session unavailable")?;
+        if expected.is_some_and(|value| value != state.generation) {
+            return Ok((state.generation, false));
+        }
+        let next = state
+            .generation
+            .checked_add(1)
+            .ok_or("Native generation exhausted; restart paired management")?;
+        state.generation = next;
+        state.session = None;
+        Ok((next, true))
+    }
+    fn current(&self, generation: u64) -> Result<std::sync::MutexGuard<'_, Authority>, String> {
+        let state = self
+            .authority
+            .lock()
+            .map_err(|_| "Paired session unavailable")?;
+        if state.generation != generation {
+            return Err(
+                "Paired session changed; old completion discarded. Refresh and review.".into(),
+            );
+        }
+        Ok(state)
+    }
+    #[cfg(test)]
+    fn checkpoint(&self, stage: authority_tests::Checkpoint, generation: u64) {
+        let callback = self.hook.lock().unwrap().clone();
+        if let Some(callback) = callback {
+            callback(stage, generation);
         }
     }
 }
@@ -373,19 +419,13 @@ impl<V: Vault> Paired<V> {
     }
     pub fn disconnect(&self, id: &str, expected: Option<u64>) -> Result<(), String> {
         let host = self.host(id)?;
-        let current = host.generation.load(Ordering::SeqCst);
-        if expected.is_none() || expected == Some(current) {
-            if host
-                .generation
-                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                *host
-                    .session
-                    .lock()
-                    .map_err(|_| "Paired session unavailable")? = None;
-            }
+        let (generation, changed) = host.advance(expected)?;
+        #[cfg(test)]
+        if changed {
+            host.checkpoint(authority_tests::Checkpoint::DisconnectAdmitted, generation);
         }
+        #[cfg(not(test))]
+        let _ = (generation, changed);
         Ok(())
     }
     pub fn open(&self, id: &str, credential_id: &str) -> Result<OpenReply, String> {
@@ -395,8 +435,9 @@ impl<V: Vault> Paired<V> {
             return Err("Saved controller changed; select its new target. Old workspace authority cannot be rebound.".into());
         }
         let host = self.host(id)?;
-        let generation = host.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        *host.session.lock().map_err(|_| "Session unavailable")? = None;
+        let (generation, _) = host.advance(None)?;
+        #[cfg(test)]
+        host.checkpoint(authority_tests::Checkpoint::OpenAdmitted, generation);
         let _operation = host.operation.lock().map_err(|_| "Session unavailable")?;
         self.fresh(&host, generation)?;
         let result = (|| {
@@ -404,6 +445,7 @@ impl<V: Vault> Paired<V> {
             if record.target.credential_id != credential_id {
                 return Err("Saved controller changed. This cached workspace cannot acquire a newly paired credential; select its new target.".into());
             }
+            self.fresh(&host, generation)?;
             let reply = self.send(&record, "/control/session", "{}")?;
             if reply.status == 200 {
                 let session: Session = decode(&reply.body)?;
@@ -421,8 +463,9 @@ impl<V: Vault> Paired<V> {
                         "Permissions changed; verify the owning service and pair again".into(),
                     );
                 }
-                self.fresh(&host, generation)?;
-                *host.session.lock().map_err(|_| "Session unavailable")? = Some(session);
+                #[cfg(test)]
+                host.checkpoint(authority_tests::Checkpoint::OpenPublication, generation);
+                host.current(generation)?.session = Some(session);
             }
             self.fresh(&host, generation)?;
             Ok(OpenReply {
@@ -443,11 +486,9 @@ impl<V: Vault> Paired<V> {
         }
         let host = self.host(id)?;
         let _operation = host.operation.lock().map_err(|_| "Session unavailable")?;
-        self.fresh(&host, generation)?;
         let scope = host
+            .current(generation)?
             .session
-            .lock()
-            .map_err(|_| "Session unavailable")?
             .clone()
             .ok_or("Read a fresh paired session before requesting")?;
         let envelope: Envelope = decode(raw)?;
@@ -465,6 +506,7 @@ impl<V: Vault> Paired<V> {
         }
         let result = (|| {
             let record = self.stored(id)?;
+            self.fresh(&host, generation)?;
             // Preserve the entire original envelope including -0 and finite float bit patterns.
             let reply = self.send(&record, "/control/request", raw)?;
             self.fresh(&host, generation)?;
@@ -483,11 +525,12 @@ impl<V: Vault> Paired<V> {
                 {
                     return Err("Control response identity/status/revision mismatch".into());
                 }
-                self.fresh(&host, generation)?;
-                let mut session = host.session.lock().map_err(|_| "Session unavailable")?;
-                if let Some(session) = session.as_mut() {
-                    session.revision = response.revision;
-                }
+                let mut state = host.current(generation)?;
+                let session = state
+                    .session
+                    .as_mut()
+                    .ok_or("Read a fresh paired session before requesting")?;
+                session.revision = response.revision;
             } else if reply.status < 400 || value.get("error").is_none() {
                 return Err("Invalid control response envelope".into());
             }
@@ -504,32 +547,38 @@ impl<V: Vault> Paired<V> {
         let host = self.host(id)?;
         let _operation = host.operation.lock().map_err(|_| "Session unavailable")?;
         let _storage = self.storage.lock().map_err(|_| "Vault unavailable")?;
-        let ids: Vec<_> = self.ids()?.into_iter().filter(|v| v != id).collect();
-        // Credential deletion first: failure keeps the indexed record visible for recovery.
-        self.vault.delete(id)?;
-        self.vault.write(
-            INDEX,
-            &serde_json::to_string(&ids).map_err(|_| "Vault index encoding failed")?,
-        )?;
-        Ok(())
+        let result = (|| {
+            let ids: Vec<_> = self.ids()?.into_iter().filter(|v| v != id).collect();
+            // Credential deletion first: failure keeps the indexed record visible for recovery.
+            self.vault.delete(id)?;
+            self.vault.write(
+                INDEX,
+                &serde_json::to_string(&ids).map_err(|_| "Vault index encoding failed")?,
+            )?;
+            Ok(())
+        })();
+        // An open admitted while forget waited/performed vault I/O cannot keep
+        // authority for the credential being removed, even on uncertain error.
+        // No authority-state lock is held across any vault operation.
+        host.advance(None)?;
+        result
     }
     pub fn revoke_self(&self, id: &str, generation: u64) -> Result<Reply, String> {
         let _admission = self.admit()?;
         let host = self.host(id)?;
         let _operation = host.operation.lock().map_err(|_| "Session unavailable")?;
-        self.fresh(&host, generation)?;
-        let record = self.stored(id)?;
         let scope = host
+            .current(generation)?
             .session
-            .lock()
-            .map_err(|_| "Session unavailable")?
             .clone()
             .ok_or("Refresh before revoking")?;
+        let record = self.stored(id)?;
         if !scope.permissions.iter().any(|v| v == "settings") {
             return Err("Revocation needs settings rights. Revoke this controller locally on the owning service; removing it here only deletes this app's credential.".into());
         }
         let body = serde_json::json!({"deviceId":id,"authorityId":scope.authority_id,"revision":scope.revision,"body":{"credentialId":record.target.credential_id}}).to_string();
         let result = (|| {
+            self.fresh(&host, generation)?;
             let reply = self.send(&record, "/control/revoke", &body)?;
             self.fresh(&host, generation)?;
             if reply.status == 200 {
@@ -565,12 +614,9 @@ impl<V: Vault> Paired<V> {
         )
     }
     fn fresh(&self, host: &Host, generation: u64) -> Result<(), String> {
-        if host.generation.load(Ordering::SeqCst) != generation {
-            Err("Paired session changed; old completion discarded. Refresh and review.".into())
-        } else {
-            Ok(())
-        }
+        host.current(generation).map(|_| ())
     }
+
     fn admit(&self) -> Result<Admission<'_>, String> {
         self.active
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
@@ -713,3 +759,6 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
+
+#[cfg(test)]
+mod authority_tests;

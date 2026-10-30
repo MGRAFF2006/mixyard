@@ -73,10 +73,20 @@ jobs:
           set -euo pipefail
           cargo fmt --check --manifest-path apps/desktop/native-control/Cargo.toml
           cargo fmt --check --manifest-path verification/desktop-paired/Cargo.toml
-          cargo test --locked --manifest-path apps/desktop/native-control/Cargo.toml
+          cargo build --locked --manifest-path apps/desktop/native-control/Cargo.toml
           cargo build --locked --manifest-path verification/desktop-paired/Cargo.toml
       - name: Build actual frozen control CLI separately
         run: cargo build --locked --manifest-path qualification-service/control/Cargo.toml --bin mixyard-control
+      - name: Historical native concurrency regression is causally RED (owned TLS services)
+        env:
+          MIXYARD_TEST_CONTROL_BINARY: ${{ github.workspace }}/qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}
+        run: |
+          git fetch --no-tags --depth=1 origin b2cb91d288e4fa25b6ced337d0268b5537bb6008
+          python -B verification/desktop-paired/native-races-before.py
+      - name: Actual current production native authority concurrency and TLS regressions
+        env:
+          MIXYARD_TEST_CONTROL_BINARY: ${{ github.workspace }}/qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}
+        run: cargo test --locked --manifest-path apps/desktop/native-control/Cargo.toml
       - uses: pnpm/action-setup@v6
         if: runner.os == 'Linux'
         with:
