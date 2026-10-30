@@ -45,8 +45,9 @@ with tempfile.TemporaryDirectory(prefix='native-race-before-',dir=os.environ['RU
     result=subprocess.run(command,text=True,capture_output=True,timeout=300)
     output=result.stdout+'\n'+result.stderr
     expected=['native_old_open_admission_cannot_clear_replacement_session','native_delayed_expected_disconnect_cannot_clear_replacement_session','native_stale_tls_completion_cannot_publish_for_a_new_admission']
-    if result.returncode!=101 or not all(re.search(r'test authority_tests::'+name+r' \.\.\. FAILED',output) for name in expected) or '0 passed; 3 failed;' not in output:
-        print('Historical native RED gate did not reproduce exactly the three authority failures')
+    markers=['CAUSAL_RED old-open-erased-new-session','CAUSAL_RED old-disconnect-erased-new-session','CAUSAL_RED stale-tls-granted-new-generation-before-its-open']
+    if not all(marker in output for marker in markers) or result.returncode!=101 or not all(re.search(r'test authority_tests::'+name+r' \.\.\. FAILED',output) for name in expected) or '0 passed; 3 failed;' not in output:
+        print('Historical native RED gate mismatch:', {'exit':result.returncode,'compilerCodes':re.findall(r'error\[E[0-9]{4}\]',output),'causalMarkers':[marker in output for marker in markers]})
         # Source/test diagnostics contain no credentials; do not print captured
         # subprocess streams or fixture paths merely to make this gate pass.
         raise SystemExit(1)

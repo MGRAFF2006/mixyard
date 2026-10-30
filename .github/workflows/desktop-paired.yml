@@ -77,6 +77,8 @@ jobs:
           cargo build --locked --manifest-path verification/desktop-paired/Cargo.toml
       - name: Build actual frozen control CLI separately
         run: cargo build --locked --manifest-path qualification-service/control/Cargo.toml --bin mixyard-control
+      - name: Compile current production native concurrency regressions (execution below)
+        run: cargo test --locked --no-run --manifest-path apps/desktop/native-control/Cargo.toml
       - name: Historical native concurrency regression is causally RED (owned TLS services)
         env:
           MIXYARD_TEST_CONTROL_BINARY: ${{ github.workspace }}/qualification-service/control/target/debug/mixyard-control${{ matrix.suffix }}

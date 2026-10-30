@@ -58,7 +58,9 @@ impl Gate {
             .event
             .wait_timeout_while(state, Duration::from_secs(10), |state| !state.0)
             .unwrap();
-        assert!(state.0, "Owned native worker did not reach its barrier");
+        let entered = state.0;
+        drop(state);
+        assert!(entered, "Owned native worker did not reach its barrier");
     }
     fn release(&self) {
         self.state.lock().unwrap().1 = true;
@@ -249,6 +251,9 @@ fn native_old_open_admission_cannot_clear_replacement_session() {
         current.generation,
         &fixture.raw(),
     );
+    if matches!(&reply, Err(error) if error == "Read a fresh paired session before requesting") {
+        println!("CAUSAL_RED old-open-erased-new-session");
+    }
     assert!(
         reply.is_ok(),
         "Replacement native session must still make an ACTUAL TLS request"
@@ -286,6 +291,9 @@ fn native_delayed_expected_disconnect_cannot_clear_replacement_session() {
         current.generation,
         &fixture.raw(),
     );
+    if matches!(&reply, Err(error) if error == "Read a fresh paired session before requesting") {
+        println!("CAUSAL_RED old-disconnect-erased-new-session");
+    }
     assert!(
         reply.is_ok(),
         "Delayed disconnect cannot erase the newer native session"
@@ -328,6 +336,9 @@ fn native_stale_tls_completion_cannot_publish_for_a_new_admission() {
         current.generation,
         &fixture.raw(),
     );
+    if premature.as_ref().is_ok_and(|reply| reply.status == 200) {
+        println!("CAUSAL_RED stale-tls-granted-new-generation-before-its-open");
+    }
     assert!(
         premature.is_err(),
         "Stale TLS result must not publish under another generation"
