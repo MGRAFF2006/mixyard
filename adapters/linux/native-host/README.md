@@ -435,3 +435,71 @@ The report names that selection scope. A complete selected scan is not a scan of
 unselected registrations; selected overflow remains explicitly unknown with no
 truncated relation set. CPU controls verify this distinction and independently
 check nonzero file offsets using read-only owned views plus a `pread` oracle.
+
+
+### Explicit fixed-release comparison (diagnostic only)
+
+The `fixed-upstream-comparison` job runs ONLY on `pull_request:labeled` when the
+newly applied label is exactly `qualify-pipewire-1.4.8`. A label merely present on
+push/synchronize, another label, or workflow_dispatch cannot select it. Root
+alone applies the label after exact-head verification; children never trigger or
+watch. The normal push/opened/reopened/synchronize job retains the mandatory1.0.5
+probe and its visible RED evidence. Label events do not run that ordinary job;
+separate non-cancelling concurrency groups prevent cross-run cancellation. The
+label conveys no review approval, SDK support, audio authority or availability.
+
+No default-branch change is needed for the label event. Existing manual dispatch
+remains baseline-only and subject to GitHub's default-branch eligibility; it is
+not the comparison launch mechanism. Permissions remain contents:read, with no
+pull_request_target, secrets, label interpolation into shell, or privileged
+runtime operation.
+
+Comparison source is1.4.8 commit `8b43ed5c910e892d53de5a96aa01e9280a5b6650`,
+containing stable fix `08dcd3a83a9cc64c71e5b6d2ca89af51219f4a47`. Its original
+archive is pinned at1928742 bytes/SHA256
+`6abd8fe4aaf2f435ee1770fc668acebc2e6b69504600861c794d19b2559ba5db`.
+Only the explicitly approved content-addressed Debian original-source mirror is
+used; size/hash are checked before extraction. Critical Git blob IDs are pinned
+to the release tree, and every extracted input receives a complete bounded
+content/mode/symlink manifest. The published Debian descriptor is the checksum
+source; its PGP signature has not independently been verified. No floating tag,
+archive bypass, local SDK, installed SDK patch/interposition or product minimum
+version change is implied.
+
+The hosted-only build adds Meson/Ninja/gettext to existing compiler/pkg-config/
+json-c tools, disables Meson fallbacks, uses j2 and a private RUNNER_TEMP prefix,
+and checks planned installation paths before installing there. Optional hardware,
+service/session-manager integrations are disabled; no system install, ldconfig,
+service activation or personal graph. Tool identities, source inputs, installed
+file hashes/build IDs and a closed comparison descriptor are retained. The
+actual test merge must have exact ordered [approved actual base, declared head]
+parents, complete real-object ancestry, and scoped working hashes matching the
+executed tree. Declared/actual/freshly fetched main bases, head/merge/tree and
+input hashes are separately recorded using #105's process-local no-graft,
+no-replacement/no-commit-graph model. The descriptor binds that provenance hash.
+
+The identical8 API readbacks must ALL pass on the SAME fixed prefix; a failed
+probe cannot be skipped into graph execution. The existing whole2-epoch/9-case
+qualifier is then run with its exact diagnostics, isolation, geometry, timing,
+ownership, cancellation and retirement gates unchanged. Its clean environment
+validates the explicit descriptor and uses exact prefix executables plus module,
+SPA-plugin and shared-library paths; inherited PATH alone is insufficient.
+
+At declared pre-PCM and topology-before-host-admission points, the supervisor
+reads bounded actual loaded-object metadata for ONLY its owned daemon/graph PIDs.
+PID/start/executable rechecks and file hashes/build IDs must match the prefix
+manifest; unknown, incomplete, outside-prefix or missing critical binding fails
+that observation. Reports contain logical install names and identity hashes,
+with observer CLOCK_MONOTONIC brackets and point-only scope. No LD_DEBUG,
+process-wide RLIMIT_FSIZE, hooks, SDK patch or callback instrumentation is added.
+These observations do NOT prove full-lifetime closure; unobserved short-lived
+pw-dump/pw-cli/standalone SPA objects remain explicitly UNKNOWN. The mapping API
+has its separate actually resolved build-ID witness. No static ldd result is
+presented as a runtime observation. A critical observation gap must be reported
+before adding more plumbing.
+
+Local controls exercise metadata/event/provenance and rejection boundaries only;
+the release archive is not downloaded, built or executed locally. A fixed API
+GREEN and clean graph run would be comparison evidence, not automatic closure of
+the old graph invocation/backing cause or ordinary zero-byte EMPTY. Both remain
+merge blockers pending causal assessment and independent exact-head review.

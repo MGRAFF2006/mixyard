@@ -3,6 +3,9 @@ set -euo pipefail
 # Only disposable hosted runners install SDKs. This script never installs any.
 : "${MIXYARD_NATIVE_BUILD:?set a private build directory}"
 root=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
+if [[ -n "${MIXYARD_COMPARISON_SDK:-}" ]]; then
+  python3 -B "$root/adapters/linux/native-host/comparison_sdk.py" validate-build "$MIXYARD_COMPARISON_SDK"
+fi
 pkg-config --modversion libpipewire-0.3
 cc -std=c11 -Wall -Wextra -Werror -pedantic -O2 -g0 \
   -I"$root/adapters/engine/include" "$root/adapters/linux/native-host/consumer_copy_check.c" \
@@ -27,6 +30,10 @@ else
   result=$?
   cat "$MIXYARD_NATIVE_BUILD/native-map-check.json"
   exit "$result"
+fi
+if [[ -n "${MIXYARD_COMPARISON_SDK:-}" ]]; then
+  python3 -B "$root/adapters/linux/native-host/comparison_sdk.py" verify-api \
+    "$MIXYARD_COMPARISON_SDK" "$MIXYARD_NATIVE_BUILD/native-map-check.json"
 fi
 # Real plugin pool/alias counterexample; no context, server connection or devices.
 cc -std=gnu11 -Wall -Wextra -Werror -O2 -g0 \

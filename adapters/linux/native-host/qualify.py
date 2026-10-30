@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Disposable hosted private PipeWire graph qualification. Never opens hardware."""
+import argparse
 import errno
 import json
 import os
@@ -77,15 +78,15 @@ def snapshot_bytes(command, env, timeout=5):
     return bytes(buffers["stdout"])
 
 
-def snapshot(env):
+def snapshot(env, comparison=None):
     try:
-        raw = snapshot_bytes(["pw-dump", "--remote", "mixyard-private"], env)
+        raw = snapshot_bytes([comparison.tool("pw-dump") if comparison else "pw-dump", "--remote", "mixyard-private"], env)
     except RuntimeError as error:
         # Registry enumeration does not bind each advertised object. Preserve
         # actual IDs/types/versions for a bind failure; never infer type from a
         # numeric global ID or use this diagnostic to pass the isolation gate.
         try:
-            registry = snapshot_bytes(["pw-cli", "--remote", "mixyard-private", "list-objects"], env)
+            registry = snapshot_bytes([comparison.tool("pw-cli") if comparison else "pw-cli", "--remote", "mixyard-private", "list-objects"], env)
             diagnostic = registry[:8192].decode("utf-8", errors="replace")
         except RuntimeError as registry_error:
             diagnostic = str(registry_error)[:8192]
@@ -277,7 +278,7 @@ def classify_owned_server_stop(report, stopped, stderr, returncode):
 
 
 def run(binary, env, directory, cancel=False, server_loss=None, mode="normal",
-        stop_signal=signal.SIGTERM, captures=None):
+        stop_signal=signal.SIGTERM, captures=None, comparison=None, daemon=None):
     captures = captures if captures is not None else Captures()
     directory.mkdir(mode=0o700)
     scenario = "server-loss" if server_loss else mode
@@ -285,7 +286,10 @@ def run(binary, env, directory, cancel=False, server_loss=None, mode="normal",
     process = capture.process
     try:
         topology = await_file(directory / "topology.json", process)
-        active = isolation(snapshot(env), active=True)
+        active = isolation(snapshot(env, comparison), active=True)
+        if comparison:
+            comparison.observe_owned(process, "graph", directory.name + ":topology-before-host-admission")
+            comparison.observe_owned(daemon.process, "daemon", directory.name + ":linked-before-host-admission")
         atomic_json(directory / "request.json", request(topology, mode))
         if cancel or server_loss:
             await_file(directory / "flowing", process)
@@ -335,7 +339,7 @@ def run(binary, env, directory, cancel=False, server_loss=None, mode="normal",
                 capture.reject("destination failure did not isolate healthy native siblings")
             if mode == "tail-loss" and report["lossFrame"] == 2**64-1:
                 capture.reject("no actual native source loss was observed")
-        isolation(snapshot(env))
+        isolation(snapshot(env, comparison))
         capture.validation = "clean"
         return {"topology": topology, "activeIsolation": active, "result": report}
     except BaseException as error:
@@ -348,15 +352,30 @@ def run(binary, env, directory, cancel=False, server_loss=None, mode="normal",
 def main():
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted":
         raise SystemExit("only disposable GitHub-hosted runners are authorized; no local native execution")
-    binary = Path(sys.argv[1]).resolve(strict=True)
-    evidence = Path(sys.argv[2]).resolve()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("binary")
+    parser.add_argument("evidence")
+    parser.add_argument("--comparison-sdk", type=Path)
+    args = parser.parse_args()
+    binary = Path(args.binary).resolve(strict=True)
+    evidence = Path(args.evidence).resolve()
+    comparison = None
+    if args.comparison_sdk:
+        from comparison_sdk import Comparison
+        comparison = Comparison(args.comparison_sdk)
+        comparison.graph = binary
     captures = Captures()
     report = {"serverEpochs": [],
               "claims": {"physicalDevices": False, "nativeApps": False,
                          "physicalClocks": False, "backendAvailable": False}}
+    if comparison:
+        report["sdkComparison"] = comparison.summary()
     failure = None
     try:
-        execute_epochs(binary, evidence, captures, report)
+        if comparison:
+            execute_epochs(binary, evidence, captures, report, comparison)
+        else:
+            execute_epochs(binary, evidence, captures, report)
     except BaseException as error:
         failure = error
     cleanup_failures = captures.finalize()
@@ -371,7 +390,7 @@ def main():
     print(json.dumps(completed, indent=2))
 
 
-def execute_epochs(binary, evidence, captures, report):
+def execute_epochs(binary, evidence, captures, report, comparison=None):
     with tempfile.TemporaryDirectory(prefix="mixyard-private-", dir=os.environ["RUNNER_TEMP"]) as temporary:
         root = Path(temporary)
         root.chmod(0o700)
@@ -396,11 +415,14 @@ context.modules = [
                "PIPEWIRE_CONFIG_DIR": str(config), "PIPEWIRE_CONFIG_NAME": "client.conf",
                "XDG_CONFIG_HOME": str(config), "XDG_STATE_HOME": str(home),
                "MIXYARD_PRIVATE_GRAPH": "hosted-owned-only"}
+        if comparison:
+            env.update(comparison.build_environment())
+            env["PATH"] = str(comparison.prefix / "bin") + ":/usr/bin:/bin"
         # PipeWire's environment selector takes precedence over -c. Clients
         # retain client.conf; only this owned daemon selects the server config.
         server_env = dict(env, PIPEWIRE_CONFIG_NAME="private.conf")
         for epoch in range(2):
-            server = captures.start(["pipewire", "-c", str(config / "private.conf")],
+            server = captures.start([comparison.tool("pipewire") if comparison else "pipewire", "-c", str(config / "private.conf")],
                                     server_env, f"server-{epoch}", "daemon")
             try:
                 deadline = time.monotonic() + 5
@@ -411,20 +433,22 @@ context.modules = [
                 socket = (runtime / "mixyard-private").stat()
                 if not stat.S_ISSOCK(socket.st_mode) or socket.st_uid != os.getuid():
                     raise RuntimeError("private socket ownership mismatch")
-                initial = isolation(snapshot(env))  # Required before connecting any PCM nodes.
+                initial = isolation(snapshot(env, comparison))  # Required before connecting any PCM nodes.
+                if comparison:
+                    comparison.observe_owned(server.process, "daemon", f"epoch-{epoch}:isolated-before-PCM")
                 result = {"ownedServerPid": server.process.pid, "initialIsolation": initial}
                 report["serverEpochs"].append(result)  # Retain completed cases if a later case fails.
-                result["integrated"] = run(binary, env, root / f"integrated-{epoch}", captures=captures)
+                result["integrated"] = run(binary, env, root / f"integrated-{epoch}", captures=captures, comparison=comparison, daemon=server)
                 result["outputFailure"] = run(binary, env, root / f"output-failure-{epoch}",
-                                              mode="output-failure", captures=captures)
+                                              mode="output-failure", captures=captures, comparison=comparison, daemon=server)
                 result["retainedTailLoss"] = run(binary, env, root / f"tail-loss-{epoch}",
-                                                 mode="tail-loss", captures=captures)
+                                                 mode="tail-loss", captures=captures, comparison=comparison, daemon=server)
                 result["cancelled"] = run(binary, env, root / f"cancelled-{epoch}", cancel=True,
                                            stop_signal=signal.SIGTERM if epoch == 0 else signal.SIGINT,
-                                           captures=captures)
+                                           captures=captures, comparison=comparison, daemon=server)
                 if epoch == 1:
                     result["serverLoss"] = run(binary, env, root / "server-loss", server_loss=server,
-                                               captures=captures)
+                                               captures=captures, comparison=comparison, daemon=server)
             finally:
                 server.finish()
             server.check_daemon()  # Includes diagnostics written during shutdown.
