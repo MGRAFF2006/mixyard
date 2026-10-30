@@ -39,7 +39,7 @@ import MobileCore
         if (!(event.target instanceof HTMLScriptElement)) return;
         const role = event.target.dataset?.ownedRole;
         if (role in state.resources) state.resources[role] = 'loaded';
-        if (role === 'app' && event.target.type === 'module') state.moduleState = 'loaded';
+        if (role === 'app') state.moduleState = 'loaded';
       }, true);
       addEventListener('unhandledrejection', event => { if (state.script === 'none') { state.script = 'rejection'; state.errorName = name(event.reason?.name); } });
       addEventListener('securitypolicyviolation', event => {

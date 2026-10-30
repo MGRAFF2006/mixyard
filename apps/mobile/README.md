@@ -77,3 +77,12 @@ No microphone permission, audio session, focus request, background service, outp
 network audio peer or OS route is activated. There is no generic virtual microphone
 or call-capture implementation. These limits are visible in native status as well
 as the controller. SDK success must not become a physical audio badge.
+
+
+Controller packaging uses one self-contained classic IIFE with a deferred external
+script. It is still the actual shared Vue App and canonical native bridge at the
+same bundled file/asset URL and CSP; no HTTP server, extra origin, module fallback
+or public authority export is added. `controller-source.json` binds the generated
+entry hash to the actual entry/shared-source hashes. Build and asset staging reject
+runtime modules/split entries and stale or missing identity evidence. Native dialog
+qualification remains an independent hosted SDK execution gate.

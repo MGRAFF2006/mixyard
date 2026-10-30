@@ -58,12 +58,12 @@ test('tiny probes report only their own resource/execution and never satisfy App
   events.error({target:module,error:{name:'SECRET'}})
   assert.equal(read().errorRole,'app');assert.equal(read().errorName,'TypeError');assert.equal(read().moduleState,'failed')
 })
-test('postbuild inserts only same-CSP resource sentinels and preserves actual App module',()=>{
+test('postbuild inserts only same-CSP resource sentinels and preserves actual classic App entry',()=>{
   const csp='<meta http-equiv="Content-Security-Policy" content="script-src self; connect-src none">'
-  const app='<script type="module" crossorigin src="./assets/actual-app.js">'
+  const app='<script defer data-controller-entry="classic" src="./assets/actual-app.js">'
   const source=csp+app+'</script>'
   const value=attachResourceProbes(source)
-  assert.ok(value.includes(csp));assert.ok(value.includes('type="module" crossorigin src="./assets/actual-app.js"'))
+  assert.ok(value.includes(csp));assert.ok(value.includes('defer data-controller-entry="classic" src="./assets/actual-app.js"'))
   for(const probe of resourceProbes)assert.ok(value.includes('src="./'+probe.file+'"'))
   assert.throws(()=>attachResourceProbes(csp));assert.throws(()=>attachResourceProbes(source+app))
 })
