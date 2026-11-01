@@ -15,6 +15,11 @@ jobs:
   native-control:
     name: Production native TLS / actual control service (${{ matrix.os }})
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-large' || matrix.os }}
+    # Only Boat rows share a slot; native rows get unique groups.
+    concurrency:
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-native-control-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 30
     strategy:
       fail-fast: false

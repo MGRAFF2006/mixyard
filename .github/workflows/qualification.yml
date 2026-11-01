@@ -35,6 +35,11 @@ jobs:
   offline:
     name: Synthetic PCM oracle only
     runs-on: boat
+    # Keep queued checks while sharing one repository-wide Boat slot.
+    concurrency:
+      group: boat-ci
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 5
     outputs:
       core_present: ${{ steps.inventory.outputs.core_present }}
@@ -109,6 +114,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
+    # Only Boat rows share a slot; native rows get unique groups.
+    concurrency:
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-core-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2
@@ -146,6 +156,11 @@ jobs:
     needs: offline
     if: needs.offline.outputs.linux_present == 'true'
     runs-on: boat
+    # Keep queued checks while sharing one repository-wide Boat slot.
+    concurrency:
+      group: boat-ci
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

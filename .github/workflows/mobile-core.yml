@@ -20,6 +20,11 @@ concurrency:
 jobs:
   portable-behavior:
     runs-on: boat
+    # Keep queued checks while sharing one repository-wide Boat slot.
+    concurrency:
+      group: boat-ci
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 10
     steps:
       - uses: dtolnay/rust-toolchain@stable
@@ -41,6 +46,11 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-ios-sim
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
+    # Only Boat rows share a slot; native rows get unique groups.
+    concurrency:
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-mobile-target-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 10
     steps:
       - uses: dtolnay/rust-toolchain@stable

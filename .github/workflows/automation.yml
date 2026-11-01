@@ -19,6 +19,11 @@ jobs:
   automation:
     name: Evaluator, proposals and transition lifecycle
     runs-on: boat
+    # Keep queued checks while sharing one repository-wide Boat slot.
+    concurrency:
+      group: boat-ci
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: 2

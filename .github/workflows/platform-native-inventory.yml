@@ -19,6 +19,11 @@ jobs:
   portable:
     name: Portable writer and strict decoder fixtures
     runs-on: boat
+    # Keep queued checks while sharing one repository-wide Boat slot.
+    concurrency:
+      group: boat-ci
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

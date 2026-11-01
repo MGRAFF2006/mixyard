@@ -30,6 +30,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
+    # Only Boat rows share a slot; native rows get unique groups.
+    concurrency:
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-raw-codecs-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 10
     steps:
       - uses: actions/setup-python@v5
@@ -67,6 +72,11 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         link: [dylib, static]
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
+    # Only Boat rows share a slot; native rows get unique groups.
+    concurrency:
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-system-codecs-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 25
     env:
       MIXYARD_ZSTD_LINK_KIND: ${{ matrix.link }}

@@ -36,6 +36,11 @@ jobs:
   transport:
     name: Bounded ingress queue model (no kernel or PCM delivery)
     runs-on: boat
+    # Keep queued checks while sharing one repository-wide Boat slot.
+    concurrency:
+      group: boat-ci
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
