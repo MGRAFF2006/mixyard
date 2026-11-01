@@ -141,6 +141,9 @@ jobs:
           python verification/desktop-native/evidence.py --guard
           cargo install tauri-driver --locked --jobs 2 2>&1 | tee evidence/driver-install.log
           cargo install --list > evidence/driver-version.txt
+          cargo_bin="$(realpath "${CARGO_HOME:-$HOME/.cargo}/bin")"
+          test -x "$cargo_bin/tauri-driver"
+          printf '%s\n' "$cargo_bin" >> "$GITHUB_PATH"
       - name: Actual release WebKit lifecycle and interaction timing in owned Xvfb
         if: runner.os == 'Linux'
         run: |
