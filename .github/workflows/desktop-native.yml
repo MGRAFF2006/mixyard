@@ -48,7 +48,7 @@ jobs:
             binary: mixyard-desktop.exe
             bundles: msi,nsis
             test_suffix: .exe
-          - os: macos-14
+          - os: macos-15
             binary: mixyard-desktop
             bundles: app,dmg
             test_suffix: ""

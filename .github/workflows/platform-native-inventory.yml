@@ -61,7 +61,7 @@ jobs:
 
   macos:
     name: Apple SDK compile and read-only hosted snapshot
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

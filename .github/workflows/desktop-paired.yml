@@ -29,7 +29,7 @@ jobs:
             suffix: ''
           - os: windows-2022
             suffix: '.exe'
-          - os: macos-14
+          - os: macos-15
             suffix: ''
     defaults:
       run:
