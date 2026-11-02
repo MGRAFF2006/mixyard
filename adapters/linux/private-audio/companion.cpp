@@ -180,6 +180,18 @@ struct LinkRecord {
   bool format_ok = false;
   EndpointId from, to;
 };
+struct FirstInputFailure {
+  // Exclusive DataLoop writes until the first fatal helper result, then
+  // release-publishes immutable scalars for main control. Never an SDK pointer.
+  std::atomic<bool> ready{false};
+  uint32_t source = 0, n_datas = 0, capacity = 0, offset = 0, size = 0,
+           chunk_flags = 0, header_flags = 0, header_offset = 0;
+  int32_t stride = 0;
+  int64_t pts = 0, dts_offset = 0;
+  uint64_t sequence = 0, expected_frame = 0, expected_ns = 0;
+  bool admitted = false, registered = false, data_present = false,
+       chunk = false, header = false, returned = false;
+};
 struct Generation {
   App *app = nullptr;
   uint64_t generation = 0, epoch = 0, store = 0, revision = 0,
@@ -198,6 +210,7 @@ struct Generation {
       request_digest, endpoint_digest;
   mx_host *host = nullptr, *staged_host = nullptr;
   mx_private_timeline timeline{};
+  FirstInputFailure first_input_failure;
   std::atomic<bool> sealed{false}, warming{false}, headers{false},
       switched{false}, retired{false}, complete{false};
   std::atomic<unsigned> fault{0};
@@ -400,10 +413,12 @@ static void discard_output(Port *p, pw_buffer *b) {
 struct InputBorrow {
   Port *port;
   pw_buffer *buffer;
+  bool returned = false;
 };
 static bool return_input_borrow(void *data) {
   auto borrow = (InputBorrow *)data;
-  return return_buffer(borrow->port, borrow->buffer);
+  borrow->returned = return_buffer(borrow->port, borrow->buffer);
+  return borrow->returned;
 }
 static bool submit(Port *p, pw_buffer *b, const spa_io_position *pos,
                    bool silent) {
@@ -620,16 +635,49 @@ static void process(void *userdata, spa_io_position *pos) {
     bool valid = false;
     if (b) {
       auto view = input_view(b);
-      if (!record(p, b))
+      const bool registered = record(p, b) != nullptr;
+      if (!registered)
         view.data = nullptr;
+      const bool admitted = g->switched.load(std::memory_order_acquire);
+      const uint64_t expected_frame = pos->clock.position,
+                     expected_ns = pos->clock.nsec;
+      auto &f = g->first_input_failure;
+      const bool capture = !f.ready.load(std::memory_order_relaxed);
+      if (capture) {
+        // Snapshot metadata and exact helper operands while this borrow is live.
+        // Until publication, the next successful borrow may overwrite scalars.
+        f.source = (uint32_t)s;
+        f.admitted = admitted;
+        f.registered = registered;
+        f.data_present = view.data != nullptr;
+        f.n_datas = view.n_datas;
+        f.capacity = view.capacity;
+        f.chunk = view.chunk;
+        f.header = view.header;
+        f.offset = view.offset;
+        f.size = view.size;
+        f.stride = view.stride;
+        f.chunk_flags = view.chunk_flags;
+        f.header_flags = view.header_flags;
+        f.header_offset = view.header_offset;
+        f.dts_offset = view.dts_offset;
+        f.pts = view.pts;
+        f.sequence = view.sequence;
+        f.expected_frame = expected_frame;
+        f.expected_ns = expected_ns;
+      }
       InputBorrow borrow{p, b};
       auto result = mx_private_copy_and_return(
-          &view, g->switched.load(std::memory_order_acquire),
-          pos->clock.position, pos->clock.nsec, SPA_CHUNK_FLAG_EMPTY,
+          &view, admitted, expected_frame, expected_ns, SPA_CHUNK_FLAG_EMPTY,
           source.pcm.data(), return_input_borrow, &borrow);
       valid = result == MX_PRIVATE_INPUT_READY;
-      if (result == MX_PRIVATE_INPUT_FATAL)
+      if (result == MX_PRIVATE_INPUT_FATAL) {
+        if (capture) {
+          f.returned = borrow.returned;
+          f.ready.store(true, std::memory_order_release);
+        }
         rt_fault(g, 26);
+      }
     }
     ready = ready && valid;
     g->inputs[s] = mx_input{
@@ -2288,6 +2336,39 @@ static void cancel_ready(void *data, int fd, uint32_t mask) {
     a->phase = "failed-held";
   }
 }
+static void append_input_failure(Generation *g, std::string &message) {
+  if (!g || !g->first_input_failure.ready.load(std::memory_order_acquire))
+    return;
+  const auto &f = g->first_input_failure;
+  char detail[352]{};
+  int n = snprintf(detail, sizeof(detail),
+      "; input src=%u adm=%u reg=%u data=%u n=%u cap=%u ch=%u hd=%u"
+      " off=%u sz=%u st=%d fl=%u hfl=%u ho=%u dts=%lld pts=%lld seq=%llu"
+      " ef=%llu ens=%llu ret=%u",
+      f.source, unsigned(f.admitted), unsigned(f.registered),
+      unsigned(f.data_present), f.n_datas, f.capacity, unsigned(f.chunk),
+      unsigned(f.header), f.offset, f.size, f.stride, f.chunk_flags,
+      f.header_flags, f.header_offset, (long long)f.dts_offset,
+      (long long)f.pts, (unsigned long long)f.sequence,
+      (unsigned long long)f.expected_frame, (unsigned long long)f.expected_ns,
+      unsigned(f.returned));
+  constexpr size_t limit = 511;
+  const std::string marker = "; input_truncated=1";
+  size_t kept = n < 0 ? 0 : (size_t)n;
+  bool clipped = n < 0 || kept >= sizeof(detail);
+  if (kept >= sizeof(detail)) kept = sizeof(detail) - 1;
+  if (message.size() > limit || kept > limit - message.size()) clipped = true;
+  if (clipped) {
+    if (message.size() > limit - marker.size())
+      message.resize(limit - marker.size());
+    size_t room = limit - message.size() - marker.size();
+    if (kept > room) kept = room;
+    message.append(detail, kept);
+    message += marker;
+  } else {
+    message.append(detail, kept);
+  }
+}
 static void tick(void *data, uint64_t expirations) {
   (void)expirations;
   auto a = (App *)data;
@@ -2365,6 +2446,7 @@ static void tick(void *data, uint64_t expirations) {
           "; generation_fault=" + std::to_string(generation_failure) +
           "; scrub_failed=" + std::to_string(scrub_failure) +
           "; generation=" + std::to_string(g ? g->generation : 0);
+      append_input_failure(g, a->last_message);
       fault_reply(
           a, a->pending.load() ? a->pending.load()->install_op : "native-fault",
           a->last_code, a->last_message);
