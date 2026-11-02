@@ -720,7 +720,6 @@ fn expired_startup_fences_pending_prepare_and_late_ready_cannot_dispatch() {
     );
 }
 
-
 // Actual owned children and production Service/Coordinator retirement; no SDK.
 #[test]
 fn owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice() {

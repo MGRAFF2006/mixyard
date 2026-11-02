@@ -686,7 +686,8 @@ impl Service {
         self.enforce_deadlines();
         if !self.retired
             && self.retirement.is_none()
-            && self.fence_started
+            && self
+                .fence_started
                 .is_some_and(|start| start.elapsed() >= Duration::from_millis(FENCE_MS))
         {
             self.fail(failure(
