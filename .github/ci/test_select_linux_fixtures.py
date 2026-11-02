@@ -81,9 +81,9 @@ class FailurePropagation(unittest.TestCase):
         spec.loader.exec_module(gate)
         for outcome in ('failure', 'cancelled', 'skipped', ''):
             with self.subTest(outcome=outcome):
-                self.assertEqual(gate.failures({'one': 'true'}, {'ONE': outcome}), ['one'])
-        self.assertEqual(gate.failures({'one': 'true', 'two': 'false'},
-                                      {'ONE': 'success', 'TWO': 'skipped'}), [])
+                self.assertEqual(gate.gate_failures({'one': 'true'}, {'one': {'outcome': outcome}}), ['one'])
+        self.assertEqual(gate.gate_failures({'one': 'true', 'two': 'false'},
+                                           {'one': {'outcome': 'success'}, 'two': {'outcome': 'skipped'}}), [])
 
 
 if __name__ == '__main__':

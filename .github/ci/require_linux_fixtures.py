@@ -3,11 +3,6 @@ import json
 import os
 
 
-def failures(selected, outcomes):
-    return [lane for lane, enabled in selected.items()
-            if enabled == 'true' and outcomes.get(lane.upper()) != 'success']
-
-
 def gate_failures(selected, steps):
     failed = []
     inventory = steps.get('qualification_offline', {})
