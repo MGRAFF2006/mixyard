@@ -26,6 +26,7 @@
 #include <pipewire/filter.h>
 #include <pipewire/pipewire.h>
 #include <pthread.h>
+#include <sched.h>
 #include <set>
 #include <spa/buffer/meta.h>
 #include <spa/param/audio/format-utils.h>
@@ -275,9 +276,9 @@ struct App {
   std::vector<std::unique_ptr<Global>> globals;
   size_t global_budget = 0;
   unsigned modules = 0;
-  std::array<uint32_t, 6> module_ids{{SPA_ID_INVALID, SPA_ID_INVALID,
+  std::array<uint32_t, 7> module_ids{{SPA_ID_INVALID, SPA_ID_INVALID,
                                       SPA_ID_INVALID, SPA_ID_INVALID,
-                                      SPA_ID_INVALID, SPA_ID_INVALID}};
+                                      SPA_ID_INVALID, SPA_ID_INVALID, SPA_ID_INVALID}};
   bool core_ok = false, ready = false, closing = false, failed_held = false;
   std::vector<std::unique_ptr<Generation>> generations;
   Generation *candidate = nullptr;
@@ -1129,7 +1130,8 @@ static const pw_port_events port_events = {.version = PW_VERSION_PORT_EVENTS,
 static const char *modules[] = {
     "libpipewire-module-protocol-native", "libpipewire-module-client-node",
     "libpipewire-module-access",          "libpipewire-module-spa-node-factory",
-    "libpipewire-module-link-factory",    "libpipewire-module-metadata"};
+    "libpipewire-module-link-factory",    "libpipewire-module-metadata",
+    "libpipewire-module-rt"};
 static void added(void *data, uint32_t id, uint32_t permissions,
                   const char *type, uint32_t version, const spa_dict *props) {
   (void)permissions;
@@ -1147,7 +1149,7 @@ static void added(void *data, uint32_t id, uint32_t permissions,
     if (!strcmp(type, PW_TYPE_INTERFACE_Module)) {
       const char *m = spa_dict_lookup(props, PW_KEY_MODULE_NAME);
       unsigned bit = 0;
-      for (unsigned i = 0; i < 6; i++)
+      for (unsigned i = 0; i < 7; i++)
         if (m && !strcmp(m, modules[i])) {
           bit = 1u << i;
           a->module_ids[i] = id;
@@ -2439,7 +2441,7 @@ static void tick(void *data, uint64_t expirations) {
   try {
     pump(a, true);
     collect_builder(a);
-    if (!a->ready && !a->fencing && !a->fault.load() && a->core_ok && a->modules == 63) {
+    if (!a->ready && !a->fencing && !a->fault.load() && a->core_ok && a->modules == 127) {
       a->ready = true;
       auto e = event("ready");
       add(e, "inventoryRevision", a->inventory);
@@ -2671,6 +2673,24 @@ static void stop_signal(void *data, int signal) {
   }
   close_authority(a);
 }
+// Startup-only owner identity publication; scheduling query stays on main.
+static int identify_owner_thread(spa_loop *, bool, uint32_t, const void *, size_t,
+                                 void *userdata) {
+  *static_cast<pthread_t *>(userdata) = pthread_self();
+  return 0;
+}
+static void require_realtime_owner(App *a) {
+  pthread_t thread{};
+  require(pw_data_loop_start(a->owner) >= 0 &&
+              pw_data_loop_invoke(a->owner, identify_owner_thread, 0, nullptr, 0,
+                                  true, &thread) >= 0,
+          "unqualified-sdk", "native owner unavailable for scheduling proof");
+  int policy = 0;
+  sched_param param{};
+  require(pthread_getschedparam(thread, &policy, &param) == 0 &&
+              (policy & ~SCHED_RESET_ON_FORK) == SCHED_FIFO && param.sched_priority == 20,
+          "unqualified-sdk", "native owner requires actual SCHED_FIFO priority20");
+}
 int main(int argc, char **argv) {
   App a;
   std::string descriptor_path;
@@ -2728,6 +2748,7 @@ int main(int argc, char **argv) {
     require(a.context, "owner-failed", "private context unavailable");
     a.owner = pw_context_get_data_loop(a.context);
     require(a.owner, "owner-failed", "exclusive native DataLoop unavailable");
+    require_realtime_owner(&a);
     a.core = pw_context_connect(
         a.context,
         pw_properties_new(PW_KEY_REMOTE_NAME, "mixyard-private", nullptr), 0);

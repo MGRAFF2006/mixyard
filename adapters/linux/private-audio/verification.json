@@ -484,5 +484,17 @@
     "nativeAuthor": "mixyard-native-engine-lead; existing delegated native lead, T3 Code/Codex/OpenAI gpt-6.1-sol high",
     "repair": "Preallocated immutable first-clock-failure scalar snapshot atstamp andprocessed-native rejection before revoke; release/acquire publication with existing lockfreeuint64 type. OffRT Fault formatting prioritizes observed/timeline/stamp values overinputdetail, <=511ASCIIbytes with explicitclock_truncated marker. No duplicatedpredicates, callbacklogging/allocation/nativepointerretention or clockacceptance/deadline changes.",
     "verification": "Source/diff/hash checks only for diagnostic successor. Changedcompanion UNCOMPILED/UNRUN; fresh independent exactHEADreview then bounded actualnative/helper/productexecution required. Currentf9c compiledproxycleanup has no normalStop proof."
+  },
+  "realTimeSchedulingFollowup": {
+    "previousHead": "d55c03f35239ff0dd0816d43205c45cd956ffc5f",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "nativeImplementation": "mixyard-native-engine-lead; existing delegated native lead, T3 Code/Codex/OpenAI gpt-6.1-sol high",
+    "actualD55Receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6586656031",
+    "actualD55": "Native/JSON/portableowner/currentRust/6focusedtestsPASS. ProductfourLinks+InstalledR1native42323957; after646quanta observed42406773 vs expected42406645 (clock12same) =>one128-frame interval omitted; stampfault13/app0/scrub0. Allrecorders1/Brokenpipe. NoPCM/explicitStop/R2/restartacceptance. Forcedcompanion9/server0, allcapture/outerleadersreaped. Boatstopcompletednonforced2026-11-02T20:37:22.940+01:00 snapshot20:37:22.879+01:00.",
+    "schedulingEvidence": "BothownedcontextspreviouslyomittedRTmodule, RT_PROCESSflagnotOSpolicyproof. Boundedcloudinspectionordinaryuid1000 OTHER0,RTPRIO0/0,CapEff4(noSYS_NICE). PinnedRTmodulehashverified. Separateprocess-localprobeexistingSUDO-n raisedonlylaunchedRTPRIO20/20, droppedgroups/gid/uid1000withCapEff0; FIFO20success thenrestoreOTHER0 exit0/quiet/reaped. NoOSglobalsettings/filecaps/systemservices changed. Notproduct/nativeexecutionproof.",
+    "preflightReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6586942227",
+    "repair": "Newproductonlyserver/clientconfigs loadRTmodule mandatory, rt.prio20, directrlimitsenabled, RTKit/portal/DBusdisabled, oneDataLoop. Companion startupbarrieridentifiesthread thenmainqueriesactualFIFO20 beforeconnecting/Ready. ParentboundedoffRTtaskidentity+starttimerechecks querybothownedDataLoopspolicy atbindingobservations. Pinnedmoduleactualmappingrequiredforbothroles; serverexactmoduleallowlist7. Frozensixmodulefixtureunchanged.",
+    "authorityLimits": "ProductdoesnotinvokeSUDO/raiseRTPRIO/addcapabilities; pinnedSDKmoduleperformsitsdocumentedRTprobe/RTTIMEsetupusinginheritedpermissions. Clockcontinuity/epoch/mutationdeadlines/Storeguard/Stop/defaultunavailableunchanged. Pointpolicyobservationsnotongoingguaranteeagainstxruns; actualRTproductflowUNRUN. NoSDKrebuild/upgrade/physical/supporteligibilityclaims.",
+    "verification": "Source/diff/hash andrustfmtonly, no localhostcompiler/test/target/nativeexecution. Changednative/Rust/configsUNCOMPILED/UNRUN. Newtestprivate_rt_policy_and_task_identity_fail_closedUNRUN. NewconfigfilesmustbeincludedinnextGitinputpacket(64to66Rustclosure). FreshindependentexactHEADbehavior+bugreviews, strictnative/helper/currentRust/targetedtestsandfullproductattemptrequired."
   }
 }

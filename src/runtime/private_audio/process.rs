@@ -150,6 +150,88 @@ impl Outbound {
         Ok(())
     }
 }
+fn realtime_policy(policy: i32, priority: i32) -> bool {
+    policy & !libc::SCHED_RESET_ON_FORK == libc::SCHED_FIFO && priority == 20
+}
+fn task_start(bytes: &[u8], tid: u32) -> io::Result<u64> {
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid("invalid task stat"))?;
+    let (prefix, fields) = text
+        .rsplit_once(')')
+        .ok_or_else(|| invalid("task stat missing comm"))?;
+    if prefix
+        .split_once(' ')
+        .and_then(|(id, _)| id.parse::<u32>().ok())
+        != Some(tid)
+    {
+        return Err(invalid("task identity mismatch"));
+    }
+    fields
+        .split_whitespace()
+        .nth(19)
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| invalid("task starttime missing"))
+}
+// Point-only off-RT observation of the exact registered owned child.
+fn observe_realtime_loop(pid: u32) -> io::Result<()> {
+    let mut matching = 0;
+    for (index, entry) in fs::read_dir(format!("/proc/{pid}/task"))?.enumerate() {
+        if index >= 64 {
+            return Err(invalid("owned task count exceeds bound"));
+        }
+        let entry = entry?;
+        let tid = entry
+            .file_name()
+            .to_str()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|tid| *tid <= i32::MAX as u32)
+            .ok_or_else(|| invalid("invalid task ID"))?;
+        let comm = super::descriptor::bounded(&entry.path().join("comm"), 64)?;
+        if comm != b"data-loop.0\n" {
+            continue;
+        }
+        matching += 1;
+        let path = entry.path().join("stat");
+        let first = task_start(&super::descriptor::bounded(&path, 8192)?, tid)?;
+        let mut param = libc::sched_param { sched_priority: 0 };
+        let policy = unsafe { libc::sched_getscheduler(tid as libc::pid_t) };
+        if policy < 0 || unsafe { libc::sched_getparam(tid as libc::pid_t, &mut param) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let last = task_start(&super::descriptor::bounded(&path, 8192)?, tid)?;
+        if first != last
+            || super::descriptor::bounded(&entry.path().join("comm"), 64)? != comm
+            || !realtime_policy(policy, param.sched_priority)
+        {
+            return Err(invalid(
+                "owned data-loop requires observed SCHED_FIFO priority20",
+            ));
+        }
+    }
+    if matching != 1 {
+        return Err(invalid("expected one owned data-loop.0 task"));
+    }
+    Ok(())
+}
+#[cfg(test)]
+#[test]
+fn private_rt_policy_and_task_identity_fail_closed() {
+    assert!(realtime_policy(libc::SCHED_FIFO, 20));
+    assert!(realtime_policy(
+        libc::SCHED_FIFO | libc::SCHED_RESET_ON_FORK,
+        20
+    ));
+    assert!(!realtime_policy(libc::SCHED_OTHER, 0));
+    assert!(!realtime_policy(libc::SCHED_RR, 20));
+    assert!(!realtime_policy(libc::SCHED_FIFO, 19));
+    let fields = format!("S {} 12345 0", ["0"; 18].join(" "));
+    assert_eq!(
+        task_start(format!("42 (data-loop.0) {fields}").as_bytes(), 42).unwrap(),
+        12345
+    );
+    assert!(task_start(format!("43 (data-loop.0) {fields}").as_bytes(), 42).is_err());
+    assert!(task_start(b"42 (data-loop.0) S", 42).is_err());
+}
+
 pub struct Processes {
     pub daemon: Child,
     pub companion: Child,
@@ -281,7 +363,7 @@ impl Processes {
             .mode(0o600)
             .open(&config)?;
         file.write_all(include_bytes!(
-            "../../../adapters/linux/native-host/private.conf"
+            "../../../adapters/linux/private-audio/private-rt.conf"
         ))?;
         drop(file);
         let mut client_config = OpenOptions::new()
@@ -289,7 +371,9 @@ impl Processes {
             .create_new(true)
             .mode(0o600)
             .open(namespace.join("client.conf"))?;
-        client_config.write_all(b"context.properties = { support.dbus = false mem.warn-mlock = false }\ncontext.spa-libs = { support.* = support/libspa-support }\ncontext.modules = [\n    { name = libpipewire-module-protocol-native }\n    { name = libpipewire-module-client-node }\n    { name = libpipewire-module-metadata }\n]\n")?;
+        client_config.write_all(include_bytes!(
+            "../../../adapters/linux/private-audio/client-rt.conf"
+        ))?;
         drop(client_config);
         // An ordinary pw-record stream needs its own public adapter factory.
         // Keep it out of the native companion config and private daemon modules.
@@ -511,7 +595,10 @@ impl Processes {
             return observer();
         }
         self.qualified.observe_bindings(self.daemon.id(), true)?;
-        self.qualified.observe_bindings(self.companion.id(), false)
+        self.qualified
+            .observe_bindings(self.companion.id(), false)?;
+        observe_realtime_loop(self.daemon.id())?;
+        observe_realtime_loop(self.companion.id())
     }
     pub fn begin_graceful(&mut self, request: &CompanionRequest) -> io::Result<()> {
         // A fenced normal request may still have a prefix in the child's stdin.

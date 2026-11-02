@@ -13,13 +13,14 @@ use std::{
 const MANIFEST_LIMIT: usize = 4 * 1024 * 1024;
 const FILE_LIMIT: u64 = 256 * 1024 * 1024;
 const PREFIX_LIMIT: u64 = 384 * 1024 * 1024;
-const MODULES: [&str; 6] = [
+const MODULES: [&str; 7] = [
     "protocol-native",
     "client-node",
     "access",
     "spa-node-factory",
     "link-factory",
     "metadata",
+    "rt",
 ];
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
@@ -73,7 +74,7 @@ fn owned(path: &Path, directory: bool) -> io::Result<fs::Metadata> {
     }
     Ok(metadata)
 }
-fn bounded(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+pub(super) fn bounded(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     File::open(path)?
         .take(limit as u64 + 1)
@@ -336,6 +337,7 @@ impl Qualified {
         let mut required = vec![
             "lib/libpipewire-0.3.so.0".to_string(),
             "lib/spa-0.2/support/libspa-support.so".to_string(),
+            "lib/pipewire-0.3/libpipewire-module-rt.so".to_string(),
         ];
         if daemon {
             required.extend(

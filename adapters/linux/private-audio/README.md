@@ -14,6 +14,16 @@ duplicate decoded keys, wrong nonce/epoch, reused action/operation pairs and
 unsupported actions fail closed. Stage and Install intentionally share one
 operation ID. Fence and Shutdown share the current fence operation ID.
 
+The opt-in product path requires inherited direct `SCHED_FIFO` permission at
+priority 20 for both owned DataLoops. Product-only `private-rt.conf` and
+`client-rt.conf` load `module-rt` without optional/nofail flags, with RTKit,
+portal and DBus fallback disabled. The product invokes no privileged launcher, raises no `RLIMIT_RTPRIO`
+and adds no capabilities. The pinned RT module performs its own documented
+scheduling probe and RTTIME setup using inherited permissions. The companion verifies its owner before Ready;
+the parent checks both owned loops at existing off-RT observation points.
+These are point observations, not a guarantee against later xruns. The frozen
+six-module native-host fixture and default unavailable runtime remain unchanged.
+
 ## Native behavior
 
 Prepare binds **every** descriptor generator to a canonical Config source ID,

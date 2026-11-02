@@ -46,7 +46,7 @@ ordinary recorder processes against privateCore, with sanitized explicit prefix
 library/module/SPA paths and `PIPEWIRE_CONFIG_NAME=recorder.conf`. Runtime writes
 that owned client file alongside client.conf; it adds the public client-side
 adapter needed by pw-record. The native companion still uses client.conf and
-the daemon retains exactly its reviewed six modules. There is no conversion
+the product daemon requires its seven reviewed modules, including direct RT scheduling. There is no conversion
 node inserted into the mixer. Use no autoconnection/default services:
 
 ```sh

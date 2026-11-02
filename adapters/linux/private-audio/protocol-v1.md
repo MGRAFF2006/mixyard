@@ -105,7 +105,13 @@ cleared on retirement; explicit restart returns a new namespace. This grants
 no identity, format or admission proof. Ordinary recorders use the separately
 owned `recorder.conf` client config; the companion uses client.conf, and the
 daemon uses private.conf. Only the recorder client config adds its public
-adapter factory, not the six-module daemon or native mixer graph.
+adapter factory, not the seven-module product daemon or native mixer graph.
+The product-only daemon/client configurations require inherited direct FIFO
+priority20 permission and disable RTKit/portal/DBus fallback. The companion
+checks its actual owner policy before Ready; the parent observes both owned
+DataLoops at existing off-RT binding checks. These point observations neither
+change clock continuity rules nor guarantee freedom from later xruns. The
+frozen six-module native-host fixture is unchanged.
 
 The concrete unrun product acceptance and command sequence is in
 [product-flow.md](product-flow.md).
