@@ -1,0 +1,83 @@
+name: Mobile clients
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['apps/mobile/**', 'apps/web/**', '.github/workflows/mobile-client.yml']
+  push:
+    branches: [main]
+    paths: ['apps/mobile/**', 'apps/web/**', '.github/workflows/mobile-client.yml']
+permissions:
+  contents: read
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  controller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: '11.10.0'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.1'
+          cache: pnpm
+          cache-dependency-path: |
+            apps/mobile/controller/pnpm-lock.yaml
+            apps/web/pnpm-lock.yaml
+      - name: Install locked shared controller dependencies
+        run: pnpm --dir apps/web install --frozen-lockfile
+      - run: pnpm --dir apps/mobile/controller install --frozen-lockfile
+      - run: pnpm --dir apps/mobile/controller check
+      - run: pnpm --dir apps/mobile/controller build
+      - run: node apps/mobile/scripts/stage-assets.mjs
+      - uses: actions/upload-artifact@v6
+        with:
+          name: mobile-controller-assets
+          path: apps/mobile/controller/dist/
+  android:
+    runs-on: ubuntu-latest
+    needs: controller
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v6
+        with:
+          name: mobile-controller-assets
+          path: apps/mobile/android/app/src/main/assets/controller/
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile Android SDK app and run JVM byte/state contracts
+        working-directory: apps/mobile/android
+        run: gradle --no-daemon :core:test :app:assembleDebug :app:lintDebug
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mobile-android-qualification
+          path: |
+            apps/mobile/android/core/build/reports/tests/
+            apps/mobile/android/app/build/reports/
+      - run: echo 'Android compile/lint and JVM synthetic contracts only. No Android device, microphone, playback, background service or physical route qualification.' >> "$GITHUB_STEP_SUMMARY"
+  ios:
+    runs-on: macos-15
+    needs: controller
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v6
+        with:
+          name: mobile-controller-assets
+          path: apps/mobile/ios/App/controller/
+      - name: Swift byte/state loopback contracts
+        working-directory: apps/mobile/ios
+        run: swift test --parallel
+      - name: Build iPhone/iPad SDK shell without signing
+        run: xcodebuild -project apps/mobile/ios/Mixyard.xcodeproj -scheme Mixyard -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/mixyard-ios" CODE_SIGNING_ALLOWED=NO build
+      - run: echo 'Swift synthetic byte/state contracts and unsigned iOS/iPadOS simulator SDK build only. No physical device, route, mic, background, signing or store qualification.' >> "$GITHUB_STEP_SUMMARY"

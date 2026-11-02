@@ -1,0 +1,12 @@
+# SDK/build state and private provisioning
+.gradle/
+.build/
+.swiftpm/
+DerivedData/
+local.properties
+*.xcuserstate
+xcuserdata/
+provisioning.json
+android/app/src/main/assets/controller/
+ios/App/controller/
+node_modules
