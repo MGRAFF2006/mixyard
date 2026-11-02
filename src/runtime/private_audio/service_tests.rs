@@ -1108,6 +1108,9 @@ while True: time.sleep(60)
 
     // Actual stderr pipes and graceful Stop handlers, still API doubles. A
     // warning invalidates StopComplete even when both children return zero.
+    // The companion completes Shutdown despite failure retirement's TERM; the
+    // daemon ignores repeat TERM after entering its first handler. Both use
+    // immediate exit after the bounded write, avoiding Python shutdown races.
     for overflow in [false, true] {
         let companion_bytes = if overflow {
             "bytes(range(256))*17"
@@ -1119,11 +1122,18 @@ while True: time.sleep(60)
         } else {
             "b'\\x80daemon\\x00'"
         };
-        let companion = COMPANION.replace("import os,json,select,sys", "import os,json,select,sys,signal\nsignal.signal(signal.SIGTERM,lambda *_: sys.exit(0))").replace(
-            "   elif kind=='shutdown': sys.exit(0)",
-            &format!("   elif kind=='shutdown':\n    os.write(2,{companion_bytes})\n    sys.exit(0)"),
-        );
-        let daemon = format!("import os,signal,sys,time\ndef stopped(sig,frame):\n os.write(2,{daemon_bytes})\n sys.exit(0)\nsignal.signal(signal.SIGTERM,stopped)\nprint('READY',flush=True)\nwhile True: time.sleep(60)\n");
+        let companion = COMPANION
+            .replace(
+                "import os,json,select,sys",
+                "import os,json,select,sys,signal\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)",
+            )
+            .replace(
+                "   elif kind=='shutdown': sys.exit(0)",
+                &format!(
+                    "   elif kind=='shutdown':\n    os.write(2,{companion_bytes})\n    os._exit(0)"
+                ),
+            );
+        let daemon = format!("import os,signal,sys,time\ndef stopped(sig,frame):\n signal.signal(signal.SIGTERM,signal.SIG_IGN)\n os.write(2,{daemon_bytes})\n os._exit(0)\nsignal.signal(signal.SIGTERM,stopped)\nprint('READY',flush=True)\nwhile True: time.sleep(60)\n");
         let mut fixture = Fixture::with_daemon(&companion, &daemon);
         let stdout = fixture.service().processes.daemon.stdout.as_mut().unwrap();
         let flags = unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_GETFL) };
@@ -1163,7 +1173,10 @@ while True: time.sleep(60)
         assert_eq!(status.phase, Phase::FailedStopped);
         let message = &status.last_error.as_ref().unwrap().message;
         assert!(message.contains("validated Fence retained as observation only: event=fenced"));
-        assert!(message.contains("companion=exit status: 0; server=exit status: 0; forced=true"));
+        assert!(
+            message.contains("companion=exit status: 0; server=exit status: 0; forced=true"),
+            "stderr overflow={overflow}: {message}"
+        );
         assert!(
             message.contains("owned stderr daemon:") && message.contains("owned stderr companion:")
         );

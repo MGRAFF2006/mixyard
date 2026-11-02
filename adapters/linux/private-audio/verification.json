@@ -123,7 +123,7 @@
     "src/runtime/private_audio/mod.rs": "b5ab3d36a7a6724e6390414bfcf9195fe135e7af7c244612857628f4173e94a0",
     "src/runtime/private_audio/process.rs": "23c53995e384e0961d5d35250652bbfff0bcddb5098abef5a3d68084f60d72eb",
     "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
-    "src/runtime/private_audio/service_tests.rs": "77bbb195dfc4cb0ded05b14f894009705ae835d663e6808e862bf63601966e5d",
+    "src/runtime/private_audio/service_tests.rs": "452266ae51f0370e59deb63073a75a6f395851fe7b8b0ef0b3024ed3565b7305",
     "src/runtime/private_audio/state.rs": "6353c7efb7746731ee6db693f8ca08b03ba79f41d1db7eab65dc845ea2c0d8e5",
     "src/runtime/private_audio/state_tests.rs": "c81b6e403bebcf992e0114a847a3242ba6e49522c33ae69c2b5997040097ae02"
   },
@@ -432,6 +432,8 @@
     "limits": "Retirementobservationappend24KiBrawmessage/48KiBJSONencodedmessage withreservedexplicitoversizedrejection; fullstderrhex<=16384characters+labels. Existinggenericfailure512/nativeparser1024limitsunchanged. Onlyboundedretirementobservationpathuseslargerspace; postreapstatusclearbeforefullstderrappend.",
     "focusedRegressions": "Existingowner_failure_stop_cannot_rearm_retirement_or_reap_children_twice extendslong768nativeFaultsample,boundStopped/Fenced,actualownednormalexitstderrhandlers(binaryfirstbyte/two4352byteoverflow),strictFailedStopped/guard/reaps/RESULT_LIMIT, laterfataluncertaintyreturnsFailedHeld. Existingactual_success_exit_does_not_hide_owned_child_diagnostics updatedexactbytes. Source_loss4unchanged. ExplicitAPI/transportdoubles, notSDKproof.",
     "prototype": "ClockfailureCPPprototype preserved /dev/shm/mixyard-clock-failure-9322541-diagnosis/root-preserved.patch, notintegratedorcompiled. CPPremainsbyteidenticalexact932.",
-    "verification": "Source/diff/rustfmt-only. ChangedRust/testsUNCOMPILED/UNRUN; newindependentexactHEADreview +freshcurrentRust/focusedtests/Stopprobe required. Strictnative/helperwillrunifrefreshedfullpacket; no localcompiler/native/targettestexecution."
+    "verification": "Source/diff/rustfmt-only. ChangedRust/testsUNCOMPILED/UNRUN; newindependentexactHEADreview +freshcurrentRust/focusedtests/Stopprobe required. Strictnative/helperwillrunifrefreshedfullpacket; no localcompiler/native/targettestexecution.",
+    "actual00c": "Strictnativecompile/helper/currentRustbuildpassed. Firstfocusedretirementregressionfailedexit101 atservice_tests.rs1166 expectedbothnativeAPIdoubleexit0/forcedtrue. Source_loss/childdiagnostic/producttrialUNRUN; controllerstoppedfirstfailure, receiptscopied, explicitBoatstoprequested. No assertionwaiver orrunning-sandboxrepair.",
+    "fixtureSuccessor": "Onlytesthandlerschanged: companionignoresTERMwhilecompletingalreadyreceivedShutdown; daemonignoreRepeatTERMwhenfirsthandlerstarts; bothos._exit0afterboundedrawstderrwriteavoidPythoninterpreterexitinterruption. Requiredbothnormal0/strictwarningfailure/bytecounts/overflow/guard/reapschecksunchanged. Addactualstatusmessagecontexttofailureassertion. A handler/shutdownraceisplausiblefromsourcebutactualfirstreceiptomittedmessage; causalityrequiresrerun. ProductionRust/nativeunchangedfrom00c."
   }
 }
