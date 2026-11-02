@@ -1,0 +1,514 @@
+# Linux native shared-engine qualification
+
+This client exercises an actual in-process PipeWire source/capture → shared Rust
+`mixyard-host` → native consumer path. It is deliberately limited to an owned,
+private, synthetic graph on a disposable GitHub-hosted Ubuntu runner. It never
+connects to a personal server or opens a physical endpoint. Product availability
+flags remain false. Native application identity, physical clocks, arbitrary
+layouts, hardware, general device clock adaptation and endurance are unqualified.
+
+`graph.c` uses native `pw_filter` callbacks and mapped shared buffers, not shell
+PCM pipelines. Its raw ports negotiate exactly 48 kHz, interleaved Float64LE,
+ordered FL/FR and 128 frames. A different negotiated format/rate/quantum fails.
+No implicit Float32 DSP port, resampler or channel narrowing is used.
+SPA parsing returns a nonnegative collected-property count; zero is not its only
+success value. `native_format.h` shares the exact requested descriptor and
+validator with the real SDK-only POD regression run before native contexts are
+created. The regression builds/parses both request and negotiated-format PODs,
+rejects missing fields, truncated/negative parses and wrong encoding/rate/count/
+order, and catches the prior zero-only parser-return bug. SDK execution is hosted
+only; it has not run on the implementation host.
+
+Format notifications copy fixed-size numeric records (parser results, actual
+media/encoding/rate/count/flags/positions and role/direction/index). The first
+rejection per port is retained through shutdown. The control owner prints these
+bounded records in final JSON only after native contexts are destroyed; no
+logging, JSON or dynamic allocation is added to the process callback. Diagnostics
+never admit a different descriptor or replace the sample/lifecycle oracle.
+The first malformed native chunk and first sample mismatch are also retained
+independently in fixed preallocated records, including role/port/direction,
+phase/command, actual offset/size/stride/flags/data shape, native clock/frame and
+header timeline. Sample mismatches include exact expected/actual Float64 bits.
+Control reporting occurs only after quiescence, and later callback/shutdown
+observations cannot overwrite the first failure. Chunk checks, warnings and
+sample mismatch assertions remain unchanged; diagnostic fields are not a
+conversion, partial-PCM acceptance or gap reconstruction policy. The only
+mixer/policy/clock/DSP implementation is `adapters/engine`; source aliases in the
+canonical fixture configuration do not represent discovered external apps.
+Generators are synthetic nodes external to the engine, never relabeled engine
+outputs. Actual observed registry node/port IDs and object serials replace
+fixture observed IDs. The private driver supplies the common graph timeline;
+headers carry the actual native frame position/time and the host verifies them.
+The first admitted native frame is explicitly mapped to engine frame zero for
+each new host generation; native nanoseconds stay unchanged. Clock changes and
+frame gaps fail closed. Equal nominal rates alone do not authorize a common clock.
+
+The hosted runner installs distro PipeWire and development SDKs. `qualify.py`
+creates new mode-0700 runtime/config/home directories with one private socket,
+explicit config and an environment that cannot fall back to a personal remote.
+Before creating PCM nodes it checks the socket owner, server core, exact module
+allowlist, sole dummy driver, zero devices and zero links. No session manager,
+hardware monitor, ALSA, Bluetooth or PulseAudio module is loaded. The client also
+rejects unexpected modules/devices/nodes while observing its graph. Cleanup
+stops only subprocess handles it created and destroys only its own native nodes
+and nonlingering links. No system services or defaults change.
+
+Metadata/3 protocol marshalling is explicitly registered in both owned server
+and client contexts. The exact server allowlist includes that single metadata
+module. A strict C11 control test executes the actual native registry predicate
+and compares its complete allowlist with the server config and Python isolation
+gate; unexpected modules remain rejected. Stderr remains a
+fatal pre-PCM observation error. A rejected observation may include a bounded
+read-only registry listing for actual global IDs/types/versions; that diagnostic
+never qualifies the graph or assumes stable numeric IDs.
+
+The callback borrows exact native buffers and calls the Rust host directly.
+There is no interthread PCM queue or use of the Rust exclusive worker queue as
+SPSC. Native transport queues are owned by libpipewire. Callback work uses fixed
+stack structs, preallocated host memory and atomic numeric status; no callback
+JSON, allocation, file I/O, control-thread lock or subprocess PCM transport.
+Control admission/destruction occurs outside callbacks. On the Ubuntu 24.04
+PipeWire 1.0 SDK, pointer replacement uses acknowledged `pw_data_loop_invoke`
+on `pw_context_get_data_loop`. Every process callback checks
+`pw_data_loop_in_thread` before touching the Rust host, enforcing that this
+single-context lane actually runs on that owner. No 1.1-only filter accessor is
+required. The hosted build logs the installed SDK version.
+
+The consumer checks actual delivered samples for three independent destinations:
+Call = program; Record = 0.25 program + 0.125 return (canonical destination DSP);
+Monitor = 0.5 program. The private source has no sends; return is excluded from
+Call. Low Float64 bits and ordered channels are observable in the oracle.
+Lifecycle stages stall one application consumer's bounded owned-copy queue while
+all native input tokens are returned within their process callbacks. Overflow
+terminally closes only that consumer and clears its retained PCM. Siblings must
+progress; the control owner then explicitly admits a fresh consumer epoch after
+rechecking the actual observed endpoint, exact format and current host binding
+on the same serialized DataLoop. Old-epoch data cannot resume. The stages also
+revoke, create fresh host generations, inject a NaN,
+remove the source endpoint and cancel an actively delivering owned client. The
+whole test repeats after an actual owned server restart and requires a clean
+client failure after server loss. Late native buffers are
+bounded by the admitted eight-buffer maximum. Native registry readback checks
+exactly one link per destination and no engine-output recapture. These checks
+must execute successfully before claiming scoped private-graph qualification.
+
+Run on the disposable hosted runner through `linux-native-host.yml`. Manual
+reproduction there:
+
+```sh
+export MIXYARD_NATIVE_BUILD="$RUNNER_TEMP/mixyard-native-build"
+mkdir -m 700 "$MIXYARD_NATIVE_BUILD"
+bash adapters/linux/native-host/build.sh
+python3 -B adapters/linux/native-host/qualify.py \
+  "$MIXYARD_NATIVE_BUILD/native-graph" "$RUNNER_TEMP/native-evidence.json"
+```
+
+The evidence artifact records observed topology, isolation and sample/lifecycle
+counters. Linker allocation hooks require zero callback heap operations in the
+client and static Rust host; the distro libpipewire shared object is outside
+that instrumentation. A passing SDK compile alone is not native delivery evidence. The test
+refuses local execution. No native graph has been executed on the implementation
+host, and no SDK was installed there.
+
+Native API references: [PipeWire filter](https://docs.pipewire.org/group__pw__filter.html),
+[raw format utilities](https://docs.pipewire.org/audio_2format-utils_8h.html),
+[link factory](https://docs.pipewire.org/page_module_link_factory.html).
+
+`host_oracle.c` exercises this adapter's request, three independent destinations
+and explicit frame-epoch mapper against the actual Rust static library without
+loading PipeWire. It is injection/ABI evidence only. On the constrained
+implementation host, 512 blocks pass the literal Float64/DSP oracle, clock/gap
+rejection and revoke, with zero wrapped callback malloc/calloc/realloc/free
+operations. The private generated files occupied 7,891,978 bytes at link
+(16 MiB budget) and were deleted; the parent's library was read read-only.
+This does not replace the hosted native SDK and private graph checks.
+
+Review repair at the followup revision adds two real graph scenarios. An
+explicit destination gain of 16 overflows only Record when the native generator
+switches to finite `0x1p1023` program samples. The same `destination.h` helper used
+by the portable oracle emits zeroed GAP buffers for `MX_INACTIVE`, while Call and
+Monitor must deliver another 128 blocks with correct samples. Malformed active
+output/counts still fail; inactive output never sets a global error.
+
+The retained-tail lane primes actual 128-frame Record mix and Call/Monitor output
+delays. It acknowledges source cancellation on the owner loop, removes only the
+program generator port, requires its real registry-removal event, and feeds the
+host terminal missing-source input. The native consumer checks cleared Call and
+Monitor histories, the empty first delayed Record block and then the surviving
+return-only Record signal for 128 blocks. Native timestamps, quantum, exact
+format checks and existing deadlines remain unchanged. These new graph cases
+are prepared for hosted execution; they are not claimed to have passed locally.
+
+The unchanged read-only parent static host passes the extended portable oracle
+for 512 blocks **per scenario** (normal, actual destination overflow, retained
+mix/output tails with surviving source and rejected lost-source resume), using
+the production destination-copy helper and zero wrapped callback heap operations.
+The followup's private generated files occupied 2,270,602 logical bytes at link
+within the 16 MiB cap and were deleted. Run the linked executable with
+`python3 -B adapters/linux/native-host/check_host.py PATH/host-oracle PRIVATE_DIR`.
+This injected evidence remains separate from the SDK/native graph lane.
+
+The next ownership probe (`native_pool_check.c`) loads the distro SPA audiomixer
+through PipeWire's public loader with an owned loop, without a context, server
+connection or device. It supplies two owned exact-format input/output buffers
+and tests whether an output token aliases upstream chunk/header/PCM after the
+input is acknowledged reusable. It retains both output tokens, observes source
+reuse and pool exhaustion, and compares an independent owned copy. Its expected
+counterexample is diagnostic evidence about dynamic buffer ownership, never a
+passing full private graph. Hosted execution is required; the SDK and plugin are
+absent locally. Current graph chunk/sample/warning checks remain unchanged.
+
+Ownership repair after the actual SPA counterexample: a `pw_buffer` output token
+can alias upstream header/chunk/data when the upstream input is acknowledged
+reusable. The adapter therefore retains **no native or borrowed Rust pointers**
+between callbacks. `consumer_copy.h` owns eight fixed 128-frame Float64 stereo
+slots per destination, including scalar host/consumer binding, native frame,
+clock/deadline and header data. This queue has one exclusive DataLoop owner;
+it is not SPSC or an interthread transport. Every native input is acknowledged
+in the same callback on valid, rejected, cancelled and fault paths. Application
+stalling affects only these owned copies, never PipeWire's borrowed buffer pool.
+
+Overflow closes that application consumer, clears all its slots and stops its
+commits. A controller request explicitly rechecks the live registry ID/serial,
+negotiated format and immutable compiled output identity, then the graph owner
+admits a strictly newer local epoch at a serialized quiescent boundary. The
+host/source generation is never reopened by this operation. Old-epoch captures
+before the new native-frame boundary are explicitly rejected/counted, with the
+existing eight-native-buffer in-flight bound; within-epoch gaps/replay, expiry,
+nonfinite PCM and malformed descriptors remain faults. No timestamps are fitted
+or source frames shifted to make the oracle pass.
+
+Startup is separate: only an explicitly warming, unadmitted candidate can
+classify a full valid descriptor with the named `SPA_CHUNK_FLAG_EMPTY` as
+unavailable, without reading PCM or calling it scheduled silence. All actual
+source headers and the common native clock must be fresh before publication of
+a host. An admitted EMPTY/partial/corrupt input still fails closed. A revoked
+host drains/acknowledges inputs without processing them; only an explicit new
+host-generation admission may start another metadata-warming candidate.
+Native GAP observations are counted only after actual zero-buffer verification,
+and are not attributed to a new host before its first processed frame.
+
+Local actual Rust linkage now exercises 512 blocks **per each of three scenarios**
+through these owned consumer copies, overwrites reusable staging storage before
+checking the oracle, and observes zero wrapped callback heap operations. The
+standalone production-copy test covers exact Float64 bits, full-slot scrubbing,
+binding/epoch replay rejection, expiry, terminal overflow and sibling isolation.
+The actual distro SPA probe also exercises the same copy helper after upstream
+reuse. These new SDK and full private-graph paths must still execute on the
+hosted runner; local portable results are not native-graph qualification.
+
+Whole-producer teardown is distinct from the tail-loss lane's single program
+port removal. The normal scenario first closes admission, invokes the actual
+exclusive DataLoop owner to revoke the host and scrub all owned consumer
+copies, and receives that operation's acknowledgment before destroying the
+producer filter. Future producer callbacks stop borrowing ports; the old host
+cannot warm or readmit. The scenario separately requires the actual registry
+node-removal event and quiet native output. Admitted EMPTY buffers elsewhere
+still fail strict validation: they are never accepted as PCM or startup silence.
+`sourceStopBeforeDestroy`, `sourceRemovalObserved` and `sourceStopFrame` record
+this ordered boundary. Already-submitted native buffers remain a separate
+boundary. The linked no-PipeWire oracle verifies nonzero final queued PCM
+survives host-only revocation, then the production owner-stop operation scrubs
+all slots and metadata without callback heap operations. Full native ordering
+still requires the hosted private-graph run; no local SDK execution is claimed.
+
+Cancellation signals are process-owned before any PipeWire worker can be
+created: startup blocks SIGINT/SIGTERM before `pw_init`, then verifies both
+owner-loop signal registrations before creating the context. Workers inherit
+the blocked mask. A signal received on the actual owner loop closes admission;
+shutdown invokes the DataLoop to revoke the host and scrub owned copies before
+withdrawing the pointer, destroys all native contexts, and directly inspects
+retired slot storage. Qualification requires the exact received signal,
+`cancelled=true`, owner retirement and zero retired copies; exit-by-signal or
+missing reports fail. The two server epochs exercise SIGTERM and SIGINT.
+`stop_signals_check.c` uses actual owned pthread/signalfd processes without a
+PipeWire context: late masking leaves the worker unmasked and terminates it;
+early masking inherits correctly and lets the owner acknowledge and join.
+This kernel-mechanism regression does not replace actual SDK cancellation proof.
+
+Runtime diagnostics are part of qualification, including successful PCM cases.
+`process_capture.py` drains each owned child's stdout/stderr through bounded
+pipes on a control-only reader thread: client stdout 64 KiB, all stderr 16 KiB,
+daemon stdout 16 KiB, at most eleven children. One byte beyond a bound proves
+overflow and stops that owned child. No unbounded log file can fill the runner.
+Readers are joined and UTF-8 is decoded strictly before validation. Nonempty
+normal/cancel client stderr, any daemon output (including shutdown), malformed
+or missing reports, unknown capture state, invalid encoding and overflow fail.
+The pre-PCM `pw-dump` any-stderr gate is unchanged.
+
+The deliberate server-loss case alone accepts exactly one full line
+`native core error -32: connection error` plus newline, only after the supervisor
+actually stopped/reaped its owned daemon with SIGTERM without escalation and
+the native report records one complete core-ID-0 EPIPE event with that exact
+message. The native binary is explicitly launched in its server-loss scenario;
+additional diagnostics, different causes, partial messages or warnings reject.
+This is not a prefix waiver and does not apply to the separate build-time SPA
+pool-exhaustion counterexample.
+
+Before publishing success, qualification inspects the complete daemon lifetime
+and all clients. `native-evidence.json` is written outside the deleted graph
+directory on success AND failure. It retains partial completed cases, each
+capture's validation/stop/EOF state, bounded raw bytes as Base64 (including
+undecodable bytes), and useful text prefixes. The artifact is exclusive mode
+0600 and capped at 4 MiB; oversized evidence is a failure, never truncated into
+a success. Workflow upload runs even when qualification fails. New real-child
+control tests reproduce the old passing-report-plus-warning false-green and
+require warning rejection, clean controls, late daemon diagnostic rejection,
+byte/encoding bounds and exact intentional-disconnect validation. Old 3b98
+native observations did not enforce this diagnostic gate; a new fully gated
+hosted run is required before qualification. Accepted main 4e45fb295e5c1dfa7aa1a0f30604ef56084a4fe5
+has been normally merged, so that next run builds the accepted #103 host, not
+only the previously source-compared b719 implementation.
+
+The access module explicitly selects `access.legacy = true` on the pinned
+PipeWire 1.0.5 SDK. Its parser previously ignored `access.force = unrestricted`
+and selected this same legacy branch while emitting a warning. The replacement
+preserves existing client/Flatpak classification and permissions; it does not
+switch to socket-based grants, broaden access or change log levels. Legacy mode
+is supported by this SDK but may change in future versions, which require new
+qualification. The control regression locks this exact configuration and rejects
+incomplete/different client classifications. Actual SDK isolation snapshots must
+contain client observations with `pipewire.access = unrestricted` for these
+owned, non-sandboxed fixture clients, and record them in evidence. All existing
+module/device/link/diagnostic gates remain strict. No warning exception is added.
+
+Server-loss ordering diagnostics now record **OS CLOCK_MONOTONIC** separately
+from PipeWire sample timestamps: controller times immediately before and after
+the actual signal syscall and after reaping, native callback entry, the first
+fatal error, and the core-error notification. A failed clock read is recorded
+as unavailable/zero; it cannot establish ordering. Both processes record their actual Linux time-namespace
+inode. The control regression checks C/Python OS timestamps and namespace on
+owned processes; no hardware/engine/PipeWire clock mapping is inferred. The
+first fatal error and strict EMPTY rejection remain unchanged in the native
+binary. Qualification retains the normal first-EPIPE46 witness and separately
+labels only a proved post-owned-stop unavailable callback as described below;
+it never rewrites the first error or treats EMPTY as admitted PCM.
+
+
+Pre-admission payload readiness is based on valid-data length, not solely EMPTY.
+The pinned PipeWire allocator uses zero-initialized storage for chunk/header
+fields; `spa_buffer_alloc_array` exposes that exact initialized state. Zero
+valid-data bytes with offset zero, stride zero or the exact stride, known flags
+zero/EMPTY, full capacity and existing header metadata are **unavailable**. A
+full explicitly EMPTY quantum is also unavailable. Both states return the native
+token without reading PCM, installing a host, proving source header/clock freshness,
+or scheduling silence. Unchanged caller guards permit this only while never
+admitted/warming; actual formats and current source headers/common clock remain
+required before host admission. Positive partial/oversized lengths, corrupted or
+unknown flags, wrong strides/offsets, missing metadata and all admitted invalid
+or EMPTY data remain fatal. The actual SDK allocator and SPA-plugin regressions
+exercise these states and rejection boundaries; local SDK execution remains
+unavailable. `startupUnavailable` accurately names their diagnostic counters.
+The production first-error/EMPTY gate remains strict; qualification labels are separate from native processing.
+
+
+Native layout diagnosis preserves bounded registration and write evidence for
+malformed admitted buffers. The public add/remove callbacks publish up to eight
+opaque token IDs per port and 128 registration records per process; capacity or
+registration inconsistencies fail rather than truncate into success. Token keys
+are never dereferenced outside a live SDK borrow or serialized. Registration
+records contain only role/port, removal state and relative virtual chunk/header
+ranges against that buffer's PCM capacity. These offsets are not raw addresses,
+physical-memory identity, payload authority or provenance.
+
+The exclusive DataLoop captures the most recent pre-write and post-write scalar
+observations for each of six output ports, before returning its token. After the
+first fatal error it stops replacing these records. The first invalid borrow
+gets the same registration ID and relative-layout fields. Serialization occurs
+only after teardown; no callback formatting/logging/allocation, wait or lock is
+added. Missing/in-flight identity or range evidence is explicitly unknown, not a
+new admission allowance. First-fault records precede the larger trace so bounded
+failure capture retains them. Existing report/diagnostic byte caps stay strict.
+
+The observed 10c Record-pattern metadata is a lead, not proof of use-after-free
+or a particular alias mechanism. This diagnostic does not repair the unknown
+mapping/ownership cause or reinterpret malformed bytes, change geometry/GAP,
+first error, warning, cancellation or server-loss gates. Portable controls check
+ID retirement/reuse/capacity, relative overlap/overflow/unknown handling and
+serialization size. Actual new SDK compilation and full hosted evidence remain
+required before drawing a production-layout conclusion.
+
+
+Qualification may emit `expected-post-owned-stop-unavailable` only for the
+specifically observed full EMPTY consumer-port-0 descriptor after an owned
+SIGTERM. The native binary still exits 1 with first error12 and never resumes;
+the raw report remains unchanged and `expectedTeardown.firstFatalError` stays12.
+All ordinary scenarios still reject every error12. The existing direct EPIPE46
+classification remains separate.
+
+The added classification requires the exact full descriptor (not zero/partial,
+corrupt, unknown flags or geometry), matching retired registration with known
+non-overlapping relative layout, same known OS CLOCK_MONOTONIC/time namespace,
+callback entry strictly AFTER the controller's actual signal syscall returned,
+first fatal observation at/after entry and strictly before the complete core
+EPIPE notification. It also requires the actual owned SIGTERM/reap without
+escalation, exact single core0/-EPIPE/message/40-byte stderr, no mismatch/heap
+operations and complete DataLoop retirement/storage scrub. Unknown clocks,
+pre-stop callbacks, wrong signal/core, extra diagnostics or missing witnesses
+reject. No comparison with PipeWire sample time is used.
+
+This is a changed qualification contract that requires independent review and
+new hosted evidence. The earlier pre-stop malformed 10c consumer descriptor
+remains an unresolved mapping/lifetime blocker; a later ordinary green run or
+this expected-stop tag does not repair or close it. Current layout diagnostics
+have not established cross-buffer/shared-map identity or a specific cause.
+
+
+Consumer-first-packet diagnosis separately records each sink's last pre-validation
+state before the first fatal error: native registration, current queue generation/
+epoch, active/started/count/next sequence, minimum native frame, global host-admitted
+state and callback clock/frame. These are scalar copies on the existing owner,
+not new readiness flags or admission permissions. A matching registration/frame
+can show whether an active epoch had already accepted a validated native packet;
+a closed queue's cleared `started` bit cannot prove it never had valid data.
+No ordinary EMPTY acceptance changes. The earlier zero-byte ordinary consumer
+failure and the malformed 10c descriptor remain separate unresolved outcomes.
+
+
+Shared-backing diagnosis adds two **snapshot-time-only candidate** observations:
+first warm readiness, and after a fatal error following host/owned-copy retirement
+but before SDK destruction. The existing DataLoop copies bounded scalar target
+ranges for published live registration IDs; control reads only its own
+`/proc/self/maps` off RT, then the same owner rechecks registration/event epoch,
+range revision and scalar ranges. Removed/changed/in-flight targets invalidate
+that observation. No retired native pointer is dereferenced to refresh it.
+
+The parser requires actual EOF within 1MiB/4096 records. It retains no paths;
+reporting emits no addresses, device numbers or inodes. Only file-backed shared
+mappings get per-snapshot opaque cookies and checked file-offset coordinates.
+Private/COW/anonymous/uncovered mappings remain unknown for shared backing.
+The report includes capture/maps/recheck OS-clock brackets, snapshot generation,
+event epoch and selected fault/last-writer registration coverage. Cross-buffer
+PCM-versus-chunk/header candidate relations are bounded at16; overflow emits an
+explicit unknown relation set rather than a truncated complete claim. Existing
+64KiB report and4MiB evidence limits remain unchanged.
+
+These barriers establish target association only. Unchanged registration IDs or
+virtual ranges cannot prove absence of unmap/remap between observations. Cookies
+are valid only inside one maps snapshot; they do not establish physical pages,
+subsequent callback backing/liveness, native authority or the cause of corruption.
+The report explicitly marks later callback backing unknown. Callback work is
+bounded scalar copies/atomics only; no added callback file access, allocation,
+logging, waiting or locking. No mapping result changes processing/admission or
+first-failure handling.
+
+CPU-only checks use their own memfd shared views, a private COW view, anonymous
+storage and safe owned-address reuse after unmap. They verify candidate equality,
+COW/anonymous/cross-snapshot negatives, range/registration revision invalidation,
+EOF/record/byte/offset bounds, relation overflow and redacted serialization. These
+are diagnostic-method checks, not PipeWire SDK or root-cause qualification. Clean
+b443 hosted runs exercised ingress serialization but reproduced neither the10c
+malformed admitted descriptor nor the7d ordinary zero-byte EMPTY; both outcomes
+remain open. No ordinary EMPTY acceptance rule is changed here.
+
+
+The public mapping API diagnostic is a hosted-only **readback**, separate from
+native graph qualification. It creates only a fresh synthetic memory-pool block,
+prefills fixed marker tags through normal file I/O, and compares read-only mapped
+regions with independent `pread` results. Cases cover fresh maps, retained larger
+covering maps, zero and nonzero covering origins, page-derived offsets and the
+observed4224 shape only when the actual page size is4096. Every requested range
+is inside the owned allocation; no writes through mappings, context, daemon,
+hardware, interposition or SDK patch is involved. A readback mismatch exits1 and
+fails the build gate; the JSON is printed and retained even then. It cannot be
+skipped into successful graph qualification.
+
+The report identifies compile/runtime versions and the GNU build ID of the loaded
+library containing the actually resolved public `pw_memblock_map` API. Identity
+inspection is off RT using loader-provided ELF identity metadata, with bounded
+headers/notes. No library paths, addresses, file identifiers or marker bytes are
+reported. Missing identity/setup is a failure, not implementation proof from a
+version string. Local SDK is absent: this probe has not run locally.
+
+The source-contract hypothesis concerns a reused mapping origin: public1.0.5
+`pw_map_range_init` calculates a page-relative offset, while `pw_memblock_map`
+can reuse a larger covering mapping with a different origin. The published ed2
+push failure reproduced malformed admitted metadata; its post-fatal coordinates
+match a possible offset-origin discrepancy. That remains a hypothesis about the
+graph: a public-API mismatch alone cannot establish its actual call parameters
+or backing at the earlier fault. The PR run was clean, but that does not close
+the malformed or ordinary zero-byte EMPTY outcomes.
+
+Snapshot candidate generation now filters BOTH PCM and metadata registrations to
+the selected first-fault/last-writer IDs **before** the unchanged16-pair limit.
+The report names that selection scope. A complete selected scan is not a scan of
+unselected registrations; selected overflow remains explicitly unknown with no
+truncated relation set. CPU controls verify this distinction and independently
+check nonzero file offsets using read-only owned views plus a `pread` oracle.
+
+
+### Explicit fixed-release comparison (diagnostic only)
+
+The `fixed-upstream-comparison` job runs ONLY on `pull_request:labeled` when the
+newly applied label is exactly `qualify-pipewire-1.4.8`. A label merely present on
+push/synchronize, another label, or workflow_dispatch cannot select it. Root
+alone applies the label after exact-head verification; children never trigger or
+watch. The normal push/opened/reopened/synchronize job retains the mandatory1.0.5
+probe and its visible RED evidence. Label events do not run that ordinary job;
+separate non-cancelling concurrency groups prevent cross-run cancellation. The
+label conveys no review approval, SDK support, audio authority or availability.
+
+No default-branch change is needed for the label event. Existing manual dispatch
+remains baseline-only and subject to GitHub's default-branch eligibility; it is
+not the comparison launch mechanism. Permissions remain contents:read, with no
+pull_request_target, secrets, label interpolation into shell, or privileged
+runtime operation.
+
+Comparison source is1.4.8 commit `8b43ed5c910e892d53de5a96aa01e9280a5b6650`,
+containing stable fix `08dcd3a83a9cc64c71e5b6d2ca89af51219f4a47`. Its original
+archive is pinned at1928742 bytes/SHA256
+`6abd8fe4aaf2f435ee1770fc668acebc2e6b69504600861c794d19b2559ba5db`.
+Only the explicitly approved content-addressed Debian original-source mirror is
+used; size/hash are checked before extraction. Critical Git blob IDs are pinned
+to the release tree, and every extracted input receives a complete bounded
+content/mode/symlink manifest. The published Debian descriptor is the checksum
+source; its PGP signature has not independently been verified. No floating tag,
+archive bypass, local SDK, installed SDK patch/interposition or product minimum
+version change is implied.
+
+The hosted-only build adds Meson/Ninja/gettext to existing compiler/pkg-config/
+json-c tools, disables Meson fallbacks, uses j2 and a private RUNNER_TEMP prefix,
+and checks planned installation paths before installing there. Optional hardware,
+service/session-manager integrations are disabled; no system install, ldconfig,
+service activation or personal graph. Tool identities, source inputs, installed
+file hashes/build IDs and a closed comparison descriptor are retained.
+
+The pinned 1.4.8 Meson tree requires audioconvert before audiomixer: the former
+unconditionally defines the latter's `test_inc`/`test_lib`, independently of the
+`tests` option. Both plugins are enabled for this build; `tests` and
+`installed_tests` remain disabled. Their three Meson wiring blobs are verified
+before setup. The installed audioconvert objects enter the complete prefix
+manifest; their presence does not admit conversion nodes, implicit conversion,
+or broader formats in the graph. No upstream source is patched.
+
+The actual test merge must have exact ordered [approved actual base, declared head]
+parents, complete real-object ancestry, and scoped working hashes matching the
+executed tree. Declared/actual/freshly fetched main bases, head/merge/tree and
+input hashes are separately recorded using #105's process-local no-graft,
+no-replacement/no-commit-graph model. The descriptor binds that provenance hash.
+
+The identical8 API readbacks must ALL pass on the SAME fixed prefix; a failed
+probe cannot be skipped into graph execution. The existing whole2-epoch/9-case
+qualifier is then run with its exact diagnostics, isolation, geometry, timing,
+ownership, cancellation and retirement gates unchanged. Its clean environment
+validates the explicit descriptor and uses exact prefix executables plus module,
+SPA-plugin and shared-library paths; inherited PATH alone is insufficient.
+
+At declared pre-PCM and topology-before-host-admission points, the supervisor
+reads bounded actual loaded-object metadata for ONLY its owned daemon/graph PIDs.
+PID/start/executable rechecks and file hashes/build IDs must match the prefix
+manifest; unknown, incomplete, outside-prefix or missing critical binding fails
+that observation. Reports contain logical install names and identity hashes,
+with observer CLOCK_MONOTONIC brackets and point-only scope. No LD_DEBUG,
+process-wide RLIMIT_FSIZE, hooks, SDK patch or callback instrumentation is added.
+These observations do NOT prove full-lifetime closure; unobserved short-lived
+pw-dump/pw-cli/standalone SPA objects remain explicitly UNKNOWN. The mapping API
+has its separate actually resolved build-ID witness. No static ldd result is
+presented as a runtime observation. A critical observation gap must be reported
+before adding more plumbing.
+
+Local controls exercise metadata/event/provenance and rejection boundaries only;
+the release archive is not downloaded, built or executed locally. A fixed API
+GREEN and clean graph run would be comparison evidence, not automatic closure of
+the old graph invocation/backing cause or ordinary zero-byte EMPTY. Both remain
+merge blockers pending causal assessment and independent exact-head review.
