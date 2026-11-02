@@ -101,7 +101,7 @@
     "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
     "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
     "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
-    "adapters/linux/private-audio/companion.cpp": "79a6c0909eb0f09bb87bf871f09d686bdd28b4cbd2452632f40b28a6071ac338",
+    "adapters/linux/private-audio/companion.cpp": "e9c36c02cbb1602d9299fe9597bcde8dabf916e09c404f07e7cb7d0c53f626ec",
     "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
@@ -368,5 +368,17 @@
     "observedFailure": "Hosted profile/HTTP checks stopped at cargo fmt --all --check before behavior tests; mod.rs chain wrapping and extra blank line in new service test.",
     "repair": "Apply exact hosted rustfmt diff; production and test semantics unchanged.",
     "verification": "Source formatting/checks only; native and product execution remain pending for current source."
+  },
+  "readableFormatFollowup": {
+    "previousHead": "3c4cd4dbf2c004c8718436f4df4174325b2d85c3",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actualNativeCompile": "Current3c4 companion compile/link/size and full JSON helper passed. Full report545731B SHA076364fb51af00018b187fdf2b5f0439c56b2c67e407fee29c448a24b9b5949d; matching ROOT artifacts retained, completed nonforced snapshot verified.",
+    "actualProduct": "Current3c4 Rust build and owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice passed in Boat. Actual product again prepared4outputs but failed before Link/Apply with app_fault=25,generation_fault=0,generation=1. Stop now returned Busy; different-child-handles did not recur. Forced fallback was failure, not StopComplete. No PCM/R2 proof.",
+    "controllerFailures": "Earlier resumed3c4 attempt stopped on JSONL host decoder before remote exec. Corrected host wrapper then native compile passed but controller size sampling killed Cargo on a disappearing proc-macro2 probe file. A reviewed stat sampler successor ignored only ENOENT and the next current Rust build/regression ran successfully. These are retained controller failures, not product compiler errors.",
+    "confirmedSourceDefect": "Unconditional Format subscription at registry bind can enumerate an unavailable parameter. Pinned PipeWire port_subscribe_params immediately calls port_enum_params; enum failure emits a core error.",
+    "upstreamSource": "https://raw.githubusercontent.com/PipeWire/pipewire/8b43ed5c910e892d53de5a96aa01e9280a5b6650/src/pipewire/impl-port.c",
+    "causalLimit": "Observed app_fault25 identifies a core error callback, not its offending request. This source defect is a plausible initiating cause; causal confirmation requires actual rerun.",
+    "repair": "Remove unconditional subscription. Enumerate only on parameter-info changes advertising readable Format; invalidate prior format proof when Format is not readable. Retain exact endpoint/format/owner/admission gates and fail on unexpected API errors. Existing core failure includes bounded ASCII id/sequence/result/message on control.",
+    "verification": "Source/diff/hash checks only; changed companion is UNCOMPILED/UNRUN. No local compiler/tests or live in-sandbox repair. Next native compile and actual product rerun required."
   }
 }

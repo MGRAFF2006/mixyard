@@ -1013,12 +1013,22 @@ static void external_format(void *data, int seq, uint32_t id, uint32_t index,
 }
 static void external_port_info(void *data, const pw_port_info *info) {
   auto p = (Global *)data;
+  if (!(info->change_mask & PW_PORT_CHANGE_MASK_PARAMS))
+    return;
+  bool readable = false;
   for (uint32_t i = 0; i < info->n_params; i++)
     if (info->params[i].id == SPA_PARAM_Format &&
         (info->params[i].flags & SPA_PARAM_INFO_READ))
-      if (pw_port_enum_params((pw_port *)p->proxy, 0, SPA_PARAM_Format, 0, 1,
-                              nullptr) < 0)
-        app_fault(p->app, 21);
+      readable = true;
+  if (!readable) {
+    external_format(data, 0, SPA_PARAM_Format, 0, 0, nullptr);
+    return;
+  }
+  // Port info also reports subsequent parameter changes. Subscribe would
+  // immediately enumerate Format, including on newly published unreadable ports.
+  if (pw_port_enum_params((pw_port *)p->proxy, 0, SPA_PARAM_Format, 0, 1,
+                          nullptr) < 0)
+    app_fault(p->app, 21);
 }
 static const pw_port_events port_events = {.version = PW_VERSION_PORT_EVENTS,
                                            .info = external_port_info,
@@ -1087,9 +1097,6 @@ static void added(void *data, uint32_t id, uint32_t permissions,
       require(p->proxy, "owner-failed", "port bind failed");
       pw_port_add_listener((pw_port *)p->proxy, &p->hook, &port_events,
                            p.get());
-      uint32_t param = SPA_PARAM_Format;
-      require(pw_port_subscribe_params((pw_port *)p->proxy, &param, 1) >= 0,
-              "owner-failed", "format subscription failed");
     }
     a->globals.push_back(std::move(p));
   } catch (const Error &e) {
@@ -1144,11 +1151,22 @@ static void core_info(void *data, const pw_core_info *info) {
 }
 static void core_error(void *data, uint32_t id, int seq, int result,
                        const char *message) {
-  (void)id;
-  (void)seq;
-  (void)result;
-  (void)message;
   auto a = (App *)data;
+  if (!a->fault.load(std::memory_order_acquire)) {
+    // Core events run on control. Keep bounded ASCII detail in the existing
+    // failure reply; no callback logging or new realtime work.
+    char detail[256];
+    size_t n = 0;
+    while (n < sizeof(detail) && message && message[n]) {
+      unsigned char c = (unsigned char)message[n];
+      detail[n++] = c >= 32 && c < 127 ? (char)c : '?';
+    }
+    a->last_code = "owner-failed";
+    a->last_message = "PipeWire core error: id=" + std::to_string(id) +
+                      "; seq=" + std::to_string(seq) +
+                      "; result=" + std::to_string(result) +
+                      "; message=" + std::string(detail, n);
+  }
   app_fault(a, 25);
   a->admission.store(false, std::memory_order_release);
 }
