@@ -101,7 +101,7 @@
     "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
     "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
     "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
-    "adapters/linux/private-audio/companion.cpp": "9ba0f9603969a36db7f1069a71be9f6c2f5dae2265341352fb0bac91bd523b34",
+    "adapters/linux/private-audio/companion.cpp": "193c1fd97b199b810482d9aee4a79a820bb920f02dc5876e41435f6e79b47b90",
     "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
@@ -416,6 +416,7 @@
     "recorderPrimarySource": "https://github.com/PipeWire/pipewire/blob/8b43ed5c910e892d53de5a96aa01e9280a5b6650/src/tools/pw-cat.c",
     "verification": "Source/diff/hash/rustfmt-only; changednative/Rust UNCOMPILED/UNRUN. FreshindependentexactHEAD review +strictnative/helper/currentRust/targetedregressions/actualproductStop trial required. No localcompiler/native/targettest run.",
     "reviewRepair": "Exact0af independent review found oversized serde parser-error text could exceed64KiB clientresult limit and erase originalfailure. Replace parser-error text>1024bytes with explicitbounded rejection; addactualownedchild malformed70000bytevariant toexistingretirementregression. UNRUN.",
-    "durableReceiptCorrection": "Two root-authored GitHub executioncomments initiallycontained literal@filepath due raw gh argument; patchedsamecomments via structuredJSON andGETreadbackverifiedfullbodies. PRbodyalreadycontainedactualevidence; no evidencefilereplacement."
+    "durableReceiptCorrection": "Two root-authored GitHub executioncomments initiallycontained literal@filepath due raw gh argument; patchedsamecomments via structuredJSON andGETreadbackverifiedfullbodies. PRbodyalreadycontainedactualevidence; no evidencefilereplacement.",
+    "withdrawalReviewRepair": "Exact528 independent review found diagnostic iteration could dereference Port userdata after pw_filter_destroy freesit. fence_detail now skips objects_destroyed generations andnullfilter nodes before touchingPortpointers, reportingwithdrawngenerationcount. This changes onlydiagnostics, never scrub/withdrawal/proof gates. Sourceinferred andfixedbeforeany528execution; currentnativeUNCOMPILED/UNRUN."
   }
 }

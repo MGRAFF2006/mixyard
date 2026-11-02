@@ -1732,17 +1732,26 @@ static int cleanup_owner(spa_loop *loop, bool async, uint32_t seq,
 // sampled explanation of a blocked Fence, never an owner/scrub proof. Native
 // tokens remain opaque: no retained SDK pointer is dereferenced or serialized.
 static std::string fence_detail(App *a) {
-  uint64_t live[3]{}, lag[3]{}, never_zero = 0, changed = 0, scrub_failures = 0;
+  uint64_t live[3]{}, lag[3]{}, never_zero = 0, changed = 0, scrub_failures = 0,
+           withdrawn = 0;
   uint64_t first_generation = 0, first_zero = 0;
   unsigned first_role = 0, first_node = 0, first_port = 0, first_output = 0;
   bool first = false;
   for (auto &entry : a->generations) {
     auto g = entry.get();
     scrub_failures += g->scrub_failed.load(std::memory_order_acquire);
+    // Port user data belongs to the SDK filter. Withdrawal frees it even
+    // though this generation retains its opaque registration history.
+    if (g->objects_destroyed) {
+      withdrawn++;
+      continue;
+    }
     if (!g->nodes)
       continue;
     for (size_t n = 0; n < 2 + g->no; n++) {
       auto &node = g->nodes[n];
+      if (!node.filter)
+        continue;
       auto sample = [&](Port *p) {
         for (auto &r : p->buffers) {
           auto token = r.token.load(std::memory_order_acquire);
@@ -1779,7 +1788,7 @@ static std::string fence_detail(App *a) {
   snprintf(detail, sizeof(detail),
            "; fence_sample epoch=%llu owner_queued=%u owner_done=%u build=%u"
            " cleanup_queued=%u cleanup_done=%u app_fault=%u generation_fault=%u"
-           " scrub_failures=%llu"
+           " scrub_failures=%llu withdrawn_generations=%llu"
            " live=%llu/%llu/%llu lag=%llu/%llu/%llu never_zero=%llu changed=%llu"
            " first_present=%u first_generation=%llu first_role=%u first_node=%u"
            " first_port=%u first_output=%u first_zero_epoch=%llu",
@@ -1790,6 +1799,7 @@ static std::string fence_detail(App *a) {
            a->fault.load(std::memory_order_acquire),
            a->candidate ? a->candidate->fault.load(std::memory_order_acquire) : 0,
            (unsigned long long)scrub_failures,
+           (unsigned long long)withdrawn,
            (unsigned long long)live[0], (unsigned long long)live[1],
            (unsigned long long)live[2], (unsigned long long)lag[0],
            (unsigned long long)lag[1], (unsigned long long)lag[2],
