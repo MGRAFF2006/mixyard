@@ -764,7 +764,14 @@ impl Service {
                     }
                     "rejected unbound/oversized late native Stop observation".into()
                 }),
-                Err(error) => Some(format!("late native Stop observation unreadable: {error}")),
+                Err(error) => {
+                    let message = error.to_string();
+                    Some(if message.len() <= 1024 {
+                        format!("late native Stop observation unreadable: {message}")
+                    } else {
+                        "rejected oversized late native Stop parser diagnostic".into()
+                    })
+                }
             };
             if let Some(observation) = observation {
                 retirement.diagnostic_observed = true;

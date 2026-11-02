@@ -1005,19 +1005,22 @@ fn owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice() {
 
     // Explicit signal/transport doubles. A final Stop failure must survive a
     // forced reap, while an unbound message must never acquire proof authority.
-    for bound in [true, false] {
+    for case in 0..3 {
         let source = r#"
 import json,signal,sys,time
 def emit(event,nonce='a'*64,epoch=1,op='startup'):
  print(json.dumps({'companionVersion':1,'instanceNonce':nonce,'controlEpoch':epoch,'operationId':op,'event':event}),flush=True)
 def stopped(sig,frame):
- emit({'kind':'fault','error':{'code':'stop-incomplete','message':'API_DOUBLE_FENCE_SAMPLE'}},'NONCE'*64,2,'fence-2')
+ event={'kind':'fault','error':{'code':'stop-incomplete','message':'API_DOUBLE_FENCE_SAMPLE'}}
+ if CASE==2: event={'kind':'X'*70000}
+ emit(event,'NONCE'*64,2,'fence-2')
  sys.exit(0)
 signal.signal(signal.SIGTERM,stopped)
 emit({'kind':'stopped'}) # Test-only handshake: handler installed, not native Stop.
 while True: time.sleep(60)
 "#
-        .replace("NONCE", if bound { "a" } else { "f" });
+        .replace("NONCE", if case == 1 { "f" } else { "a" })
+        .replace("CASE", &case.to_string());
         let mut fixture = Fixture::new(&source);
         let start = Instant::now();
         loop {
@@ -1049,8 +1052,18 @@ while True: time.sleep(60)
         assert_eq!(status.phase, Phase::FailedStopped);
         assert_eq!(error.code, ErrorCode::StopIncomplete);
         assert!(error.message.starts_with("native fence deadline double;"));
-        assert_eq!(error.message.contains("API_DOUBLE_FENCE_SAMPLE"), bound);
-        assert_eq!(error.message.contains("rejected unbound/oversized"), !bound);
+        assert_eq!(error.message.contains("API_DOUBLE_FENCE_SAMPLE"), case == 0);
+        assert_eq!(
+            error.message.contains("rejected unbound/oversized"),
+            case == 1
+        );
+        assert_eq!(
+            error
+                .message
+                .contains("rejected oversized late native Stop parser diagnostic"),
+            case == 2
+        );
+        assert!(error.message.len() < 2048);
         assert!(error.message.contains("forced=true"));
         assert!(fixture.service().processes.reaped().unwrap());
         assert!(fixture.service().guard.is_none());

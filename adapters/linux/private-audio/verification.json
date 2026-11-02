@@ -120,10 +120,10 @@
     "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
     "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
     "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
-    "src/runtime/private_audio/mod.rs": "acbf192cc2984b888c4455952fc183c2df551604eb776f42dab1653ceda7e6a1",
+    "src/runtime/private_audio/mod.rs": "dc74dc7f12c24f89628c3e33c077bf673f4b7dbf5442316b82000f8b16ef1d55",
     "src/runtime/private_audio/process.rs": "b71878247a0739c3d159566eb9a3c0a9c7de6e80e46d7974413b37d38255937a",
     "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
-    "src/runtime/private_audio/service_tests.rs": "64c57a266476a0e18c7d66bb5c12d53c71f8e6d57c7536fa2d83c9623404b4b4",
+    "src/runtime/private_audio/service_tests.rs": "ba55b91c8cc035e89ffe523c87b5e7e435e11bfb0e85b5dedb45e7c3e1de1f3a",
     "src/runtime/private_audio/state.rs": "5c890074524a0c0922e9c6038d40af3f5d8f36f1d685cf087126fe30772d5a75",
     "src/runtime/private_audio/state_tests.rs": "c81b6e403bebcf992e0114a847a3242ba6e49522c33ae69c2b5997040097ae02"
   },
@@ -414,6 +414,8 @@
     "regression": "Existing owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice extends to retainfirstcause, actualownedSIGTERM-handler valid/unboundlateFault doubles, andstillFailedStopped/noStopComplete. NoSDKproof.",
     "recorderFinding": "Exactpinned pw-cat.c SHA4e288855c8ad808ddafa6f2c170faba357282b6d91121db2ea545d4d0446a948 matchesretainedSDKsource. Capture doesnotmarkdrained;SIGINTquits+sf_closebutexit1. Pinnedversionhasnoduration/samplecount andnocaptureDrainhandler. No invocationonlyexit0routefound, no waiver/SDKmodification. Sourceanalysis by /root/source_loss_path, actualruntimeT3Code/Codex/OpenAIgpt-6.1-solhigh.",
     "recorderPrimarySource": "https://github.com/PipeWire/pipewire/blob/8b43ed5c910e892d53de5a96aa01e9280a5b6650/src/tools/pw-cat.c",
-    "verification": "Source/diff/hash/rustfmt-only; changednative/Rust UNCOMPILED/UNRUN. FreshindependentexactHEAD review +strictnative/helper/currentRust/targetedregressions/actualproductStop trial required. No localcompiler/native/targettest run."
+    "verification": "Source/diff/hash/rustfmt-only; changednative/Rust UNCOMPILED/UNRUN. FreshindependentexactHEAD review +strictnative/helper/currentRust/targetedregressions/actualproductStop trial required. No localcompiler/native/targettest run.",
+    "reviewRepair": "Exact0af independent review found oversized serde parser-error text could exceed64KiB clientresult limit and erase originalfailure. Replace parser-error text>1024bytes with explicitbounded rejection; addactualownedchild malformed70000bytevariant toexistingretirementregression. UNRUN.",
+    "durableReceiptCorrection": "Two root-authored GitHub executioncomments initiallycontained literal@filepath due raw gh argument; patchedsamecomments via structuredJSON andGETreadbackverifiedfullbodies. PRbodyalreadycontainedactualevidence; no evidencefilereplacement."
   }
 }
