@@ -1,24 +1,28 @@
 name: Optional interoperability adapters
-
-on:
+'on':
   pull_request:
-    paths: ['interoperability/**', 'docs/protocol-*.md', 'docs/network-interoperability.md', '.github/workflows/interoperability.yml']
+    paths:
+    - interoperability/**
+    - docs/protocol-*.md
+    - docs/network-interoperability.md
+    - .github/workflows/interoperability.yml
   push:
-    branches: [main]
-    paths: ['interoperability/**', 'docs/protocol-*.md', 'docs/network-interoperability.md', '.github/workflows/interoperability.yml']
-  workflow_dispatch:
-
+    branches:
+    - main
+    paths:
+    - interoperability/**
+    - docs/protocol-*.md
+    - docs/network-interoperability.md
+    - .github/workflows/interoperability.yml
+  workflow_dispatch: null
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   loopback:
     runs-on: boat
-    # Keep queued checks while sharing one repository-wide Boat slot.
     concurrency:
       group: boat-ci
       cancel-in-progress: false
@@ -28,9 +32,10 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       PYTHONPATH: interoperability
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Run bounded policy and protocol loopback proofs
-        run: python -m unittest discover -s interoperability/tests -v
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Run bounded policy and protocol loopback proofs
+      run: python -m unittest discover -s interoperability/tests -v
+    if: github.event_name == 'workflow_dispatch'

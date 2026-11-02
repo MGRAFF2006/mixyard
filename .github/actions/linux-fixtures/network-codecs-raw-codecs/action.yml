@@ -1,0 +1,33 @@
+name: network-codecs-raw-codecs
+description: Explicit Linux payload from .github/workflows/network-codecs.yml / raw-codecs
+runs:
+  using: composite
+  steps:
+  - uses: actions/setup-python@v5
+    if: runner.os == 'Linux'
+    with:
+      python-version: '3.13'
+  - uses: actions/checkout@v4
+  - name: Set private target and require 10 GiB free
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
+    run: |
+      import os, shutil
+      target = os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-network-codecs-raw')
+      os.makedirs(target, mode=0o700, exist_ok=True)
+      free = shutil.disk_usage(target).free
+      print(f'Available: {free / 2**30:.1f} GiB')
+      if free < 10 * 2**30:
+          raise SystemExit('Less than 10 GiB free before codec build')
+      with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+          env.write(f'CARGO_TARGET_DIR={target}\n')
+  - uses: dtolnay/rust-toolchain@stable
+    with:
+      components: rustfmt, clippy
+  - run: cargo fmt --manifest-path network/codecs/Cargo.toml -- --check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Lint raw library, tests and example without system codecs
+    run: cargo clippy --locked --manifest-path network/codecs/Cargo.toml --no-default-features --all-targets
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Test raw envelopes and compile example without system codecs
+    run: cargo test --locked --manifest-path network/codecs/Cargo.toml --no-default-features --all-targets
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

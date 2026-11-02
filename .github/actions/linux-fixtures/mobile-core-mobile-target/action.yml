@@ -1,0 +1,14 @@
+name: mobile-core-mobile-target
+description: Explicit Linux payload from .github/workflows/mobile-core.yml / mobile-target
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/checkout@v4
+  - run: rustup target add aarch64-linux-android
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo check --locked --no-default-features --lib --target aarch64-linux-android
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

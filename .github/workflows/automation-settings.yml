@@ -1,28 +1,55 @@
 name: Durable situation settings
-on:
-  workflow_dispatch:
+'on':
+  workflow_dispatch: null
   push:
-    branches: [main]
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/store_fs.rs', 'src/profiles/**', 'src/profiles.rs', 'src/automation/**', 'src/context.rs', 'tests/automation*', 'tests/profiles_cli.rs', 'tests/context.rs', 'docs/automation-settings.md', '.github/workflows/automation-settings.yml']
+    branches:
+    - main
+    paths:
+    - Cargo.toml
+    - Cargo.lock
+    - src/lib.rs
+    - src/store_fs.rs
+    - src/profiles/**
+    - src/profiles.rs
+    - src/automation/**
+    - src/context.rs
+    - tests/automation*
+    - tests/profiles_cli.rs
+    - tests/context.rs
+    - docs/automation-settings.md
+    - .github/workflows/automation-settings.yml
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/store_fs.rs', 'src/profiles/**', 'src/profiles.rs', 'src/automation/**', 'src/context.rs', 'tests/automation*', 'tests/profiles_cli.rs', 'tests/context.rs', 'docs/automation-settings.md', '.github/workflows/automation-settings.yml']
+    paths:
+    - Cargo.toml
+    - Cargo.lock
+    - src/lib.rs
+    - src/store_fs.rs
+    - src/profiles/**
+    - src/profiles.rs
+    - src/automation/**
+    - src/context.rs
+    - tests/automation*
+    - tests/profiles_cli.rs
+    - tests/context.rs
+    - docs/automation-settings.md
+    - .github/workflows/automation-settings.yml
 permissions:
   contents: read
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   settings:
     name: Settings filesystem and profile regressions (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest","macos-latest","windows-latest"]')
+          || fromJSON('["macos-latest","windows-latest"]') }}
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
-    # Only Boat rows share a slot; native rows get unique groups.
     concurrency:
-      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-settings-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-settings-{2}',
+        github.run_id, github.run_attempt, strategy.job-index) }}
       cancel-in-progress: false
       queue: max
     timeout-minutes: 10
@@ -32,24 +59,26 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_INCREMENTAL: 0
     steps:
-      - uses: dtolnay/rust-toolchain@stable
-        if: runner.os == 'Linux'
-        with:
-          components: rustfmt, clippy
-      - uses: actions/setup-python@v5
-        if: runner.os == 'Linux'
-        with:
-          python-version: '3.13'
-      - uses: actions/checkout@v4
-      - name: Require 10 GiB free
-        shell: python
-        run: |
-          import os, shutil
-          if shutil.disk_usage(os.environ['RUNNER_TEMP']).free < 10 * 2**30:
-              raise SystemExit('Less than 10 GiB free before settings build')
-      - name: Use isolated temporary build directory
-        shell: bash
-        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/mixyard-settings-target" >> "$GITHUB_ENV"
-      - run: cargo fmt --all -- --check
-      - run: cargo test --locked --lib --test automation_settings --test automation_core --test automation_cli --test profiles_cli --test context
-      - run: cargo clippy --locked --lib --test automation_settings --test automation_core --test automation_cli --test profiles_cli --test context -- -D warnings
+    - uses: dtolnay/rust-toolchain@stable
+      if: runner.os == 'Linux'
+      with:
+        components: rustfmt, clippy
+    - uses: actions/setup-python@v5
+      if: runner.os == 'Linux'
+      with:
+        python-version: '3.13'
+    - uses: actions/checkout@v4
+    - name: Require 10 GiB free
+      shell: python
+      run: |
+        import os, shutil
+        if shutil.disk_usage(os.environ['RUNNER_TEMP']).free < 10 * 2**30:
+            raise SystemExit('Less than 10 GiB free before settings build')
+    - name: Use isolated temporary build directory
+      shell: bash
+      run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/mixyard-settings-target" >> "$GITHUB_ENV"
+    - run: cargo fmt --all -- --check
+    - run: cargo test --locked --lib --test automation_settings --test automation_core --test automation_cli --test
+        profiles_cli --test context
+    - run: cargo clippy --locked --lib --test automation_settings --test automation_core --test automation_cli --test
+        profiles_cli --test context -- -D warnings

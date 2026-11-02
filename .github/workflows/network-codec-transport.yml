@@ -1,30 +1,34 @@
 name: Authenticated codec transport
-
-on:
+'on':
   pull_request:
-    paths: ['network/**', 'docs/network-codec-transport.md', '.github/workflows/network-codec-transport.yml']
+    paths:
+    - network/**
+    - docs/network-codec-transport.md
+    - .github/workflows/network-codec-transport.yml
   push:
-    branches: [main]
-    paths: ['network/**', 'docs/network-codec-transport.md', '.github/workflows/network-codec-transport.yml']
-  workflow_dispatch:
-
+    branches:
+    - main
+    paths:
+    - network/**
+    - docs/network-codec-transport.md
+    - .github/workflows/network-codec-transport.yml
+  workflow_dispatch: null
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   raw-codec-session:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest","windows-latest","macos-latest"]')
+          || fromJSON('["windows-latest","macos-latest"]') }}
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
-    # Only Boat rows share a slot; native rows get unique groups.
     concurrency:
-      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-raw-codec-session-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-raw-codec-session-{2}',
+        github.run_id, github.run_attempt, strategy.job-index) }}
       cancel-in-progress: false
       queue: max
     timeout-minutes: 10
@@ -34,29 +38,27 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
-      - uses: actions/setup-python@v5
-        if: runner.os == 'Linux'
-        with:
-          python-version: '3.13'
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - name: Private target and space guard
-        shell: python
-        run: |
-          import os, shutil
-          assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 10 * 2**30
-          with open(os.environ['GITHUB_ENV'], 'a') as env:
-              env.write('CARGO_TARGET_DIR=' + os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-codec-transport') + '\n')
-      - run: cargo fmt --manifest-path network/Cargo.toml -- --check
-      - run: cargo clippy --locked --manifest-path network/Cargo.toml --features codecs --all-targets -- -D warnings
-      - run: cargo test --locked --manifest-path network/Cargo.toml --features codecs
-      - run: cargo test --locked --manifest-path network/Cargo.toml --no-default-features
-
+    - uses: actions/setup-python@v5
+      if: runner.os == 'Linux'
+      with:
+        python-version: '3.13'
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    - name: Private target and space guard
+      shell: python
+      run: |
+        import os, shutil
+        assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 10 * 2**30
+        with open(os.environ['GITHUB_ENV'], 'a') as env:
+            env.write('CARGO_TARGET_DIR=' + os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-codec-transport') + '\n')
+    - run: cargo fmt --manifest-path network/Cargo.toml -- --check
+    - run: cargo clippy --locked --manifest-path network/Cargo.toml --features codecs --all-targets -- -D warnings
+    - run: cargo test --locked --manifest-path network/Cargo.toml --features codecs
+    - run: cargo test --locked --manifest-path network/Cargo.toml --no-default-features
   linux-linked-codec-session:
     runs-on: boat
-    # Keep queued checks while sharing one repository-wide Boat slot.
     concurrency:
       group: boat-ci
       cancel-in-progress: false
@@ -68,24 +70,26 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
-      - uses: actions/setup-python@v5
-        if: runner.os == 'Linux'
-        with:
-          python-version: '3.13'
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - name: Source selector propagation regressions
-        run: python3 -B -m unittest discover -s network -p test_codec_source_links.py -v
-      - name: Hosted codec link prerequisites
-        run: sudo apt-get update && sudo apt-get install -y libzstd-dev libopus-dev
-      - name: Private target and space guard
-        shell: python
-        run: |
-          import os, shutil
-          assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 10 * 2**30
-          with open(os.environ['GITHUB_ENV'], 'a') as env:
-              env.write('CARGO_TARGET_DIR=' + os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-linked-codec-transport') + '\n')
-      - run: cargo clippy --locked --manifest-path network/Cargo.toml --features system-zstd,system-opus --all-targets -- -D warnings
-      - run: cargo test --locked --manifest-path network/Cargo.toml --features system-zstd,system-opus
+    - uses: actions/setup-python@v5
+      if: runner.os == 'Linux'
+      with:
+        python-version: '3.13'
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    - name: Source selector propagation regressions
+      run: python3 -B -m unittest discover -s network -p test_codec_source_links.py -v
+    - name: Hosted codec link prerequisites
+      run: sudo apt-get update && sudo apt-get install -y libzstd-dev libopus-dev
+    - name: Private target and space guard
+      shell: python
+      run: |
+        import os, shutil
+        assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 10 * 2**30
+        with open(os.environ['GITHUB_ENV'], 'a') as env:
+            env.write('CARGO_TARGET_DIR=' + os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-linked-codec-transport') + '\n')
+    - run: cargo clippy --locked --manifest-path network/Cargo.toml --features system-zstd,system-opus --all-targets
+        -- -D warnings
+    - run: cargo test --locked --manifest-path network/Cargo.toml --features system-zstd,system-opus
+    if: github.event_name == 'workflow_dispatch'

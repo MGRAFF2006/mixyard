@@ -1,0 +1,20 @@
+name: desktop-inspection-boundary
+description: Explicit Linux payload from .github/workflows/desktop-inspection.yml / boundary
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v7
+  - uses: dtolnay/rust-toolchain@stable
+    with:
+      toolchain: 1.99.0
+      components: rustfmt
+  - name: Focused content boundary tests without Tauri or host SDKs
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: |
+      set -euo pipefail
+      python3 verification/desktop-native/evidence.py --guard
+      cargo fmt --check --manifest-path verification/desktop-inspection/Cargo.toml
+      cargo test --locked --jobs 2 --manifest-path verification/desktop-inspection/Cargo.toml
+      python3 -m py_compile verification/desktop-inspection/webview.py
+      bash -n verification/desktop-inspection/run-linux.sh
+      python3 verification/desktop-native/evidence.py --guard

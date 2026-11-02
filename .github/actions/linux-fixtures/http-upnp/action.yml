@@ -1,8 +1,0 @@
-name: http-upnp
-description: Original Linux fixture payload; isolated checkout and lane deadline are owned by the caller.
-runs:
-  using: composite
-  steps:
-  - uses: actions/checkout@v4
-  - run: python3 -m unittest discover -s interoperability/tests/http_upnp -v
-    shell: bash

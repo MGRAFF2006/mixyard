@@ -1,5 +1,5 @@
-name: windows-input
-description: Original Linux fixture payload; isolated checkout and lane deadline are owned by the caller.
+name: windows-input-transport
+description: Explicit Linux payload from .github/workflows/windows-input.yml / transport
 runs:
   using: composite
   steps:
@@ -12,4 +12,4 @@ runs:
       /tmp/mixyard-ingress-check
       g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -g verification/windows-input/delivery_check.cpp -o /tmp/mixyard-delivery-check
       /tmp/mixyard-delivery-check
-    shell: bash
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

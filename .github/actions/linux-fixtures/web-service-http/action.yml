@@ -1,0 +1,26 @@
+name: web-service-http
+description: Explicit Linux payload from .github/workflows/web-service.yml / http
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/checkout@v4
+  - name: Formatting
+    run: cargo fmt --all --check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Core and service checks
+    run: cargo test --locked --lib --bins --test web_service --test web_activation --test profiles_cli --test diagnostics_cli
+      --test automation_core --test automation_controller --test automation_settings --test context --test runtime_readonly
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Clippy (existing web reply error-size allowance)
+    run: cargo clippy --locked --all-targets -- -D warnings -A clippy::result_large_err
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Preserve locked resolution of all path-dependent consumers
+    run: |
+      cargo metadata --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --format-version 1 > desktop-metadata.json
+      cargo metadata --locked --manifest-path verification/desktop-inspection/Cargo.toml --format-version 1 > inspection-metadata.json
+      cargo metadata --locked --manifest-path verification/desktop-profiles/Cargo.toml --format-version 1 > profiles-metadata.json
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

@@ -1,0 +1,13 @@
+name: native-linux-evidence-fixture-safety
+description: Explicit Linux payload from .github/workflows/native-linux-evidence.yml / fixture-safety
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+  - name: Evidence paths, strict metadata and owned process cleanup
+    run: python3 -B verification/native-linux/selfcheck.py
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Record evidence boundary
+    run: echo 'Fixture/process checks only. No PipeWire, native audio, capture, playback or laptop qualification.'
+      >> "$GITHUB_STEP_SUMMARY"
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

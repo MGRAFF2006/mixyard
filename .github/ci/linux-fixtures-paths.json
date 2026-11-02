@@ -1,42 +1,332 @@
 {
-  "http-upnp": [
+  "qualification-offline": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "tests/**",
+    "examples/**",
+    "adapters/**",
+    "verification/**",
+    ".github/workflows/qualification.yml"
+  ],
+  "qualification-core": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "tests/**",
+    "examples/**",
+    "adapters/**",
+    "verification/**",
+    ".github/workflows/qualification.yml"
+  ],
+  "qualification-linux": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "tests/**",
+    "examples/**",
+    "adapters/**",
+    "verification/**",
+    ".github/workflows/qualification.yml"
+  ],
+  "audio-core-pcm": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/lib.rs",
+    "src/audio.rs",
+    "src/audio/**",
+    "tests/audio*",
+    "tests/audio/**",
+    "examples/**",
+    "docs/audio-core.md",
+    ".github/workflows/audio-core.yml"
+  ],
+  "automation-automation": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/lib.rs",
+    "src/automation/**",
+    "src/bin/mixyard-automation.rs",
+    "tests/automation*",
+    "examples/automation/**",
+    "docs/automation*.md",
+    ".github/workflows/automation.yml"
+  ],
+  "automation-settings-settings": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/lib.rs",
+    "src/store_fs.rs",
+    "src/profiles/**",
+    "src/profiles.rs",
+    "src/automation/**",
+    "src/context.rs",
+    "tests/automation*",
+    "tests/profiles_cli.rs",
+    "tests/context.rs",
+    "docs/automation-settings.md",
+    ".github/workflows/automation-settings.yml"
+  ],
+  "context-observers": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/lib.rs",
+    "src/context.rs",
+    "src/bin/mixyard-context.rs",
+    "src/automation/**",
+    "observers/**",
+    "tests/context.rs",
+    "adapters/linux/mixyard_linux.py",
+    "docs/context.md",
+    ".github/workflows/context.yml"
+  ],
+  "control-security-real-tls-security": [
+    "control/**",
+    "src/web/**",
+    "src/profiles.rs",
+    "src/store_fs.rs",
+    "src/automation/**",
+    "docs/remote-control.md",
+    ".github/workflows/control-security.yml"
+  ],
+  "desktop-frontend": [
+    "apps/desktop/**",
+    "apps/web/**",
+    ".github/workflows/desktop.yml"
+  ],
+  "desktop-inspection-boundary": [
+    "apps/desktop/src-tauri/src/inspection.rs",
+    "verification/desktop-inspection/**",
+    "src/lib.rs",
+    "src/diagnostics.rs",
+    "examples/config.json",
+    "examples/inventory.json",
+    ".github/workflows/desktop-inspection.yml"
+  ],
+  "desktop-native-shell": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "tests/runtime*.rs",
+    ".github/workflows/runtime.yml",
+    "apps/desktop/**",
+    "apps/web/**",
+    "verification/desktop-native/**",
+    ".github/workflows/desktop-native.yml"
+  ],
+  "desktop-paired-native-control": [
+    "apps/desktop/**",
+    "verification/desktop-paired/**",
+    ".github/workflows/desktop-paired.yml"
+  ],
+  "desktop-profiles-boundary": [
+    "apps/desktop/src-tauri/src/profiles*.rs",
+    "verification/desktop-profiles/**",
+    "src/profiles.rs",
+    "src/profiles/**",
+    ".github/workflows/desktop-profiles.yml"
+  ],
+  "device-control-integration-authenticated-control": [
+    "control/**",
+    "src/**",
+    "apps/web/src/**",
+    "apps/web/package.json",
+    "apps/web/pnpm-lock.yaml",
+    "Cargo.toml",
+    "Cargo.lock",
+    "verification/device-control/**",
+    ".github/workflows/device-control-integration.yml"
+  ],
+  "dsp-dsp": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/lib.rs",
+    "src/dsp/**",
+    "src/latency.rs",
+    "tests/latency.rs",
+    "tests/dsp*",
+    "tests/dsp/**",
+    "examples/dsp*",
+    "docs/dsp.md",
+    "docs/latency.md",
+    ".github/workflows/dsp.yml"
+  ],
+  "http-upnp-owned-loopback": [
     "interoperability/mixyard_interop/core.py",
     "interoperability/mixyard_interop/http_upnp/**",
     "interoperability/tests/http_upnp/**",
     "docs/protocol-http-upnp.md",
     ".github/workflows/http-upnp.yml"
   ],
-  "native-linux-evidence": [
+  "interoperability-loopback": [
+    "interoperability/**",
+    "docs/protocol-*.md",
+    "docs/network-interoperability.md",
+    ".github/workflows/interoperability.yml"
+  ],
+  "macos-input-provenance": [
+    "adapters/macos/virtual-input/**",
+    "adapters/macos/input-broker/**",
+    "verification/macos-input/**",
+    ".github/workflows/macos-input.yml"
+  ],
+  "macos-workers-worker": [
+    "adapters/macos/**",
+    ".github/workflows/macos-workers.yml"
+  ],
+  "mobile-core-mobile-target": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "tests/audio*",
+    "tests/dsp*",
+    "tests/latency.rs",
+    "tests/runtime_worker.rs",
+    ".github/workflows/mobile-core.yml"
+  ],
+  "mobile-core-portable-behavior": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "tests/audio*",
+    "tests/dsp*",
+    "tests/latency.rs",
+    "tests/runtime_worker.rs",
+    ".github/workflows/mobile-core.yml"
+  ],
+  "native-host-engine-abi": [
+    "adapters/engine/**",
+    "src/audio.rs",
+    "src/dsp/live.rs",
+    "tests/audio_host.rs",
+    ".github/workflows/native-host-engine.yml"
+  ],
+  "native-linux-evidence-fixture-safety": [
     "verification/native-linux/**",
     ".github/workflows/native-linux-evidence.yml"
   ],
-  "platform-native-inventory": [
+  "native-worker-handoff": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/audio.rs",
+    "src/audio/**",
+    "src/dsp/**",
+    "src/runtime/**",
+    "tests/runtime_worker.rs",
+    "tests/native_pipeline.rs",
+    "tests/native_linux_pcm.rs",
+    ".github/workflows/native-worker.yml"
+  ],
+  "network-audio-secure-loopback": [
+    "network/**",
+    "docs/network-audio.md",
+    "docs/network-playout.md",
+    ".github/workflows/network-audio.yml"
+  ],
+  "network-codec-transport-linux-linked-codec-session": [
+    "network/**",
+    "docs/network-codec-transport.md",
+    ".github/workflows/network-codec-transport.yml"
+  ],
+  "network-codec-transport-raw-codec-session": [
+    "network/**",
+    "docs/network-codec-transport.md",
+    ".github/workflows/network-codec-transport.yml"
+  ],
+  "network-codecs-raw-codecs": [
+    "network/codecs/**",
+    "docs/network-codecs.md",
+    "docs/network-codec-platforms.md",
+    ".github/workflows/network-codecs.yml"
+  ],
+  "network-codecs-system-codecs-dylib": [
+    "network/codecs/**",
+    "docs/network-codecs.md",
+    "docs/network-codec-platforms.md",
+    ".github/workflows/network-codecs.yml"
+  ],
+  "network-codecs-system-codecs-static": [
+    "network/codecs/**",
+    "docs/network-codecs.md",
+    "docs/network-codec-platforms.md",
+    ".github/workflows/network-codecs.yml"
+  ],
+  "network-control-identity-persisted-raw-mtls": [
+    "network/**",
+    "control/**",
+    "src/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "docs/network-control-identity.md",
+    ".github/workflows/network-control-identity.yml"
+  ],
+  "platform-native-inventory-portable": [
     "adapters/windows/inventory/**",
     "adapters/windows/CMakeLists.txt",
     "adapters/macos/inventory/**",
     "docs/platform-native-inventory.md",
-    ".github/workflows/platform-native-inventory.yml",
-    ".github/actions/linux-fixtures/**",
-    ".github/ci/**",
-    ".github/workflows/linux-fixtures.yml"
+    ".github/workflows/platform-native-inventory.yml"
   ],
-  "windows-input": [
+  "public-sdk-sdk-contracts": [
+    "interoperability/mixyard_interop/public_sdk/**",
+    "interoperability/tests/public_sdk/**",
+    "docs/protocol-public-sdk.md",
+    ".github/workflows/public-sdk.yml"
+  ],
+  "runtime-lifecycle": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "tests/runtime*.rs",
+    "tests/recording.rs",
+    "tests/runtime_support/**",
+    "scripts/install-inventory-runtime.*",
+    "adapters/windows/inventory/**",
+    "adapters/windows/CMakeLists.txt",
+    "adapters/macos/inventory/**",
+    ".github/workflows/runtime.yml"
+  ],
+  "web-service-http": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "tests/web*",
+    "tests/web_support/**",
+    "tests/runtime_inventory.rs",
+    "observers/**",
+    "adapters/linux/**",
+    ".github/workflows/web-service.yml"
+  ],
+  "web-ui-frontend": [
+    "apps/web/**",
+    "src/**",
+    "observers/**",
+    "adapters/linux/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "scripts/run-web.sh",
+    ".github/workflows/web-ui.yml"
+  ],
+  "windows-input-transport": [
     "adapters/windows/virtual-input/**",
     "verification/windows-input/**",
-    ".github/workflows/windows-input.yml",
-    ".github/actions/linux-fixtures/**",
-    ".github/ci/**",
-    ".github/workflows/linux-fixtures.yml"
+    ".github/workflows/windows-input.yml"
   ],
-  "windows-worker": [
+  "windows-native-host-linked": [
     "adapters/windows/**",
-    ".github/workflows/windows-worker.yml",
-    ".github/actions/linux-fixtures/**",
-    ".github/ci/**",
-    ".github/workflows/linux-fixtures.yml"
+    "adapters/engine/**",
+    "src/audio/**",
+    "src/audio.rs",
+    "src/dsp.rs",
+    "src/dsp/**",
+    "src/lib.rs",
+    "src/worker/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    ".github/workflows/windows-native-host.yml"
   ],
-  "macos-workers": [
-    "adapters/macos/**",
-    ".github/workflows/macos-workers.yml"
+  "windows-worker-portable": [
+    "adapters/windows/**",
+    ".github/workflows/windows-worker.yml"
   ]
 }

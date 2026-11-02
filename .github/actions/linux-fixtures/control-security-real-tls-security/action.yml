@@ -1,0 +1,21 @@
+name: control-security-real-tls-security
+description: Explicit Linux payload from .github/workflows/control-security.yml / real-tls-security
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+  - uses: dtolnay/rust-toolchain@stable
+    with:
+      components: rustfmt, clippy
+  - run: cargo fmt --manifest-path control/Cargo.toml -- --check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo clippy --locked --manifest-path control/Cargo.toml --all-targets -- -D warnings
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo test --locked --manifest-path control/Cargo.toml
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Actual owned commit outlives HTTP timeout and disconnect
+    if: runner.os == 'Linux'
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: |
+      cc -std=c11 -Wall -Wextra -Werror -shared -fPIC -pthread control/tests/hold-fsync.c -ldl -o "$RUNNER_TEMP/mixyard-control-hold-fsync.so"
+      python3 -B control/tests/completion.py --service control/target/debug/mixyard-control --interposer "$RUNNER_TEMP/mixyard-control-hold-fsync.so"

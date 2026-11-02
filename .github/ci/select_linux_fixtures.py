@@ -1,4 +1,4 @@
-"""Select the six setup-free lanes. Uncertain history or shared paths run all.
+"""Select all automatic Linux lanes. Uncertain history or shared paths run all.
 
 The job always exists, so a path miss cannot leave its required gate pending.
 This reads Git objects, not the GitHub changed-files API (which can truncate).
@@ -49,7 +49,11 @@ def select(paths, config):
         # fnmatch's broader '*' matching is deliberately conservative here.
         matches = {lane for lane, patterns in config.items()
                    if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)}
-        if path.startswith('.github/') or not matches:
+        if (path.startswith(('.github/', 'src/', 'tests/', 'examples/', 'scripts/'))
+                or '/' not in path
+                or Path(path).suffix in ('.toml', '.lock', '.yaml', '.yml')
+                or Path(path).name in ('package.json', 'tsconfig.json')
+                or not matches):
             return set(config)
         selected.update(matches)
     return selected

@@ -4,6 +4,7 @@ name: Linux fixtures
   push:
     branches:
     - main
+    - t3/network-codecs
   workflow_dispatch: null
 permissions:
   contents: read
@@ -13,67 +14,1203 @@ concurrency:
 jobs:
   fixtures:
     name: Linux fixtures gate
-    runs-on: boat
-    timeout-minutes: 60
+    runs-on: boat-large
+    timeout-minutes: 480
     concurrency:
       group: boat-ci
       cancel-in-progress: false
       queue: max
+    outputs:
+      core_present: ${{ steps.qualification_offline.outputs.core_present }}
+      linux_present: ${{ steps.qualification_offline.outputs.linux_present }}
+      windows_present: ${{ steps.qualification_offline.outputs.windows_present }}
+      macos_present: ${{ steps.qualification_offline.outputs.macos_present }}
+      qualification_success: ${{ steps.qualification_offline.outcome == 'success' }}
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    - name: Select fixture lanes conservatively
+    - name: Save pristine runner environment
+      shell: bash
+      run: python3 .github/ci/lane_boundary.py snapshot
+    - name: Select Linux lanes conservatively
       id: select
       run: python3 .github/ci/select_linux_fixtures.py
-    - name: http-upnp
-      id: http_upnp
-      if: ${{ !cancelled() && steps.select.outputs.http_upnp == 'true' }}
-      uses: ./.github/actions/linux-fixtures/http-upnp
-      timeout-minutes: 3
+    - name: Prepare qualification-offline
+      if: ${{ !cancelled() && steps.select.outputs.qualification_offline == 'true' }}
+      shell: bash
+      env: &id001
+        LANE_ID: qualification-offline
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/qualification-offline
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: qualification-offline
+      id: qualification_offline
+      if: ${{ !cancelled() && steps.select.outputs.qualification_offline == 'true' }}
+      uses: ./.github/actions/linux-fixtures/qualification-offline
+      env: *id001
+      timeout-minutes: 5
       continue-on-error: true
-      env:
+    - name: Restore environment after qualification-offline
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/qualification-offline"
+    - name: Prepare qualification-core
+      if: ${{ !cancelled() && steps.select.outputs.qualification_core == 'true' && steps.qualification_offline.outcome
+        == 'success' && steps.qualification_offline.outputs.core_present == 'true' }}
+      shell: bash
+      env: &id002
+        CARGO_BUILD_JOBS: '2'
+        LANE_ID: qualification-core
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/qualification-core
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: qualification-core
+      id: qualification_core
+      if: ${{ !cancelled() && steps.select.outputs.qualification_core == 'true' && steps.qualification_offline.outcome
+        == 'success' && steps.qualification_offline.outputs.core_present == 'true' }}
+      uses: ./.github/actions/linux-fixtures/qualification-core
+      env: *id002
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after qualification-core
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/qualification-core"
+    - name: Prepare qualification-linux
+      if: ${{ !cancelled() && steps.select.outputs.qualification_linux == 'true' && steps.qualification_offline.outcome
+        == 'success' && steps.qualification_offline.outputs.linux_present == 'true' }}
+      shell: bash
+      env: &id003
+        LANE_ID: qualification-linux
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/qualification-linux
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: qualification-linux
+      id: qualification_linux
+      if: ${{ !cancelled() && steps.select.outputs.qualification_linux == 'true' && steps.qualification_offline.outcome
+        == 'success' && steps.qualification_offline.outputs.linux_present == 'true' }}
+      uses: ./.github/actions/linux-fixtures/qualification-linux
+      env: *id003
+      timeout-minutes: 5
+      continue-on-error: true
+    - name: Restore environment after qualification-linux
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/qualification-linux"
+    - name: Prepare audio-core-pcm
+      if: ${{ !cancelled() && steps.select.outputs.audio_core_pcm == 'true' }}
+      shell: bash
+      env: &id004
+        CARGO_BUILD_JOBS: '2'
+        LANE_ID: audio-core-pcm
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/audio-core-pcm
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: audio-core-pcm
+      id: audio_core_pcm
+      if: ${{ !cancelled() && steps.select.outputs.audio_core_pcm == 'true' }}
+      uses: ./.github/actions/linux-fixtures/audio-core-pcm
+      env: *id004
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after audio-core-pcm
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/audio-core-pcm"
+    - name: Prepare automation-automation
+      if: ${{ !cancelled() && steps.select.outputs.automation_automation == 'true' }}
+      shell: bash
+      env: &id005
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_INCREMENTAL: '0'
+        LANE_ID: automation-automation
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/automation-automation
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: automation-automation
+      id: automation_automation
+      if: ${{ !cancelled() && steps.select.outputs.automation_automation == 'true' }}
+      uses: ./.github/actions/linux-fixtures/automation-automation
+      env: *id005
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after automation-automation
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/automation-automation"
+    - name: Prepare automation-settings-settings
+      if: ${{ !cancelled() && steps.select.outputs.automation_settings_settings == 'true' }}
+      shell: bash
+      env: &id006
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        CARGO_INCREMENTAL: '0'
+        LANE_ID: automation-settings-settings
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/automation-settings-settings
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: automation-settings-settings
+      id: automation_settings_settings
+      if: ${{ !cancelled() && steps.select.outputs.automation_settings_settings == 'true' }}
+      uses: ./.github/actions/linux-fixtures/automation-settings-settings
+      env: *id006
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after automation-settings-settings
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/automation-settings-settings"
+    - name: Prepare context-observers
+      if: ${{ !cancelled() && steps.select.outputs.context_observers == 'true' }}
+      shell: bash
+      env: &id007
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        CARGO_INCREMENTAL: '0'
+        LANE_ID: context-observers
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/context-observers
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: context-observers
+      id: context_observers
+      if: ${{ !cancelled() && steps.select.outputs.context_observers == 'true' }}
+      uses: ./.github/actions/linux-fixtures/context-observers
+      env: *id007
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after context-observers
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/context-observers"
+    - name: Prepare control-security-real-tls-security
+      if: ${{ !cancelled() && steps.select.outputs.control_security_real_tls_security == 'true' }}
+      shell: bash
+      env: &id008
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: control-security-real-tls-security
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/control-security-real-tls-security
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: control-security-real-tls-security
+      id: control_security_real_tls_security
+      if: ${{ !cancelled() && steps.select.outputs.control_security_real_tls_security == 'true' }}
+      uses: ./.github/actions/linux-fixtures/control-security-real-tls-security
+      env: *id008
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after control-security-real-tls-security
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/control-security-real-tls-security"
+    - name: Prepare desktop-frontend
+      if: ${{ !cancelled() && steps.select.outputs.desktop_frontend == 'true' }}
+      shell: bash
+      env: &id009
+        LANE_ID: desktop-frontend
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'true'
+        LANE_PNPM: 'true'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/desktop-frontend
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: desktop-frontend
+      id: desktop_frontend
+      if: ${{ !cancelled() && steps.select.outputs.desktop_frontend == 'true' }}
+      uses: ./.github/actions/linux-fixtures/desktop-frontend
+      env: *id009
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after desktop-frontend
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/desktop-frontend"
+    - name: Prepare desktop-inspection-boundary
+      if: ${{ !cancelled() && steps.select.outputs.desktop_inspection_boundary == 'true' }}
+      shell: bash
+      env: &id010
+        CARGO_BUILD_JOBS: '2'
+        LANE_ID: desktop-inspection-boundary
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: 1.99.0
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/desktop-inspection-boundary
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: desktop-inspection-boundary
+      id: desktop_inspection_boundary
+      if: ${{ !cancelled() && steps.select.outputs.desktop_inspection_boundary == 'true' }}
+      uses: ./.github/actions/linux-fixtures/desktop-inspection-boundary
+      env: *id010
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after desktop-inspection-boundary
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/desktop-inspection-boundary"
+    - name: Prepare desktop-native-shell
+      if: ${{ !cancelled() && steps.select.outputs.desktop_native_shell == 'true' }}
+      shell: bash
+      env: &id011
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_TARGET_DIR: ${{ github.workspace }}/apps/desktop/src-tauri/target
+        LANE_ID: desktop-native-shell
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'true'
+        LANE_PNPM: 'true'
+        RUSTUP_TOOLCHAIN: 1.99.0
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/desktop-native-shell
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: desktop-native-shell
+      id: desktop_native_shell
+      if: ${{ !cancelled() && steps.select.outputs.desktop_native_shell == 'true' }}
+      uses: ./.github/actions/linux-fixtures/desktop-native-shell
+      env: *id011
+      timeout-minutes: 45
+      continue-on-error: true
+    - name: Restore environment after desktop-native-shell
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/desktop-native-shell"
+    - name: Prepare desktop-paired-native-control
+      if: ${{ !cancelled() && steps.select.outputs.desktop_paired_native_control == 'true' }}
+      shell: bash
+      env: &id012
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        LANE_ID: desktop-paired-native-control
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'true'
+        LANE_PNPM: 'true'
+        RUSTUP_TOOLCHAIN: 1.99.0
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/desktop-paired-native-control
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: desktop-paired-native-control
+      id: desktop_paired_native_control
+      if: ${{ !cancelled() && steps.select.outputs.desktop_paired_native_control == 'true' }}
+      uses: ./.github/actions/linux-fixtures/desktop-paired-native-control
+      env: *id012
+      timeout-minutes: 30
+      continue-on-error: true
+    - name: Restore environment after desktop-paired-native-control
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/desktop-paired-native-control"
+    - name: Prepare desktop-profiles-boundary
+      if: ${{ !cancelled() && steps.select.outputs.desktop_profiles_boundary == 'true' }}
+      shell: bash
+      env: &id013
+        CARGO_BUILD_JOBS: '2'
+        LANE_ID: desktop-profiles-boundary
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: 1.99.0
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/desktop-profiles-boundary
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: desktop-profiles-boundary
+      id: desktop_profiles_boundary
+      if: ${{ !cancelled() && steps.select.outputs.desktop_profiles_boundary == 'true' }}
+      uses: ./.github/actions/linux-fixtures/desktop-profiles-boundary
+      env: *id013
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after desktop-profiles-boundary
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/desktop-profiles-boundary"
+    - name: Prepare device-control-integration-authenticated-control
+      if: ${{ !cancelled() && steps.select.outputs.device_control_integration_authenticated_control == 'true' }}
+      shell: bash
+      env: &id014
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        LANE_ID: device-control-integration-authenticated-control
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'true'
+        LANE_PNPM: 'true'
+        RUSTUP_TOOLCHAIN: 1.99.0
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/device-control-integration-authenticated-control
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: device-control-integration-authenticated-control
+      id: device_control_integration_authenticated_control
+      if: ${{ !cancelled() && steps.select.outputs.device_control_integration_authenticated_control == 'true' }}
+      uses: ./.github/actions/linux-fixtures/device-control-integration-authenticated-control
+      env: *id014
+      timeout-minutes: 15
+      continue-on-error: true
+    - name: Restore environment after device-control-integration-authenticated-control
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/device-control-integration-authenticated-control"
+    - name: Prepare dsp-dsp
+      if: ${{ !cancelled() && steps.select.outputs.dsp_dsp == 'true' }}
+      shell: bash
+      env: &id015
+        CARGO_BUILD_JOBS: '2'
+        LANE_ID: dsp-dsp
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/dsp-dsp
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: dsp-dsp
+      id: dsp_dsp
+      if: ${{ !cancelled() && steps.select.outputs.dsp_dsp == 'true' }}
+      uses: ./.github/actions/linux-fixtures/dsp-dsp
+      env: *id015
+      timeout-minutes: 15
+      continue-on-error: true
+    - name: Restore environment after dsp-dsp
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/dsp-dsp"
+    - name: Prepare http-upnp-owned-loopback
+      if: ${{ !cancelled() && steps.select.outputs.http_upnp_owned_loopback == 'true' }}
+      shell: bash
+      env: &id016
         PYTHONDONTWRITEBYTECODE: '1'
         PYTHONPATH: interoperability
-    - name: native-linux-evidence
-      id: native_linux_evidence
-      if: ${{ !cancelled() && steps.select.outputs.native_linux_evidence == 'true' }}
-      uses: ./.github/actions/linux-fixtures/native-linux-evidence
+        LANE_ID: http-upnp-owned-loopback
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/http-upnp-owned-loopback
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: http-upnp-owned-loopback
+      id: http_upnp_owned_loopback
+      if: ${{ !cancelled() && steps.select.outputs.http_upnp_owned_loopback == 'true' }}
+      uses: ./.github/actions/linux-fixtures/http-upnp-owned-loopback
+      env: *id016
       timeout-minutes: 3
       continue-on-error: true
-    - name: platform-native-inventory
-      id: platform_native_inventory
-      if: ${{ !cancelled() && steps.select.outputs.platform_native_inventory == 'true' }}
-      uses: ./.github/actions/linux-fixtures/platform-native-inventory
+    - name: Restore environment after http-upnp-owned-loopback
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/http-upnp-owned-loopback"
+    - name: Prepare interoperability-loopback
+      if: ${{ !cancelled() && steps.select.outputs.interoperability_loopback == 'true' }}
+      shell: bash
+      env: &id017
+        PYTHONDONTWRITEBYTECODE: '1'
+        PYTHONPATH: interoperability
+        LANE_ID: interoperability-loopback
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/interoperability-loopback
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: interoperability-loopback
+      id: interoperability_loopback
+      if: ${{ !cancelled() && steps.select.outputs.interoperability_loopback == 'true' }}
+      uses: ./.github/actions/linux-fixtures/interoperability-loopback
+      env: *id017
       timeout-minutes: 5
       continue-on-error: true
-    - name: windows-input
-      id: windows_input
-      if: ${{ !cancelled() && steps.select.outputs.windows_input == 'true' }}
-      uses: ./.github/actions/linux-fixtures/windows-input
+    - name: Restore environment after interoperability-loopback
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/interoperability-loopback"
+    - name: Prepare macos-input-provenance
+      if: ${{ !cancelled() && steps.select.outputs.macos_input_provenance == 'true' }}
+      shell: bash
+      env: &id018
+        LANE_ID: macos-input-provenance
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/macos-input-provenance
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: macos-input-provenance
+      id: macos_input_provenance
+      if: ${{ !cancelled() && steps.select.outputs.macos_input_provenance == 'true' }}
+      uses: ./.github/actions/linux-fixtures/macos-input-provenance
+      env: *id018
       timeout-minutes: 5
       continue-on-error: true
-    - name: windows-worker
-      id: windows_worker
-      if: ${{ !cancelled() && steps.select.outputs.windows_worker == 'true' }}
-      uses: ./.github/actions/linux-fixtures/windows-worker
+    - name: Restore environment after macos-input-provenance
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/macos-input-provenance"
+    - name: Prepare macos-workers-worker
+      if: ${{ !cancelled() && steps.select.outputs.macos_workers_worker == 'true' }}
+      shell: bash
+      env: &id019
+        LANE_ID: macos-workers-worker
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/macos-workers-worker
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: macos-workers-worker
+      id: macos_workers_worker
+      if: ${{ !cancelled() && steps.select.outputs.macos_workers_worker == 'true' }}
+      uses: ./.github/actions/linux-fixtures/macos-workers-worker
+      env: *id019
       timeout-minutes: 5
       continue-on-error: true
-    - name: macos-workers
-      id: macos_workers
-      if: ${{ !cancelled() && steps.select.outputs.macos_workers == 'true' }}
-      uses: ./.github/actions/linux-fixtures/macos-workers
+    - name: Restore environment after macos-workers-worker
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/macos-workers-worker"
+    - name: Prepare mobile-core-mobile-target
+      if: ${{ !cancelled() && steps.select.outputs.mobile_core_mobile_target == 'true' }}
+      shell: bash
+      env: &id020
+        CARGO_INCREMENTAL: '0'
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: mobile-core-mobile-target
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/mobile-core-mobile-target
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: mobile-core-mobile-target
+      id: mobile_core_mobile_target
+      if: ${{ !cancelled() && steps.select.outputs.mobile_core_mobile_target == 'true' }}
+      uses: ./.github/actions/linux-fixtures/mobile-core-mobile-target
+      env: *id020
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after mobile-core-mobile-target
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/mobile-core-mobile-target"
+    - name: Prepare mobile-core-portable-behavior
+      if: ${{ !cancelled() && steps.select.outputs.mobile_core_portable_behavior == 'true' }}
+      shell: bash
+      env: &id021
+        CARGO_INCREMENTAL: '0'
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: mobile-core-portable-behavior
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/mobile-core-portable-behavior
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: mobile-core-portable-behavior
+      id: mobile_core_portable_behavior
+      if: ${{ !cancelled() && steps.select.outputs.mobile_core_portable_behavior == 'true' }}
+      uses: ./.github/actions/linux-fixtures/mobile-core-portable-behavior
+      env: *id021
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after mobile-core-portable-behavior
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/mobile-core-portable-behavior"
+    - name: Prepare native-host-engine-abi
+      if: ${{ !cancelled() && steps.select.outputs.native_host_engine_abi == 'true' }}
+      shell: bash
+      env: &id022
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: native-host-engine-abi
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/native-host-engine-abi
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: native-host-engine-abi
+      id: native_host_engine_abi
+      if: ${{ !cancelled() && steps.select.outputs.native_host_engine_abi == 'true' }}
+      uses: ./.github/actions/linux-fixtures/native-host-engine-abi
+      env: *id022
+      timeout-minutes: 15
+      continue-on-error: true
+    - name: Restore environment after native-host-engine-abi
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/native-host-engine-abi"
+    - name: Prepare native-linux-evidence-fixture-safety
+      if: ${{ !cancelled() && steps.select.outputs.native_linux_evidence_fixture_safety == 'true' }}
+      shell: bash
+      env: &id023
+        LANE_ID: native-linux-evidence-fixture-safety
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/native-linux-evidence-fixture-safety
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: native-linux-evidence-fixture-safety
+      id: native_linux_evidence_fixture_safety
+      if: ${{ !cancelled() && steps.select.outputs.native_linux_evidence_fixture_safety == 'true' }}
+      uses: ./.github/actions/linux-fixtures/native-linux-evidence-fixture-safety
+      env: *id023
+      timeout-minutes: 3
+      continue-on-error: true
+    - name: Restore environment after native-linux-evidence-fixture-safety
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/native-linux-evidence-fixture-safety"
+    - name: Prepare native-worker-handoff
+      if: ${{ !cancelled() && steps.select.outputs.native_worker_handoff == 'true' }}
+      shell: bash
+      env: &id024
+        CARGO_INCREMENTAL: '0'
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: native-worker-handoff
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/native-worker-handoff
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: native-worker-handoff
+      id: native_worker_handoff
+      if: ${{ !cancelled() && steps.select.outputs.native_worker_handoff == 'true' }}
+      uses: ./.github/actions/linux-fixtures/native-worker-handoff
+      env: *id024
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after native-worker-handoff
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/native-worker-handoff"
+    - name: Prepare network-audio-secure-loopback
+      if: ${{ !cancelled() && steps.select.outputs.network_audio_secure_loopback == 'true' }}
+      shell: bash
+      env: &id025
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: network-audio-secure-loopback
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/network-audio-secure-loopback
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: network-audio-secure-loopback
+      id: network_audio_secure_loopback
+      if: ${{ !cancelled() && steps.select.outputs.network_audio_secure_loopback == 'true' }}
+      uses: ./.github/actions/linux-fixtures/network-audio-secure-loopback
+      env: *id025
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after network-audio-secure-loopback
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/network-audio-secure-loopback"
+    - name: Prepare network-codec-transport-linux-linked-codec-session
+      if: ${{ !cancelled() && steps.select.outputs.network_codec_transport_linux_linked_codec_session == 'true'
+        }}
+      shell: bash
+      env: &id026
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: network-codec-transport-linux-linked-codec-session
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/network-codec-transport-linux-linked-codec-session
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: network-codec-transport-linux-linked-codec-session
+      id: network_codec_transport_linux_linked_codec_session
+      if: ${{ !cancelled() && steps.select.outputs.network_codec_transport_linux_linked_codec_session == 'true'
+        }}
+      uses: ./.github/actions/linux-fixtures/network-codec-transport-linux-linked-codec-session
+      env: *id026
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after network-codec-transport-linux-linked-codec-session
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/network-codec-transport-linux-linked-codec-session"
+    - name: Prepare network-codec-transport-raw-codec-session
+      if: ${{ !cancelled() && steps.select.outputs.network_codec_transport_raw_codec_session == 'true' }}
+      shell: bash
+      env: &id027
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: network-codec-transport-raw-codec-session
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/network-codec-transport-raw-codec-session
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: network-codec-transport-raw-codec-session
+      id: network_codec_transport_raw_codec_session
+      if: ${{ !cancelled() && steps.select.outputs.network_codec_transport_raw_codec_session == 'true' }}
+      uses: ./.github/actions/linux-fixtures/network-codec-transport-raw-codec-session
+      env: *id027
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after network-codec-transport-raw-codec-session
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/network-codec-transport-raw-codec-session"
+    - name: Prepare network-codecs-raw-codecs
+      if: ${{ !cancelled() && steps.select.outputs.network_codecs_raw_codecs == 'true' }}
+      shell: bash
+      env: &id028
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: network-codecs-raw-codecs
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/network-codecs-raw-codecs
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: network-codecs-raw-codecs
+      id: network_codecs_raw_codecs
+      if: ${{ !cancelled() && steps.select.outputs.network_codecs_raw_codecs == 'true' }}
+      uses: ./.github/actions/linux-fixtures/network-codecs-raw-codecs
+      env: *id028
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after network-codecs-raw-codecs
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/network-codecs-raw-codecs"
+    - name: Prepare network-codecs-system-codecs-dylib
+      if: ${{ !cancelled() && steps.select.outputs.network_codecs_system_codecs_dylib == 'true' }}
+      shell: bash
+      env: &id029
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        MIXYARD_ZSTD_LINK_KIND: dylib
+        MIXYARD_OPUS_LINK_KIND: dylib
+        CODEC_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        VCPKG_MAX_CONCURRENCY: '2'
+        VCPKG_DISABLE_METRICS: '1'
+        VCPKG_BINARY_SOURCES: clear
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        HOMEBREW_NO_ANALYTICS: '1'
+        HOMEBREW_MAKE_JOBS: '2'
+        LANE_ID: network-codecs-system-codecs-dylib
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/network-codecs-system-codecs-dylib
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: network-codecs-system-codecs-dylib
+      id: network_codecs_system_codecs_dylib
+      if: ${{ !cancelled() && steps.select.outputs.network_codecs_system_codecs_dylib == 'true' }}
+      uses: ./.github/actions/linux-fixtures/network-codecs-system-codecs-dylib
+      env: *id029
+      timeout-minutes: 25
+      continue-on-error: true
+    - name: Restore environment after network-codecs-system-codecs-dylib
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/network-codecs-system-codecs-dylib"
+    - name: Prepare network-codecs-system-codecs-static
+      if: ${{ !cancelled() && steps.select.outputs.network_codecs_system_codecs_static == 'true' }}
+      shell: bash
+      env: &id030
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        MIXYARD_ZSTD_LINK_KIND: static
+        MIXYARD_OPUS_LINK_KIND: static
+        CODEC_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        VCPKG_MAX_CONCURRENCY: '2'
+        VCPKG_DISABLE_METRICS: '1'
+        VCPKG_BINARY_SOURCES: clear
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        HOMEBREW_NO_ANALYTICS: '1'
+        HOMEBREW_MAKE_JOBS: '2'
+        LANE_ID: network-codecs-system-codecs-static
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/network-codecs-system-codecs-static
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: network-codecs-system-codecs-static
+      id: network_codecs_system_codecs_static
+      if: ${{ !cancelled() && steps.select.outputs.network_codecs_system_codecs_static == 'true' }}
+      uses: ./.github/actions/linux-fixtures/network-codecs-system-codecs-static
+      env: *id030
+      timeout-minutes: 25
+      continue-on-error: true
+    - name: Restore environment after network-codecs-system-codecs-static
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/network-codecs-system-codecs-static"
+    - name: Prepare network-control-identity-persisted-raw-mtls
+      if: ${{ !cancelled() && steps.select.outputs.network_control_identity_persisted_raw_mtls == 'true' }}
+      shell: bash
+      env: &id031
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: network-control-identity-persisted-raw-mtls
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/network-control-identity-persisted-raw-mtls
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: network-control-identity-persisted-raw-mtls
+      id: network_control_identity_persisted_raw_mtls
+      if: ${{ !cancelled() && steps.select.outputs.network_control_identity_persisted_raw_mtls == 'true' }}
+      uses: ./.github/actions/linux-fixtures/network-control-identity-persisted-raw-mtls
+      env: *id031
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after network-control-identity-persisted-raw-mtls
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/network-control-identity-persisted-raw-mtls"
+    - name: Prepare platform-native-inventory-portable
+      if: ${{ !cancelled() && steps.select.outputs.platform_native_inventory_portable == 'true' }}
+      shell: bash
+      env: &id032
+        LANE_ID: platform-native-inventory-portable
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/platform-native-inventory-portable
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: platform-native-inventory-portable
+      id: platform_native_inventory_portable
+      if: ${{ !cancelled() && steps.select.outputs.platform_native_inventory_portable == 'true' }}
+      uses: ./.github/actions/linux-fixtures/platform-native-inventory-portable
+      env: *id032
       timeout-minutes: 5
       continue-on-error: true
-    - name: Require every selected lane to pass
+    - name: Restore environment after platform-native-inventory-portable
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/platform-native-inventory-portable"
+    - name: Prepare public-sdk-sdk-contracts
+      if: ${{ !cancelled() && steps.select.outputs.public_sdk_sdk_contracts == 'true' }}
+      shell: bash
+      env: &id033
+        LANE_ID: public-sdk-sdk-contracts
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'true'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/public-sdk-sdk-contracts
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: public-sdk-sdk-contracts
+      id: public_sdk_sdk_contracts
+      if: ${{ !cancelled() && steps.select.outputs.public_sdk_sdk_contracts == 'true' }}
+      uses: ./.github/actions/linux-fixtures/public-sdk-sdk-contracts
+      env: *id033
+      timeout-minutes: 2
+      continue-on-error: true
+    - name: Restore environment after public-sdk-sdk-contracts
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/public-sdk-sdk-contracts"
+    - name: Prepare runtime-lifecycle
+      if: ${{ !cancelled() && steps.select.outputs.runtime_lifecycle == 'true' }}
+      shell: bash
+      env: &id034
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        LANE_ID: runtime-lifecycle
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/runtime-lifecycle
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: runtime-lifecycle
+      id: runtime_lifecycle
+      if: ${{ !cancelled() && steps.select.outputs.runtime_lifecycle == 'true' }}
+      uses: ./.github/actions/linux-fixtures/runtime-lifecycle
+      env: *id034
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after runtime-lifecycle
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/runtime-lifecycle"
+    - name: Prepare web-service-http
+      if: ${{ !cancelled() && steps.select.outputs.web_service_http == 'true' }}
+      shell: bash
+      env: &id035
+        CARGO_BUILD_JOBS: '2'
+        CARGO_INCREMENTAL: '0'
+        CARGO_PROFILE_DEV_DEBUG: '0'
+        LANE_ID: web-service-http
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/web-service-http
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: web-service-http
+      id: web_service_http
+      if: ${{ !cancelled() && steps.select.outputs.web_service_http == 'true' }}
+      uses: ./.github/actions/linux-fixtures/web-service-http
+      env: *id035
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after web-service-http
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/web-service-http"
+    - name: Prepare web-ui-frontend
+      if: ${{ !cancelled() && steps.select.outputs.web_ui_frontend == 'true' }}
+      shell: bash
+      env: &id036
+        LANE_ID: web-ui-frontend
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'true'
+        LANE_PNPM: 'true'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/web-ui-frontend
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: web-ui-frontend
+      id: web_ui_frontend
+      if: ${{ !cancelled() && steps.select.outputs.web_ui_frontend == 'true' }}
+      uses: ./.github/actions/linux-fixtures/web-ui-frontend
+      env: *id036
+      timeout-minutes: 10
+      continue-on-error: true
+    - name: Restore environment after web-ui-frontend
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/web-ui-frontend"
+    - name: Prepare windows-input-transport
+      if: ${{ !cancelled() && steps.select.outputs.windows_input_transport == 'true' }}
+      shell: bash
+      env: &id037
+        LANE_ID: windows-input-transport
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/windows-input-transport
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: windows-input-transport
+      id: windows_input_transport
+      if: ${{ !cancelled() && steps.select.outputs.windows_input_transport == 'true' }}
+      uses: ./.github/actions/linux-fixtures/windows-input-transport
+      env: *id037
+      timeout-minutes: 5
+      continue-on-error: true
+    - name: Restore environment after windows-input-transport
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/windows-input-transport"
+    - name: Prepare windows-native-host-linked
+      if: ${{ !cancelled() && steps.select.outputs.windows_native_host_linked == 'true' }}
+      shell: bash
+      env: &id038
+        CARGO_INCREMENTAL: '0'
+        CARGO_BUILD_JOBS: '1'
+        CARGO_PROFILE_RELEASE_DEBUG: '0'
+        CARGO_PROFILE_TEST_DEBUG: '0'
+        LANE_ID: windows-native-host-linked
+        LANE_PYTHON: 'true'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/windows-native-host-linked
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: windows-native-host-linked
+      id: windows_native_host_linked
+      if: ${{ !cancelled() && steps.select.outputs.windows_native_host_linked == 'true' }}
+      uses: ./.github/actions/linux-fixtures/windows-native-host-linked
+      env: *id038
+      timeout-minutes: 20
+      continue-on-error: true
+    - name: Restore environment after windows-native-host-linked
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/windows-native-host-linked"
+    - name: Prepare windows-worker-portable
+      if: ${{ !cancelled() && steps.select.outputs.windows_worker_portable == 'true' }}
+      shell: bash
+      env: &id039
+        LANE_ID: windows-worker-portable
+        LANE_PYTHON: 'false'
+        LANE_NODE: 'false'
+        LANE_PNPM: 'false'
+        RUSTUP_TOOLCHAIN: stable
+        RUNNER_TEMP: ${{ runner.temp }}/linux-lanes/windows-worker-portable
+      run: mkdir -p "$RUNNER_TEMP"
+    - name: windows-worker-portable
+      id: windows_worker_portable
+      if: ${{ !cancelled() && steps.select.outputs.windows_worker_portable == 'true' }}
+      uses: ./.github/actions/linux-fixtures/windows-worker-portable
+      env: *id039
+      timeout-minutes: 5
+      continue-on-error: true
+    - name: Restore environment after windows-worker-portable
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 .github/ci/lane_boundary.py restore
+        rm -rf -- "${{ runner.temp }}/linux-lanes/windows-worker-portable"
+    - name: Require every applicable selected lane
       if: ${{ !cancelled() }}
       env:
-        HTTP_UPNP: ${{ steps.http_upnp.outcome }}
-        NATIVE_LINUX_EVIDENCE: ${{ steps.native_linux_evidence.outcome }}
-        PLATFORM_NATIVE_INVENTORY: ${{ steps.platform_native_inventory.outcome }}
-        WINDOWS_INPUT: ${{ steps.windows_input.outcome }}
-        WINDOWS_WORKER: ${{ steps.windows_worker.outcome }}
-        MACOS_WORKERS: ${{ steps.macos_workers.outcome }}
         SELECTED: ${{ toJSON(steps.select.outputs) }}
+        OUTCOMES: ${{ toJSON(steps) }}
       shell: bash
       run: python3 .github/ci/require_linux_fixtures.py
+    - name: Remove ephemeral environment snapshot
+      if: ${{ always() }}
+      shell: bash
+      run: python3 .github/ci/lane_boundary.py clean
+  qualification-core:
+    name: Core policy build/tests (${{ matrix.os }}, no native audio)
+    needs: fixtures
+    if: always() && !cancelled() && github.event_name != 'workflow_dispatch' && needs.fixtures.outputs.qualification_success == 'true' && needs.fixtures.outputs.core_present
+      == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - windows-latest
+        - macos-latest
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
+    concurrency:
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-core-{2}', github.run_id,
+        github.run_attempt, strategy.job-index) }}
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+    - uses: dtolnay/rust-toolchain@stable
+      if: runner.os == 'Linux'
+      with:
+        components: rustfmt, clippy
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+    - name: Disk prerequisite (at least 10 GiB)
+      shell: python
+      run: |
+        import shutil
+        free = shutil.disk_usage('.').free
+        print(f'Available: {free / 2**30:.1f} GiB')
+        if free < 10 * 2**30:
+            raise SystemExit('BLOCKED: less than 10 GiB free before build')
+    - name: Root core package tests only
+      run: cargo test --locked --manifest-path Cargo.toml --package mixyard
+    - name: Build policy CLI for independent black-box checks
+      run: cargo build --locked --manifest-path Cargo.toml --package mixyard
+    - name: Independent policy CLI checks (simulated inventory, no native audio)
+      shell: python
+      run: |
+        import os, subprocess, sys
+        binary = 'target/debug/mixyard' + ('.exe' if os.name == 'nt' else '')
+        subprocess.run([sys.executable, '-B', 'verification/policy_check.py', binary], check=True)
+        subprocess.run([sys.executable, '-B', 'verification/policy_selfcheck.py', binary], check=True)
+  qualification-windows:
+    name: Windows native compile and buffer model (no devices)
+    needs: fixtures
+    if: always() && !cancelled() && github.event_name != 'workflow_dispatch' && needs.fixtures.outputs.qualification_success == 'true' && needs.fixtures.outputs.windows_present
+      == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v4
+    - name: Disk prerequisite (at least 10 GiB)
+      shell: python
+      run: |
+        import shutil
+        if shutil.disk_usage('.').free < 10 * 2**30:
+            raise SystemExit('BLOCKED: less than 10 GiB free before build')
+    - name: Configure native MSVC backend
+      run: cmake -S adapters/windows -B build/windows -A x64
+    - name: Compile native capture probe and model
+      run: cmake --build build/windows --config Release --target mixyard-windows-probe mixyard-windows-model-check
+    - name: Buffer/WAV model only (not WASAPI or endpoint injection)
+      run: ctest --test-dir build/windows -C Release -R '^windows-buffer-wav-model$' --output-on-failure --no-tests=error
+  qualification-macos:
+    name: macOS native compile (no permissions, capture or HAL)
+    needs: fixtures
+    if: always() && !cancelled() && github.event_name != 'workflow_dispatch' && needs.fixtures.outputs.qualification_success == 'true' && needs.fixtures.outputs.macos_present
+      == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v4
+    - name: Compile Core Audio probe with SDK/disk preflight
+      run: bash adapters/macos/build.sh

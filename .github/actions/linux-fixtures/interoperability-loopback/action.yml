@@ -1,0 +1,12 @@
+name: interoperability-loopback
+description: Explicit Linux payload from .github/workflows/interoperability.yml / loopback
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+  - uses: actions/setup-python@v5
+    with:
+      python-version: '3.12'
+  - name: Run bounded policy and protocol loopback proofs
+    run: python -m unittest discover -s interoperability/tests -v
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

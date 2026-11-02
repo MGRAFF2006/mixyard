@@ -1,5 +1,5 @@
-name: windows-worker
-description: Original Linux fixture payload; isolated checkout and lane deadline are owned by the caller.
+name: windows-worker-portable
+description: Explicit Linux payload from .github/workflows/windows-worker.yml / portable
 runs:
   using: composite
   steps:
@@ -8,4 +8,4 @@ runs:
     run: |
       g++ -std=c++17 -Wall -Wextra -Werror -pedantic -O1 -g0 -pthread -fsanitize=address,undefined adapters/windows/worker_queue.cpp adapters/windows/wasapi_worker.cpp adapters/windows/worker_check.cpp -o /tmp/mixyard-worker-check
       /tmp/mixyard-worker-check
-    shell: bash
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

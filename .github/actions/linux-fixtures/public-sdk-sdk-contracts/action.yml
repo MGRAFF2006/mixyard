@@ -1,0 +1,12 @@
+name: public-sdk-sdk-contracts
+description: Explicit Linux payload from .github/workflows/public-sdk.yml / sdk-contracts
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+  - uses: actions/setup-node@v4
+    with:
+      node-version: '24'
+  - name: Execute bounded mocked SDK contracts and owned loopback signaling
+    run: node --test --test-timeout=10000 interoperability/tests/public_sdk/*.test.mjs
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

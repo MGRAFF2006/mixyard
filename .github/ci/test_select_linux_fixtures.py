@@ -14,18 +14,19 @@ CONFIG = json.loads(selection.CONFIG.read_text())
 class Selection(unittest.TestCase):
     def test_shared_or_unknown_changes_run_every_lane(self):
         for paths in (None, [], ['Cargo.toml'], ['src/lib.rs'], ['.github/actions/foo/action.yml'],
-                      ['.github/ci/select_linux_fixtures.py'], ['new-config.toml']):
+                      ['.github/ci/select_linux_fixtures.py'], ['new-config.toml'], ['network/codecs/Cargo.toml'],
+                      ['apps/web/pnpm-lock.yaml'], ['apps/desktop/package.json']):
             with self.subTest(paths=paths):
                 self.assertEqual(selection.select(paths, CONFIG), set(CONFIG))
 
     def test_lane_paths_and_overlapping_windows_paths(self):
         self.assertEqual(selection.select(['verification/native-linux/selfcheck.py'], CONFIG),
-                         {'native-linux-evidence'})
+                         {'native-linux-evidence-fixture-safety', 'qualification-offline', 'qualification-core', 'qualification-linux'})
         self.assertEqual(selection.select(['adapters/windows/inventory/check.cpp'], CONFIG),
-                         {'platform-native-inventory', 'windows-worker'})
+                         {'platform-native-inventory-portable', 'windows-worker-portable', 'qualification-offline', 'qualification-core', 'qualification-linux', 'windows-native-host-linked', 'runtime-lifecycle'})
         self.assertEqual(selection.select(['verification/native-linux/deleted.py',
                                            'verification/windows-input/added.cpp'], CONFIG),
-                         {'native-linux-evidence', 'windows-input'})
+                         {'native-linux-evidence-fixture-safety', 'windows-input-transport', 'qualification-offline', 'qualification-core', 'qualification-linux'})
 
     def test_manual_and_invalid_history_are_fail_safe(self):
         for name, event in [('workflow_dispatch', {}), ('push', {}),
@@ -57,7 +58,7 @@ class Selection(unittest.TestCase):
             paths = selection.changed_paths(repo, 'push', {'before': base, 'after': head})
             self.assertEqual(set(paths), {'verification/native-linux/old.py',
                                           'verification/windows-input/renamed.py'})
-            self.assertEqual(selection.select(paths, CONFIG), {'native-linux-evidence', 'windows-input'})
+            self.assertEqual(selection.select(paths, CONFIG), {'native-linux-evidence-fixture-safety', 'windows-input-transport', 'qualification-offline', 'qualification-core', 'qualification-linux'})
             # Advance the base independently. Its unrelated change must not be
             # mistaken for a deletion introduced by the PR.
             git('checkout', '-q', '--detach', base)

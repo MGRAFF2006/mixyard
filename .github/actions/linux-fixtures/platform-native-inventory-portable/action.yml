@@ -1,5 +1,5 @@
-name: platform-native-inventory
-description: Original Linux fixture payload; isolated checkout and lane deadline are owned by the caller.
+name: platform-native-inventory-portable
+description: Explicit Linux payload from .github/workflows/platform-native-inventory.yml / portable
 runs:
   using: composite
   steps:
@@ -11,4 +11,4 @@ runs:
       /tmp/mixyard-inventory-check
       python3 -B adapters/windows/inventory/test_protocol.py
       python3 -B adapters/windows/inventory/test_protocol.py --fixture /tmp/mixyard-inventory-check
-    shell: bash
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

@@ -1,0 +1,25 @@
+name: dsp-dsp
+description: Explicit Linux payload from .github/workflows/dsp.yml / dsp
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/checkout@v4
+  - name: Filter, dynamics, channel selection/matrix, reset, precision and allocation oracles
+    run: cargo test --locked --test dsp_core --test dsp_allocations --test dsp_live --test latency
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Render complete slow FIR and report measured block budgets
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: cargo run --locked --release --example dsp_render -- "$RUNNER_TEMP/dsp-render"
+  - uses: actions/upload-artifact@v4
+    with:
+      name: dsp-offline-ubuntu-latest
+      path: ${{ runner.temp }}/dsp-render/
+  - name: Qualification boundary
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: echo 'Synthetic offline host throughput only. A missed block budget is reported and does not remove the
+      effect or truncate output. Native delivery, hard realtime, total route latency and physical quality remain
+      unverified.' >> "$GITHUB_STEP_SUMMARY"
