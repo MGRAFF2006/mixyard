@@ -1,0 +1,21 @@
+name: context-observers
+description: Explicit Linux payload from .github/workflows/context.yml / observers
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/checkout@v4
+  - run: cargo fmt --all -- --check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo test --locked --test context
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo test --locked --lib context::tests
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo clippy --locked --lib --bin mixyard-context --test context -- -D warnings
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - if: runner.os == 'Linux'
+    run: python3 -B -m unittest discover -s observers -p 'test_*.py'
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

@@ -1,0 +1,58 @@
+name: web-ui-frontend
+description: Explicit Linux payload from .github/workflows/web-ui.yml / frontend
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/checkout@v7
+  - uses: pnpm/action-setup@v6
+    with:
+      version: 11.10.0
+      run_install: false
+  - uses: actions/setup-node@v7
+    id: lane_node
+    with:
+      node-version: 24.13.1
+      cache: pnpm
+      cache-dependency-path: apps/web/pnpm-lock.yaml
+  - name: Record selected lane Node version
+    shell: bash
+    env:
+      SELECTED_NODE_VERSION: ${{ steps.lane_node.outputs.node-version }}
+    run: printf 'LANE_NODE_VERSION=%s\n' "$SELECTED_NODE_VERSION" >> "$GITHUB_ENV"
+  - run: pnpm install --frozen-lockfile
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/web
+  - run: pnpm check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/web
+  - run: pnpm build
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/web
+  - run: pnpm exec playwright install --with-deps chromium
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/web
+  - run: pnpm test:e2e
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/web
+  - name: Build headless service and lifecycle binaries
+    run: cargo build --locked --manifest-path ../../Cargo.toml --bins --jobs 2
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/web
+  - name: Browser workflows against the production service and real store
+    run: pnpm test:integration
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/web
+  - uses: actions/upload-artifact@v6
+    if: always()
+    with:
+      name: web-ui-browser-evidence
+      path: apps/web/test-results/
+  - name: Evidence boundary
+    run: echo 'Frontend and isolated browser checks, plus production assets with the actual Rust service/store and
+      explicitly owned lifecycle runtime. No native audio, hardware delivery or quality qualification.' >> "$GITHUB_STEP_SUMMARY"
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/web

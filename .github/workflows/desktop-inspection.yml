@@ -1,38 +1,34 @@
 name: Desktop snapshot inspection boundary (no native audio)
-
-on:
-  workflow_dispatch:
+'on':
+  workflow_dispatch: null
   push:
-    branches: [main]
+    branches:
+    - main
     paths:
-      - 'apps/desktop/src-tauri/src/inspection.rs'
-      - 'verification/desktop-inspection/**'
-      - 'src/lib.rs'
-      - 'src/diagnostics.rs'
-      - 'examples/config.json'
-      - 'examples/inventory.json'
-      - '.github/workflows/desktop-inspection.yml'
+    - apps/desktop/src-tauri/src/inspection.rs
+    - verification/desktop-inspection/**
+    - src/lib.rs
+    - src/diagnostics.rs
+    - examples/config.json
+    - examples/inventory.json
+    - .github/workflows/desktop-inspection.yml
   pull_request:
     paths:
-      - 'apps/desktop/src-tauri/src/inspection.rs'
-      - 'verification/desktop-inspection/**'
-      - 'src/lib.rs'
-      - 'src/diagnostics.rs'
-      - 'examples/config.json'
-      - 'examples/inventory.json'
-      - '.github/workflows/desktop-inspection.yml'
-
+    - apps/desktop/src-tauri/src/inspection.rs
+    - verification/desktop-inspection/**
+    - src/lib.rs
+    - src/diagnostics.rs
+    - examples/config.json
+    - examples/inventory.json
+    - .github/workflows/desktop-inspection.yml
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   boundary:
     runs-on: boat
-    # Keep queued checks while sharing one repository-wide Boat slot.
     concurrency:
       group: boat-ci
       cancel-in-progress: false
@@ -41,18 +37,19 @@ jobs:
     env:
       CARGO_BUILD_JOBS: '2'
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: '1.99.0'
-          components: rustfmt
-      - name: Focused content boundary tests without Tauri or host SDKs
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 verification/desktop-native/evidence.py --guard
-          cargo fmt --check --manifest-path verification/desktop-inspection/Cargo.toml
-          cargo test --locked --jobs 2 --manifest-path verification/desktop-inspection/Cargo.toml
-          python3 -m py_compile verification/desktop-inspection/webview.py
-          bash -n verification/desktop-inspection/run-linux.sh
-          python3 verification/desktop-native/evidence.py --guard
+    - uses: actions/checkout@v7
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.99.0
+        components: rustfmt
+    - name: Focused content boundary tests without Tauri or host SDKs
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 verification/desktop-native/evidence.py --guard
+        cargo fmt --check --manifest-path verification/desktop-inspection/Cargo.toml
+        cargo test --locked --jobs 2 --manifest-path verification/desktop-inspection/Cargo.toml
+        python3 -m py_compile verification/desktop-inspection/webview.py
+        bash -n verification/desktop-inspection/run-linux.sh
+        python3 verification/desktop-native/evidence.py --guard
+    if: github.event_name == 'workflow_dispatch'

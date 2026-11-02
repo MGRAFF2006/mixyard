@@ -1,0 +1,36 @@
+name: runtime-lifecycle
+description: Explicit Linux payload from .github/workflows/runtime.yml / lifecycle
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/setup-python@v5
+    if: runner.os == 'Linux'
+    with:
+      python-version: '3.13'
+  - uses: actions/checkout@v4
+  - name: Require 10 GiB free
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
+    run: |
+      import shutil
+      free = shutil.disk_usage('.').free
+      print(f'Available: {free / 2**30:.1f} GiB')
+      if free < 10 * 2**30:
+          raise SystemExit('Less than 10 GiB free')
+  - name: Build foreground runtime and CLI
+    run: cargo build --locked --bins
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Existing core and actual Windows kernel DACL checks
+    run: cargo test --locked --lib --bins
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Real headless subprocess lifecycle and endpoint security
+    run: cargo test --locked --test runtime_lifecycle --test runtime_readonly --test runtime_inventory --test runtime_native_inventory
+      --test recording --test runtime_helper_publication
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Record qualification boundary
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: |
+      echo 'Real local IPC lifecycle, simulated failure/cancellation fixtures and installed Windows/CoreAudio read-only helper invocation. Hosted SDK/OS proof only: physical audio quality and native audio apply remain unverified.' >> "$GITHUB_STEP_SUMMARY"

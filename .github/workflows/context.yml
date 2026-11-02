@@ -1,28 +1,51 @@
 name: Passive situation observers
-on:
-  workflow_dispatch:
+'on':
+  workflow_dispatch: null
   push:
-    branches: [main]
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/context.rs', 'src/bin/mixyard-context.rs', 'src/automation/**', 'observers/**', 'tests/context.rs', 'adapters/linux/mixyard_linux.py', 'docs/context.md', '.github/workflows/context.yml']
+    branches:
+    - main
+    paths:
+    - Cargo.toml
+    - Cargo.lock
+    - src/lib.rs
+    - src/context.rs
+    - src/bin/mixyard-context.rs
+    - src/automation/**
+    - observers/**
+    - tests/context.rs
+    - adapters/linux/mixyard_linux.py
+    - docs/context.md
+    - .github/workflows/context.yml
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'src/lib.rs', 'src/context.rs', 'src/bin/mixyard-context.rs', 'src/automation/**', 'observers/**', 'tests/context.rs', 'adapters/linux/mixyard_linux.py', 'docs/context.md', '.github/workflows/context.yml']
+    paths:
+    - Cargo.toml
+    - Cargo.lock
+    - src/lib.rs
+    - src/context.rs
+    - src/bin/mixyard-context.rs
+    - src/automation/**
+    - observers/**
+    - tests/context.rs
+    - adapters/linux/mixyard_linux.py
+    - docs/context.md
+    - .github/workflows/context.yml
 permissions:
   contents: read
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   observers:
     name: Collector contract (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest","macos-latest","windows-latest"]')
+          || fromJSON('["macos-latest","windows-latest"]') }}
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
-    # Only Boat rows share a slot; native rows get unique groups.
     concurrency:
-      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-observers-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-observers-{2}',
+        github.run_id, github.run_attempt, strategy.job-index) }}
       cancel-in-progress: false
       queue: max
     timeout-minutes: 10
@@ -32,14 +55,14 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_INCREMENTAL: 0
     steps:
-      - uses: dtolnay/rust-toolchain@stable
-        if: runner.os == 'Linux'
-        with:
-          components: rustfmt, clippy
-      - uses: actions/checkout@v4
-      - run: cargo fmt --all -- --check
-      - run: cargo test --locked --test context
-      - run: cargo test --locked --lib context::tests
-      - run: cargo clippy --locked --lib --bin mixyard-context --test context -- -D warnings
-      - if: runner.os == 'Linux'
-        run: python3 -B -m unittest discover -s observers -p 'test_*.py'
+    - uses: dtolnay/rust-toolchain@stable
+      if: runner.os == 'Linux'
+      with:
+        components: rustfmt, clippy
+    - uses: actions/checkout@v4
+    - run: cargo fmt --all -- --check
+    - run: cargo test --locked --test context
+    - run: cargo test --locked --lib context::tests
+    - run: cargo clippy --locked --lib --bin mixyard-context --test context -- -D warnings
+    - if: runner.os == 'Linux'
+      run: python3 -B -m unittest discover -s observers -p 'test_*.py'

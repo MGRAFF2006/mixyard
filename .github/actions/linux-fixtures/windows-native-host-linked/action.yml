@@ -1,0 +1,51 @@
+name: windows-native-host-linked
+description: Explicit Linux payload from .github/workflows/windows-native-host.yml / linked
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/setup-python@v5
+    if: runner.os == 'Linux'
+    with:
+      python-version: '3.13'
+  - uses: actions/checkout@v4
+  - name: Select private disposable Rust target
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
+    run: |
+      import os
+      from pathlib import Path
+      target = Path(os.environ['RUNNER_TEMP']) / 'mixyard-windows-linked-host-rust'
+      with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as environment:
+          environment.write(f'CARGO_TARGET_DIR={target}\n')
+  - name: Require disposable runner reserve before building
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
+    run: |
+      import shutil
+      if shutil.disk_usage('.').free < 10 * 2**30:
+          raise SystemExit('BLOCKED: less than 10 GiB free on disposable runner')
+  - name: Build actual shared canonical Rust host
+    if: runner.os == 'Linux'
+    run: cargo build --manifest-path adapters/engine/Cargo.toml --locked --release --jobs 1
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Configure portable linked production boundary
+    if: runner.os == 'Linux'
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: |
+      set -euo pipefail
+      cmake -S adapters/windows/native-host -B "$RUNNER_TEMP/mixyard-windows-host-cpp" -DCMAKE_BUILD_TYPE=Release -DMIXYARD_HOST_LIBRARY="$CARGO_TARGET_DIR/release/libmixyard_host.a"
+  - name: Build portable production bridge and consumer oracle
+    if: runner.os == 'Linux'
+    run: cmake --build "$RUNNER_TEMP/mixyard-windows-host-cpp" --config Release --parallel 1
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Exercise portable linked queues and injected endpoints only
+    if: runner.os == 'Linux'
+    run: ctest --test-dir "$RUNNER_TEMP/mixyard-windows-host-cpp" -C Release --output-on-failure --no-tests=error
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: State exact portable qualification boundary
+    if: runner.os == 'Linux'
+    run: |
+      printf '%s\n' 'Actual Rust planner/Processor64 plus production C++ SPSC/consumer byte oracle. Windows SDK endpoints and driver operations are injected; no physical audio/driver/default/service APIs execute. Physical clocks, native app identities, selectable microphones and backend availability remain unqualified/false.' >> "$GITHUB_STEP_SUMMARY"
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

@@ -1,11 +1,22 @@
 name: Canonical native host ABI
-on:
-  workflow_dispatch:
+'on':
+  workflow_dispatch: null
   push:
-    branches: [main]
-    paths: ['adapters/engine/**', 'src/audio.rs', 'src/dsp/live.rs', 'tests/audio_host.rs', '.github/workflows/native-host-engine.yml']
+    branches:
+    - main
+    paths:
+    - adapters/engine/**
+    - src/audio.rs
+    - src/dsp/live.rs
+    - tests/audio_host.rs
+    - .github/workflows/native-host-engine.yml
   pull_request:
-    paths: ['adapters/engine/**', 'src/audio.rs', 'src/dsp/live.rs', 'tests/audio_host.rs', '.github/workflows/native-host-engine.yml']
+    paths:
+    - adapters/engine/**
+    - src/audio.rs
+    - src/dsp/live.rs
+    - tests/audio_host.rs
+    - .github/workflows/native-host-engine.yml
 permissions:
   contents: read
 env:
@@ -16,33 +27,34 @@ env:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   abi:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest","windows-latest","macos-latest"]')
+          || fromJSON('["windows-latest","macos-latest"]') }}
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
-    # Only Boat rows share a slot; native rows get unique groups.
     concurrency:
-      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-abi-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-abi-{2}', github.run_id,
+        github.run_attempt, strategy.job-index) }}
       cancel-in-progress: false
       queue: max
     timeout-minutes: 15
     steps:
-      - uses: dtolnay/rust-toolchain@stable
-        if: runner.os == 'Linux'
-        with:
-          components: rustfmt, clippy
-      - uses: actions/checkout@v4
-      - run: cargo test --locked --manifest-path adapters/engine/Cargo.toml
-      - run: cargo clippy --locked --manifest-path adapters/engine/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --locked --test audio_host --test audio_core --test audio_precision --test audio_allocations --test dsp_live
-      - run: cargo build --locked --manifest-path adapters/engine/Cargo.toml --release
-      - name: Actual static C ABI sample and callback heap oracle
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          g++ -std=c++17 -O1 -g0 -Wall -Wextra -Werror -I adapters/engine/include adapters/engine/tests/abi_oracle.cpp adapters/engine/target/release/libmixyard_host.a -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free -ldl -lpthread -lm -o "$RUNNER_TEMP/abi-oracle"
-          "$RUNNER_TEMP/abi-oracle" adapters/engine/fixtures/owned-common-clock.json
+    - uses: dtolnay/rust-toolchain@stable
+      if: runner.os == 'Linux'
+      with:
+        components: rustfmt, clippy
+    - uses: actions/checkout@v4
+    - run: cargo test --locked --manifest-path adapters/engine/Cargo.toml
+    - run: cargo clippy --locked --manifest-path adapters/engine/Cargo.toml --all-targets -- -D warnings
+    - run: cargo test --locked --test audio_host --test audio_core --test audio_precision --test audio_allocations
+        --test dsp_live
+    - run: cargo build --locked --manifest-path adapters/engine/Cargo.toml --release
+    - name: Actual static C ABI sample and callback heap oracle
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        g++ -std=c++17 -O1 -g0 -Wall -Wextra -Werror -I adapters/engine/include adapters/engine/tests/abi_oracle.cpp adapters/engine/target/release/libmixyard_host.a -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free -ldl -lpthread -lm -o "$RUNNER_TEMP/abi-oracle"
+        "$RUNNER_TEMP/abi-oracle" adapters/engine/fixtures/owned-common-clock.json

@@ -1,40 +1,37 @@
 name: Public browser SDK contracts
-
-on:
+'on':
   pull_request:
     paths:
-      - 'interoperability/mixyard_interop/public_sdk/**'
-      - 'interoperability/tests/public_sdk/**'
-      - 'docs/protocol-public-sdk.md'
-      - '.github/workflows/public-sdk.yml'
+    - interoperability/mixyard_interop/public_sdk/**
+    - interoperability/tests/public_sdk/**
+    - docs/protocol-public-sdk.md
+    - .github/workflows/public-sdk.yml
   push:
-    branches: [main]
+    branches:
+    - main
     paths:
-      - 'interoperability/mixyard_interop/public_sdk/**'
-      - 'interoperability/tests/public_sdk/**'
-      - '.github/workflows/public-sdk.yml'
-  workflow_dispatch:
-
+    - interoperability/mixyard_interop/public_sdk/**
+    - interoperability/tests/public_sdk/**
+    - .github/workflows/public-sdk.yml
+  workflow_dispatch: null
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   sdk-contracts:
     runs-on: boat
-    # Keep queued checks while sharing one repository-wide Boat slot.
     concurrency:
       group: boat-ci
       cancel-in-progress: false
       queue: max
     timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Execute bounded mocked SDK contracts and owned loopback signaling
-        run: node --test --test-timeout=10000 interoperability/tests/public_sdk/*.test.mjs
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: Execute bounded mocked SDK contracts and owned loopback signaling
+      run: node --test --test-timeout=10000 interoperability/tests/public_sdk/*.test.mjs
+    if: github.event_name == 'workflow_dispatch'

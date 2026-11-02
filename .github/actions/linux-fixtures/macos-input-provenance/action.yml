@@ -1,0 +1,9 @@
+name: macos-input-provenance
+description: Explicit Linux payload from .github/workflows/macos-input.yml / provenance
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+  - name: Check approved-base ancestry and exact source/artifact binding
+    run: python3 -B verification/macos-input/test_evidence.py -v
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

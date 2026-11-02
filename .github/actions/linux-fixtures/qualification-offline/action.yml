@@ -1,0 +1,77 @@
+name: qualification-offline
+description: Explicit Linux payload from .github/workflows/qualification.yml / offline
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+  - uses: actions/setup-python@v5
+    with:
+      python-version: '3.13'
+  - name: Check qualification scenarios and native evidence placeholders
+    run: |
+      python3 -B - <<'PY'
+      import json
+      from pathlib import Path
+      for path in Path('verification').glob('*.json'):
+          data = json.loads(path.read_text())
+          assert data['schema_version'] == 1
+      native = json.loads(Path('verification/native-evidence.template.json').read_text())
+      assert native['status'] == 'blocked'
+      assert all(case['status'] == 'blocked' for case in native['scenarios'])
+      quality = json.loads(Path('verification/quality-release-matrix.json').read_text())
+      assert quality['status'] == 'blocked'
+      assert all(gate['status'] == 'blocked' for gate in quality['gates'])
+      interface = json.loads(Path('verification/interface-scenarios.json').read_text())
+      assert interface['status'] == 'blocked'
+      assert all(case['status'] == 'blocked' for case in interface['cases'])
+      PY
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Synthetic analyzer self-check (no routing or policy implementation exercised)
+    run: python3 -B verification/selfcheck.py
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Build availability and evidence boundary
+    id: inventory
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: |
+      set -euo pipefail
+      if test -f Cargo.toml; then
+        echo 'core_present=true' >> "$GITHUB_OUTPUT"
+      else
+        echo 'core_present=false' >> "$GITHUB_OUTPUT"
+        echo '::warning::BLOCKED: core Cargo.toml absent; hosted core build jobs skipped.'
+      fi
+      for platform in linux windows macos; do
+        case "$platform" in
+          linux) files='adapters/linux/mixyard_linux.py adapters/linux/test_linux.py' ;;
+          windows) files='adapters/windows/CMakeLists.txt adapters/windows/probe.cpp adapters/windows/model_check.cpp' ;;
+          macos) files='adapters/macos/build.sh adapters/macos/probe.mm' ;;
+        esac
+        present=true
+        for file in $files; do
+          if ! test -f "$file"; then present=false; fi
+        done
+        echo "${platform}_present=$present" >> "$GITHUB_OUTPUT"
+        if test "$present" = false; then
+          echo "::warning::BLOCKED: $platform build inputs absent; corresponding job skipped."
+        fi
+      done
+      {
+        echo 'Synthetic analyzer checks only. Native audio gates remain BLOCKED.'
+        echo 'Core jobs are build/policy-test evidence only, and skip if Cargo.toml is absent.'
+        echo 'Native jobs use adapter-owned build commands; missing inputs explicitly skip the corresponding build.'
+        echo 'A compiler/SDK/dependency failure fails the build; it never counts as native audio evidence.'
+        echo 'No device, permission, virtual transport, signing, recovery, or latency certification.'
+      } >> "$GITHUB_STEP_SUMMARY"
+outputs:
+  core_present:
+    description: core_present
+    value: ${{ steps.inventory.outputs.core_present }}
+  linux_present:
+    description: linux_present
+    value: ${{ steps.inventory.outputs.linux_present }}
+  windows_present:
+    description: windows_present
+    value: ${{ steps.inventory.outputs.windows_present }}
+  macos_present:
+    description: macos_present
+    value: ${{ steps.inventory.outputs.macos_present }}

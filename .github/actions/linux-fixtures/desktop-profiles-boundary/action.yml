@@ -1,0 +1,22 @@
+name: desktop-profiles-boundary
+description: Explicit Linux payload from .github/workflows/desktop-profiles.yml / boundary
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v7
+  - uses: dtolnay/rust-toolchain@stable
+    with:
+      toolchain: 1.99.0
+      components: rustfmt
+  - name: Focused boundary and authoritative storage regressions
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: |
+      set -euo pipefail
+      python3 verification/desktop-native/evidence.py --guard
+      cargo fmt --check --manifest-path verification/desktop-profiles/Cargo.toml
+      cargo test --locked --jobs 2 --manifest-path verification/desktop-profiles/Cargo.toml
+      cargo test --locked --jobs 2 --lib profiles::tests
+      cargo test --locked --jobs 2 --test profiles_cli
+      python3 -m py_compile verification/desktop-profiles/webview.py
+      bash -n verification/desktop-profiles/run-linux.sh
+      python3 verification/desktop-native/evidence.py --guard

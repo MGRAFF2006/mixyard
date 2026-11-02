@@ -1,0 +1,31 @@
+name: automation-settings-settings
+description: Explicit Linux payload from .github/workflows/automation-settings.yml / settings
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/setup-python@v5
+    if: runner.os == 'Linux'
+    with:
+      python-version: '3.13'
+  - uses: actions/checkout@v4
+  - name: Require 10 GiB free
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
+    run: |
+      import os, shutil
+      if shutil.disk_usage(os.environ['RUNNER_TEMP']).free < 10 * 2**30:
+          raise SystemExit('Less than 10 GiB free before settings build')
+  - name: Use isolated temporary build directory
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/mixyard-settings-target" >> "$GITHUB_ENV"
+  - run: cargo fmt --all -- --check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo test --locked --lib --test automation_settings --test automation_core --test automation_cli --test
+      profiles_cli --test context
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo clippy --locked --lib --test automation_settings --test automation_core --test automation_cli --test
+      profiles_cli --test context -- -D warnings
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

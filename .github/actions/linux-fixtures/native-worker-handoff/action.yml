@@ -1,0 +1,15 @@
+name: native-worker-handoff
+description: Explicit Linux payload from .github/workflows/native-worker.yml / handoff
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/checkout@v4
+  - run: cargo test --locked --test runtime_worker --test native_pipeline
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - if: runner.os == 'Linux'
+    run: cargo test --locked --test native_linux_pcm
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

@@ -1,0 +1,19 @@
+name: automation-automation
+description: Explicit Linux payload from .github/workflows/automation.yml / automation
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/checkout@v4
+  - run: cargo fmt --all -- --check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo test --locked --test automation_core --test automation_cli --test automation_controller --test automation_observers
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo clippy --locked --lib --bin mixyard-automation --test automation_core --test automation_cli --test
+      automation_controller --test automation_observers -- -D warnings
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo run --locked --bin mixyard-automation -- evaluate examples/automation/interface-monitor.json
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

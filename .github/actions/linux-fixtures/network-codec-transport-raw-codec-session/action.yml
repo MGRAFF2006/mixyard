@@ -1,0 +1,28 @@
+name: network-codec-transport-raw-codec-session
+description: Explicit Linux payload from .github/workflows/network-codec-transport.yml / raw-codec-session
+runs:
+  using: composite
+  steps:
+  - uses: actions/setup-python@v5
+    if: runner.os == 'Linux'
+    with:
+      python-version: '3.13'
+  - uses: actions/checkout@v4
+  - uses: dtolnay/rust-toolchain@stable
+    with:
+      components: rustfmt, clippy
+  - name: Private target and space guard
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
+    run: |
+      import os, shutil
+      assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 10 * 2**30
+      with open(os.environ['GITHUB_ENV'], 'a') as env:
+          env.write('CARGO_TARGET_DIR=' + os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-codec-transport') + '\n')
+  - run: cargo fmt --manifest-path network/Cargo.toml -- --check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo clippy --locked --manifest-path network/Cargo.toml --features codecs --all-targets -- -D warnings
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo test --locked --manifest-path network/Cargo.toml --features codecs
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo test --locked --manifest-path network/Cargo.toml --no-default-features
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

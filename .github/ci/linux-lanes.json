@@ -1,0 +1,324 @@
+[
+  {
+    "lane": "qualification-offline",
+    "workflow": ".github/workflows/qualification.yml",
+    "job": "offline",
+    "matrix": {},
+    "timeout": 5
+  },
+  {
+    "lane": "qualification-core",
+    "workflow": ".github/workflows/qualification.yml",
+    "job": "core",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "qualification-linux",
+    "workflow": ".github/workflows/qualification.yml",
+    "job": "linux",
+    "matrix": {},
+    "timeout": 5
+  },
+  {
+    "lane": "audio-core-pcm",
+    "workflow": ".github/workflows/audio-core.yml",
+    "job": "pcm",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "automation-automation",
+    "workflow": ".github/workflows/automation.yml",
+    "job": "automation",
+    "matrix": {},
+    "timeout": 10
+  },
+  {
+    "lane": "automation-settings-settings",
+    "workflow": ".github/workflows/automation-settings.yml",
+    "job": "settings",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "context-observers",
+    "workflow": ".github/workflows/context.yml",
+    "job": "observers",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "control-security-real-tls-security",
+    "workflow": ".github/workflows/control-security.yml",
+    "job": "real-tls-security",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "desktop-frontend",
+    "workflow": ".github/workflows/desktop.yml",
+    "job": "frontend",
+    "matrix": {},
+    "timeout": 10
+  },
+  {
+    "lane": "desktop-inspection-boundary",
+    "workflow": ".github/workflows/desktop-inspection.yml",
+    "job": "boundary",
+    "matrix": {},
+    "timeout": 10
+  },
+  {
+    "lane": "desktop-native-shell",
+    "workflow": ".github/workflows/desktop-native.yml",
+    "job": "shell",
+    "matrix": {
+      "os": "ubuntu-24.04",
+      "binary": "mixyard-desktop",
+      "bundles": "deb,appimage",
+      "test_suffix": ""
+    },
+    "timeout": 45
+  },
+  {
+    "lane": "desktop-paired-native-control",
+    "workflow": ".github/workflows/desktop-paired.yml",
+    "job": "native-control",
+    "matrix": {
+      "os": "ubuntu-24.04",
+      "suffix": ""
+    },
+    "timeout": 30
+  },
+  {
+    "lane": "desktop-profiles-boundary",
+    "workflow": ".github/workflows/desktop-profiles.yml",
+    "job": "boundary",
+    "matrix": {},
+    "timeout": 10
+  },
+  {
+    "lane": "device-control-integration-authenticated-control",
+    "workflow": ".github/workflows/device-control-integration.yml",
+    "job": "authenticated-control",
+    "matrix": {},
+    "timeout": 15
+  },
+  {
+    "lane": "dsp-dsp",
+    "workflow": ".github/workflows/dsp.yml",
+    "job": "dsp",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 15
+  },
+  {
+    "lane": "http-upnp-owned-loopback",
+    "workflow": ".github/workflows/http-upnp.yml",
+    "job": "owned-loopback",
+    "matrix": {},
+    "timeout": 3
+  },
+  {
+    "lane": "interoperability-loopback",
+    "workflow": ".github/workflows/interoperability.yml",
+    "job": "loopback",
+    "matrix": {},
+    "timeout": 5
+  },
+  {
+    "lane": "macos-input-provenance",
+    "workflow": ".github/workflows/macos-input.yml",
+    "job": "provenance",
+    "matrix": {},
+    "timeout": 5
+  },
+  {
+    "lane": "macos-workers-worker",
+    "workflow": ".github/workflows/macos-workers.yml",
+    "job": "worker",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 5
+  },
+  {
+    "lane": "mobile-core-mobile-target",
+    "workflow": ".github/workflows/mobile-core.yml",
+    "job": "mobile-target",
+    "matrix": {
+      "os": "ubuntu-latest",
+      "target": "aarch64-linux-android"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "mobile-core-portable-behavior",
+    "workflow": ".github/workflows/mobile-core.yml",
+    "job": "portable-behavior",
+    "matrix": {},
+    "timeout": 10
+  },
+  {
+    "lane": "native-host-engine-abi",
+    "workflow": ".github/workflows/native-host-engine.yml",
+    "job": "abi",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 15
+  },
+  {
+    "lane": "native-linux-evidence-fixture-safety",
+    "workflow": ".github/workflows/native-linux-evidence.yml",
+    "job": "fixture-safety",
+    "matrix": {},
+    "timeout": 3
+  },
+  {
+    "lane": "native-worker-handoff",
+    "workflow": ".github/workflows/native-worker.yml",
+    "job": "handoff",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "network-audio-secure-loopback",
+    "workflow": ".github/workflows/network-audio.yml",
+    "job": "secure-loopback",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "network-codec-transport-linux-linked-codec-session",
+    "workflow": ".github/workflows/network-codec-transport.yml",
+    "job": "linux-linked-codec-session",
+    "matrix": {},
+    "timeout": 10
+  },
+  {
+    "lane": "network-codec-transport-raw-codec-session",
+    "workflow": ".github/workflows/network-codec-transport.yml",
+    "job": "raw-codec-session",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "network-codecs-raw-codecs",
+    "workflow": ".github/workflows/network-codecs.yml",
+    "job": "raw-codecs",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "network-codecs-system-codecs-dylib",
+    "workflow": ".github/workflows/network-codecs.yml",
+    "job": "system-codecs",
+    "matrix": {
+      "os": "ubuntu-latest",
+      "link": "dylib"
+    },
+    "timeout": 25
+  },
+  {
+    "lane": "network-codecs-system-codecs-static",
+    "workflow": ".github/workflows/network-codecs.yml",
+    "job": "system-codecs",
+    "matrix": {
+      "os": "ubuntu-latest",
+      "link": "static"
+    },
+    "timeout": 25
+  },
+  {
+    "lane": "network-control-identity-persisted-raw-mtls",
+    "workflow": ".github/workflows/network-control-identity.yml",
+    "job": "persisted-raw-mtls",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "platform-native-inventory-portable",
+    "workflow": ".github/workflows/platform-native-inventory.yml",
+    "job": "portable",
+    "matrix": {},
+    "timeout": 5
+  },
+  {
+    "lane": "public-sdk-sdk-contracts",
+    "workflow": ".github/workflows/public-sdk.yml",
+    "job": "sdk-contracts",
+    "matrix": {},
+    "timeout": 2
+  },
+  {
+    "lane": "runtime-lifecycle",
+    "workflow": ".github/workflows/runtime.yml",
+    "job": "lifecycle",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "web-service-http",
+    "workflow": ".github/workflows/web-service.yml",
+    "job": "http",
+    "matrix": {
+      "os": "ubuntu-latest"
+    },
+    "timeout": 10
+  },
+  {
+    "lane": "web-ui-frontend",
+    "workflow": ".github/workflows/web-ui.yml",
+    "job": "frontend",
+    "matrix": {},
+    "timeout": 10
+  },
+  {
+    "lane": "windows-input-transport",
+    "workflow": ".github/workflows/windows-input.yml",
+    "job": "transport",
+    "matrix": {},
+    "timeout": 5
+  },
+  {
+    "lane": "windows-native-host-linked",
+    "workflow": ".github/workflows/windows-native-host.yml",
+    "job": "linked",
+    "matrix": {
+      "os": "ubuntu-24.04"
+    },
+    "timeout": 20
+  },
+  {
+    "lane": "windows-worker-portable",
+    "workflow": ".github/workflows/windows-worker.yml",
+    "job": "portable",
+    "matrix": {},
+    "timeout": 5
+  }
+]

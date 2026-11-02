@@ -1,0 +1,42 @@
+name: network-audio-secure-loopback
+description: Explicit Linux payload from .github/workflows/network-audio.yml / secure-loopback
+runs:
+  using: composite
+  steps:
+  - uses: actions/setup-python@v5
+    if: runner.os == 'Linux'
+    with:
+      python-version: '3.13'
+  - uses: actions/checkout@v4
+  - name: Set isolated Cargo target directory
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
+    run: |
+      import os
+      target = os.path.join(os.environ['RUNNER_TEMP'], 'mixyard-network-target')
+      with open(os.environ['GITHUB_ENV'], 'a') as env:
+          env.write(f'CARGO_TARGET_DIR={target}\n')
+  - name: Require 10 GiB free
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
+    run: |
+      import os, shutil
+      free = shutil.disk_usage(os.environ['RUNNER_TEMP']).free
+      print(f'Available: {free / 2**30:.1f} GiB')
+      if free < 10 * 2**30:
+          raise SystemExit('Less than 10 GiB free before network build')
+  - uses: dtolnay/rust-toolchain@stable
+    with:
+      components: rustfmt, clippy
+  - run: cargo fmt --manifest-path network/Cargo.toml -- --check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo clippy --locked --manifest-path network/Cargo.toml --all-targets -- -D warnings
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo test --locked --manifest-path network/Cargo.toml
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo run --locked --manifest-path network/Cargo.toml --example loopback
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Measured application RTT and sample-domain queues (loopback only)
+    run: cargo run --locked --manifest-path network/Cargo.toml --example telemetry
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Encrypted network to sample-aligned blocks (local schedule fixture)
+    run: cargo run --locked --manifest-path network/Cargo.toml --example playout
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

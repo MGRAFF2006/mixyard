@@ -1,0 +1,14 @@
+name: platform-native-inventory-portable
+description: Explicit Linux payload from .github/workflows/platform-native-inventory.yml / portable
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+  - run: |
+      g++ -std=c++17 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -g adapters/windows/inventory/check.cpp -o /tmp/mixyard-inventory-check
+      /tmp/mixyard-inventory-check
+      python3 -B adapters/windows/inventory/test_protocol.py
+      python3 -B adapters/windows/inventory/test_protocol.py --fixture /tmp/mixyard-inventory-check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

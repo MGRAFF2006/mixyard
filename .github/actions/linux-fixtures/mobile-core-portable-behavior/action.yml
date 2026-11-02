@@ -1,0 +1,15 @@
+name: mobile-core-portable-behavior
+description: Explicit Linux payload from .github/workflows/mobile-core.yml / portable-behavior
+runs:
+  using: composite
+  steps:
+  - uses: dtolnay/rust-toolchain@stable
+    if: runner.os == 'Linux'
+    with:
+      components: rustfmt, clippy
+  - uses: actions/checkout@v4
+  - run: cargo test --locked --no-default-features --lib --test audio_core --test audio_precision --test audio_allocations
+      --test dsp_core --test dsp_allocations --test latency --test runtime_worker --test native_pipeline
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - run: cargo tree --locked --no-default-features -e normal
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

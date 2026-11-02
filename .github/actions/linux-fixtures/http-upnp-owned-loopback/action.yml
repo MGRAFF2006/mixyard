@@ -1,0 +1,8 @@
+name: http-upnp-owned-loopback
+description: Explicit Linux payload from .github/workflows/http-upnp.yml / owned-loopback
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+  - run: python3 -m unittest discover -s interoperability/tests/http_upnp -v
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

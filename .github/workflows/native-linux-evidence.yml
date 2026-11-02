@@ -1,29 +1,34 @@
 name: Silent Linux evidence harness (fixtures only)
-on:
-  workflow_dispatch:
+'on':
+  workflow_dispatch: null
   push:
-    branches: [main]
-    paths: ['verification/native-linux/**', '.github/workflows/native-linux-evidence.yml']
+    branches:
+    - main
+    paths:
+    - verification/native-linux/**
+    - .github/workflows/native-linux-evidence.yml
   pull_request:
-    paths: ['verification/native-linux/**', '.github/workflows/native-linux-evidence.yml']
+    paths:
+    - verification/native-linux/**
+    - .github/workflows/native-linux-evidence.yml
 permissions:
   contents: read
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   fixture-safety:
     runs-on: boat
-    # Keep queued checks while sharing one repository-wide Boat slot.
     concurrency:
       group: boat-ci
       cancel-in-progress: false
       queue: max
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
-      - name: Evidence paths, strict metadata and owned process cleanup
-        run: python3 -B verification/native-linux/selfcheck.py
-      - name: Record evidence boundary
-        run: echo 'Fixture/process checks only. No PipeWire, native audio, capture, playback or laptop qualification.' >> "$GITHUB_STEP_SUMMARY"
+    - uses: actions/checkout@v4
+    - name: Evidence paths, strict metadata and owned process cleanup
+      run: python3 -B verification/native-linux/selfcheck.py
+    - name: Record evidence boundary
+      run: echo 'Fixture/process checks only. No PipeWire, native audio, capture, playback or laptop qualification.'
+        >> "$GITHUB_STEP_SUMMARY"
+    if: github.event_name == 'workflow_dispatch'

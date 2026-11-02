@@ -1,0 +1,64 @@
+name: network-codecs-system-codecs-static
+description: Explicit Linux payload from .github/workflows/network-codecs.yml / system-codecs
+runs:
+  using: composite
+  steps:
+  - uses: actions/setup-python@v5
+    if: runner.os == 'Linux'
+    with:
+      python-version: '3.13'
+  - uses: actions/checkout@v4
+  - name: Allocate private hosted build and dependency paths before acquisition
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
+    run: |
+      import os, pathlib, shutil
+      root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'mixyard-codec-qualification'
+      root.mkdir(mode=0o700, exist_ok=True)
+      if shutil.disk_usage(root).free < 10 * 2**30:
+          raise SystemExit('Less than 10 GiB free before codec acquisition')
+      target = root / 'target'
+      (target / 'evidence').mkdir(parents=True, exist_ok=True)
+      with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+          for key, value in {
+              'CODEC_BUILD_ROOT': root,
+              'CARGO_TARGET_DIR': target,
+              'VCPKG_DOWNLOADS': root / 'downloads',
+              'HOMEBREW_CACHE': root / 'brew-cache',
+          }.items():
+              pathlib.Path(value).mkdir(parents=True, exist_ok=True)
+              env.write(f'{key}={value}\n')
+  - name: Linux public development libraries and package notices
+    if: runner.os == 'Linux'
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: |
+      set -euo pipefail
+      sudo apt-get update
+      sudo apt-get install --yes --no-install-recommends libzstd-dev libopus-dev pkg-config
+      pkg-config --atleast-version=1.4.0 libzstd
+      pkg-config --atleast-version=1.3.0 opus
+      pkg-config --modversion libzstd opus | tee "$CARGO_TARGET_DIR/evidence/packages.txt"
+      python3 -B -m unittest discover -s network/codecs/ci -p 'test_*.py'
+      zstd_dir=$(python3 -B network/codecs/ci/linux_library.py libzstd-dev zstd "$MIXYARD_ZSTD_LINK_KIND")
+      opus_dir=$(python3 -B network/codecs/ci/linux_library.py libopus-dev opus "$MIXYARD_OPUS_LINK_KIND")
+      {
+        echo "MIXYARD_ZSTD_LIB_DIR=$zstd_dir"
+        echo "MIXYARD_OPUS_LIB_DIR=$opus_dir"
+        echo "LD_LIBRARY_PATH=$zstd_dir:$opus_dir"
+      } >> "$GITHUB_ENV"
+      dpkg-query -W libzstd-dev libzstd1 libopus-dev libopus0 >> "$CARGO_TARGET_DIR/evidence/packages.txt"
+      cp /usr/share/doc/libzstd-dev/copyright "$CARGO_TARGET_DIR/evidence/zstd-copyright.txt"
+      cp /usr/share/doc/libopus-dev/copyright "$CARGO_TARGET_DIR/evidence/opus-copyright.txt"
+  - uses: dtolnay/rust-toolchain@stable
+    with:
+      components: clippy
+  - name: Qualify actual Encoder/Decoder, conversion/capacity/padding and owned TCP loopback
+    run: python network/codecs/ci/qualify.py
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+  - name: Upload logs, versions, link evidence and upstream notices
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: codec-evidence-ubuntu-latest-static
+      path: ${{ env.CARGO_TARGET_DIR }}/evidence
+      if-no-files-found: error
+      retention-days: 14

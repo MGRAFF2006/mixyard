@@ -1,0 +1,57 @@
+name: desktop-frontend
+description: Explicit Linux payload from .github/workflows/desktop.yml / frontend
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v7
+  - name: Disk prerequisite (at least 10 GiB)
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: |
+      set -euo pipefail
+      python3 - <<'PY'
+      import shutil
+      free = shutil.disk_usage('.').free
+      print(f'Available: {free / 2**30:.1f} GiB')
+      if free < 10 * 2**30:
+          raise SystemExit('BLOCKED: less than 10 GiB free before installation/build')
+      PY
+    working-directory: apps/desktop
+  - uses: pnpm/action-setup@v6
+    with:
+      version: 11.10.0
+      run_install: false
+  - uses: actions/setup-node@v7
+    id: lane_node
+    with:
+      node-version: 24.13.1
+      cache: pnpm
+      cache-dependency-path: apps/desktop/pnpm-lock.yaml
+  - name: Record selected lane Node version
+    shell: bash
+    env:
+      SELECTED_NODE_VERSION: ${{ steps.lane_node.outputs.node-version }}
+    run: printf 'LANE_NODE_VERSION=%s\n' "$SELECTED_NODE_VERSION" >> "$GITHUB_ENV"
+  - name: Install locked local desktop dependencies
+    run: |
+      pnpm install --frozen-lockfile
+      pnpm --dir ../web install --frozen-lockfile
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/desktop
+  - name: Strict TypeScript, shared console and desktop bridge checks
+    run: pnpm check
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/desktop
+  - name: Production frontend build
+    run: pnpm build
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    working-directory: apps/desktop
+  - name: Evidence boundary
+    shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
+    run: |
+      set -euo pipefail
+      {
+        echo 'Frontend typecheck, shared console/desktop transport model tests and static build only.'
+        echo 'No native Tauri compilation, webview/tray execution or live runtime exercised.'
+        echo 'Native interaction p95, accessibility, runtime lifecycle, virtual inputs and audio gaps remain unverified.'
+      } >> "$GITHUB_STEP_SUMMARY"
+    working-directory: apps/desktop
