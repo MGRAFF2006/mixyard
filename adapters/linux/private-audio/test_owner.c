@@ -313,6 +313,94 @@ static void every_borrow_returns(void) {
   for (unsigned i = 0; i < 256; i++)
     assert(copy[i] == 0.0);
 }
+/* Contract expectations use the captured tuple and explicit boundary values,
+ * not a reimplementation of the production age predicate. */
+static void readiness_case(const struct mx_private_input_view *view,
+                           bool admitted, uint64_t frame, uint64_t ns,
+                           bool return_fails,
+                           enum mx_private_input_result expected) {
+  double destination[256];
+  for (unsigned i = 0; i < 256; i++)
+    destination[i] = 42.0;
+  struct fake_native_token token = {.fail = return_fails};
+  assert(mx_private_copy_and_return(view, admitted, frame, ns, 2, destination,
+                                    fake_return, &token) == expected);
+  assert(token.returns == 1);
+  for (unsigned i = 0; i < 256; i++)
+    assert(destination[i] == (expected == MX_PRIVATE_INPUT_READY
+                                 ? ((const double *)view->data)[i] : 0.0));
+}
+static void previous_quantum_is_not_ready(void) {
+  double source[256];
+  for (unsigned i = 0; i < 256; i++)
+    source[i] = 0.25 + (double)i / 1024.0;
+  const uint64_t frame = 39903018, ns = UINT64_C(831312875000);
+  const struct mx_private_input_view observed = {
+      .data = source, .n_datas = 1, .capacity = 2048, .size = 2048,
+      .stride = 16, .pts = INT64_C(831310208333), .sequence = 39902890,
+      .chunk = true, .header = true};
+  readiness_case(&observed, false, frame, ns, false, MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&observed, true, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  readiness_case(&observed, false, frame, ns, true, MX_PRIVATE_INPUT_FATAL);
+  struct mx_private_input_view v = observed;
+  v.pts = INT64_C(831310208334); /* floor quantum in ns, still exactly128 frames */
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&v, true, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v = observed; v.pts = (int64_t)ns; v.sequence = frame;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_READY);
+  readiness_case(&v, true, frame, ns, false, MX_PRIVATE_INPUT_READY);
+  readiness_case(&v, false, frame, ns, true, MX_PRIVATE_INPUT_FATAL);
+  v = observed; v.sequence = frame - 127;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v.sequence = frame - 129;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v.sequence = frame + 128;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v.sequence = frame - 256; v.pts = (int64_t)ns - 5333333;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v = observed; v.pts = (int64_t)ns - 2666665;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v.pts = (int64_t)ns - 2666668;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v.pts = (int64_t)ns + 2666667;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v.pts = -1;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v = observed; v.pts = INT64_MAX;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  readiness_case(&observed, false, frame, UINT64_MAX, false, MX_PRIVATE_INPUT_FATAL);
+  readiness_case(&observed, false, 127, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v = observed; v.sequence = 0; v.pts = 0;
+  readiness_case(&v, false, 128, 2666666, false, MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&v, false, 128, 2666667, false, MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&v, false, 0, 0, false, MX_PRIVATE_INPUT_READY);
+  v.sequence = UINT64_MAX;
+  readiness_case(&v, false, 0, 2666667, false, MX_PRIVATE_INPUT_FATAL);
+  readiness_case(&v, false, 127, 2666667, false, MX_PRIVATE_INPUT_FATAL);
+  for (unsigned variant = 0; variant < 13; variant++) {
+    v = observed;
+    switch (variant) {
+    case 0: v.offset = 1; break;
+    case 1: v.size = 1024; break;
+    case 2: v.stride = 8; break;
+    case 3: v.chunk_flags = 1; break;
+    case 4: v.chunk_flags = 4; break;
+    case 5: v.header_flags = 1; break;
+    case 6: v.header_flags = 16; break; /* GAP never becomes current input */
+    case 7: v.header_offset = 1; break;
+    case 8: v.dts_offset = 1; break;
+    case 9: v.chunk = false; break;
+    case 10: v.header = false; break;
+    case 11: v.n_datas = 2; break;
+    case 12: v.capacity = 2047; break;
+    }
+    readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+    readiness_case(&v, true, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  }
+  v = observed; v.data = NULL;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  readiness_case(&v, true, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+}
 int main(int argc, char **argv) {
   if (argc == 2 && !strcmp(argv[1], "--positions")) {
     positions(false);
@@ -336,6 +424,7 @@ int main(int argc, char **argv) {
   exact_pending_fence();
   native_failure_classification();
   every_borrow_returns();
+  previous_quantum_is_not_ready();
   digest_vectors();
   puts("owner clock/revision, exact fence tuple, late-ticket rejection, strict "
        "native input classification, SHA256: OK");

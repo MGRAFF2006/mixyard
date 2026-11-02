@@ -105,7 +105,7 @@
     "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
-    "adapters/linux/private-audio/owner.h": "f425f97837160f0ab7f633616788512f93ff7bbbf963381004d8f54fc3e6e04d",
+    "adapters/linux/private-audio/owner.h": "52c96b9bf6e3cd8cb8f2856e85241eecf3131acee28f279dadbf625928a1a64a",
     "adapters/linux/private-audio/product-flow.md": "8ec86d414c5b5c94fb3bbc63f9f53ed978c6399f71690a541290a8a2ab205860",
     "adapters/linux/private-audio/protocol-v1.md": "42b7e3fbe16b67444f61e52d17f44fcdeaf19282bd2099f505f1967f87c15628",
     "adapters/linux/private-audio/resource_guard.py": "1053b6e6111533351a8995f46407a0095604ee2dae2d5745c02459abbb55fc5b",
@@ -113,7 +113,7 @@
     "adapters/linux/private-audio/sha256.h": "4366b1629d55205939f4d974402005406c0910b12ce4d7dc0a4a03605b647499",
     "adapters/linux/private-audio/test.sh": "e3ee70a32f8bdf64d3fc856b429d9306eb30340330e22dedf6cb19078f5036a9",
     "adapters/linux/private-audio/test_json.cpp": "78c7fae1f78cdba323f6b8a3a1a72e1f845b170f2612e2ea89bb6bb55cbf3fbf",
-    "adapters/linux/private-audio/test_owner.c": "5f0e229644153ce9e2d64f2c063bd66ba1b6c91683d37f81efd3445d47104b51",
+    "adapters/linux/private-audio/test_owner.c": "85388572d9fc9cb12fc76bc653246ce07d58bf5c0fad6f82d0be8f037739efad",
     "src/bin/mixyard-runtime.rs": "3cfbc9c1c32bfb3aa5e006f5a8ccd8d7468e9e8e5b9390712b42c9989bb65b48",
     "src/main.rs": "9fab453d2d5fcde26b8e7a31c1aff015ec3f7a19abc86e24732a8a89715a70a5",
     "src/profiles.rs": "8d5bc6fdc89275d46cdc70dddf68abfc3157c3068613002cd0cfd60d87b17fc3",
@@ -447,5 +447,18 @@
     "change": "Preallocatedexclusive-owner firstfatalinput scalarcapture: source/admitted/registered/data/shape/chunk/header/flags/offsets/stride/PTS/sequence/exactexpectedframe+ns/actualreturnoutcome. NoSDKpointerretained/serialized, RTallocation/log/JSON. Release/acquirepublishesimmutablefirstsample; maincontrolappendnumericmessagebounded511byteswithinput_truncated=1ifclipped. Existingcanonicalinputhelpersandallacceptance/owner/epoch/clock/returngatesunchanged.",
     "harnessNext": "Stopprobecleanupmustalsoobservealready-ownedfailureretirementbeforeStopattempt, bounded4.02s/max8statusreads; no newStop orretry. Thisretainsactualfinalstderr/statusafterearlyLinkfailure withoutqualifyingfullmilestone.",
     "verification": "Source/whitespace/hashonly; nativechangedUNCOMPILED/UNRUN. NewindependentexactHEADreviewthenstrictnative/helper/freshRust/sixfocusedtests/actualshortStopprobe required. No localcompiler/native/targetrun."
+  },
+  "preAdmissionWarmupRepair": {
+    "previousHead": "7c9fb104bd8082c86a6098f28c6bf9336eee8aa5",
+    "integrationAgent": "mixyard-integration-owner-cad895ac",
+    "implementationAgent": "mixyard-native-engine-lead; existing delegated native lead; T3 Code / Codex harness / OpenAI; gpt-6.1-sol high",
+    "observedReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6585125584",
+    "observedFailure": "At exact7c9, native compile/helper, current Rust and six focused tests passed. All four Links completed; Apply failed before admission. A registered valid2048-byte stereo F64 buffer returned successfully, but header sequence39902890/PTS831310208333 lagged expected39903018/831312875000 by exactly128frames/2666667ns. The helper freshness predicate caused fault26; SDK delivery mechanism remains unknown.",
+    "change": "Only a structurally valid, zero-offset/flag pre-admission previous quantum becomes Unavailable, with owned PCM remaining zero and exactly one token return. Both deltas must match128frames and2666666/2666667ns using guarded subtraction. It never becomes Ready. Admitted stale input, arbitrary/future/other stale metadata, malformed shape and failed returns remain fatal. Stage fresh-header/common-clock/link/install/epoch/guard/deadline gates are unchanged.",
+    "regressions": "Actual owner helper receives the captured tuple, both timestamp boundaries, admitted rejection, zero output/one return, failed return, fresh copying and near-miss malformed/range/future/other-age cases. Expectations use captured data and explicit boundaries, not a copied production predicate. Tests are UNRUN until cloud execution.",
+    "sdkContract": "https://raw.githubusercontent.com/PipeWire/pipewire/8b43ed5c910e892d53de5a96aa01e9280a5b6650/spa/include/spa/buffer/meta.h",
+    "proofLimits": "This is pre-admission readiness only. No stale sample is copied or installed. No historical malformed/EMPTY cause, StopComplete, R2, clock13, recorder-exit contract or SDK eligibility hold is closed.",
+    "nextProbe": "Stop-only diagnostic may use descriptor frameLimit0 (documented infinite source) until explicit Stop. Its full EOF/PCM/R2 milestone remains UNRUN; the original full recording experiment keeps144000-frame sources. All existing resource/deadline/file/capture caps stay unchanged.",
+    "verification": "Source, whitespace and hash inspection only. Changed native header and owner-test source are UNCOMPILED/UNRUN. Fresh exact-HEAD independent review, strict native/JSON, portable owner-helper compile/run, current Rust/six regressions and bounded actual Stop probe are required. Local compiler/test/target hold remains."
   }
 }

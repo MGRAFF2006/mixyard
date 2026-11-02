@@ -37,8 +37,21 @@ mx_private_copy_input(const struct mx_private_input_view *v, bool admitted,
        (v->size == 2048 && v->stride == 16 && v->chunk_flags == empty_flag)))
     return MX_PRIVATE_INPUT_UNAVAILABLE;
   if (v->size != 2048 || v->stride != 16 || v->chunk_flags || v->header_flags ||
-      v->header_offset || v->dts_offset || ns > INT64_MAX ||
-      v->pts != (int64_t)ns || v->sequence != frame)
+      v->header_offset || v->dts_offset || ns > INT64_MAX)
+    return MX_PRIVATE_INPUT_FATAL;
+  // Fixed private 128-frame/48000-Hz graph only: a coherent previous-quantum
+  // header before admission is not current PCM. Leave the destination zero;
+  // the caller returns the token and cannot mark this source/header ready.
+  // Both guarded subtractions must match; no future or arbitrary stale input.
+  if (!admitted && frame >= 128 && v->sequence == frame - 128 &&
+      v->pts >= 0 && (uint64_t)v->pts <= ns) {
+    uint64_t age = ns - (uint64_t)v->pts;
+    const uint64_t quantum_ns_floor = UINT64_C(128000000000) / 48000;
+    const uint64_t quantum_ns_ceil = (UINT64_C(128000000000) + 47999) / 48000;
+    if (age == quantum_ns_floor || age == quantum_ns_ceil)
+      return MX_PRIVATE_INPUT_UNAVAILABLE;
+  }
+  if (v->pts != (int64_t)ns || v->sequence != frame)
     return MX_PRIVATE_INPUT_FATAL;
   memcpy(destination, v->data, 2048);
   return MX_PRIVATE_INPUT_READY;
