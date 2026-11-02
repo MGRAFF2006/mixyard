@@ -3,6 +3,7 @@ name: macOS worker bridge (synthetic PCM, no audio devices)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'adapters/macos/**'
       - '.github/workflows/macos-workers.yml'
@@ -14,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   worker:
     name: Worker transport fixtures (${{ matrix.os }})
@@ -21,7 +26,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
+    # Only Boat rows share a slot; native rows get unique groups.
+    concurrency:
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-worker-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

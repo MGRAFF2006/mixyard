@@ -98,11 +98,15 @@ class Device:
     def fresh_session(self, credential):
         # Bounded read-only refreshes observe actual completion, not a fake gate
         # acknowledgment. No mutation, revoke or uncertain write is replayed.
-        for _ in range(64):
+        deadline = time.monotonic() + 5
+        while True:
             status, reply = self.session(credential)
             if status != 503: break
             assert reply['error']['code'] == 'service-busy'
-        assert status == 200, 'Owner did not complete after the real fsync was released'
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: break
+            time.sleep(min(0.05, remaining))
+        assert status == 200, f'Owner did not complete after the real fsync was released (HTTP {status})'
         return reply
 
     def close(self):

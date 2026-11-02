@@ -2,14 +2,24 @@ name: Silent Linux evidence harness (fixtures only)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['verification/native-linux/**', '.github/workflows/native-linux-evidence.yml']
   pull_request:
     paths: ['verification/native-linux/**', '.github/workflows/native-linux-evidence.yml']
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   fixture-safety:
-    runs-on: ubuntu-latest
+    runs-on: boat
+    # Keep queued checks while sharing one repository-wide Boat slot.
+    concurrency:
+      group: boat-ci
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4

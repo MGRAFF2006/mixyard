@@ -3,6 +3,7 @@ name: Desktop native shell (no audio qualification)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -47,11 +48,16 @@ jobs:
             binary: mixyard-desktop.exe
             bundles: msi,nsis
             test_suffix: .exe
-          - os: macos-14
+          - os: macos-15
             binary: mixyard-desktop
             bundles: app,dmg
             test_suffix: ""
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-large' || matrix.os }}
+    # Only Boat rows share a slot; native rows get unique groups.
+    concurrency:
+      group: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat-ci' || format('boat-ci-native-{0}-{1}-shell-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: '2'
@@ -135,6 +141,9 @@ jobs:
           python verification/desktop-native/evidence.py --guard
           cargo install tauri-driver --locked --jobs 2 2>&1 | tee evidence/driver-install.log
           cargo install --list > evidence/driver-version.txt
+          cargo_bin="$(realpath "${CARGO_HOME:-$HOME/.cargo}/bin")"
+          test -x "$cargo_bin/tauri-driver"
+          printf '%s\n' "$cargo_bin" >> "$GITHUB_PATH"
       - name: Actual release WebKit lifecycle and interaction timing in owned Xvfb
         if: runner.os == 'Linux'
         run: |

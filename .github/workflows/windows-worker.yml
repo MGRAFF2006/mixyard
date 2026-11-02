@@ -2,14 +2,24 @@ name: Windows exact PCM worker (SDK and portable checks only)
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['adapters/windows/**', '.github/workflows/windows-worker.yml']
   pull_request:
     paths: ['adapters/windows/**', '.github/workflows/windows-worker.yml']
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   portable:
-    runs-on: ubuntu-24.04
+    runs-on: boat
+    # Keep queued checks while sharing one repository-wide Boat slot.
+    concurrency:
+      group: boat-ci
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
