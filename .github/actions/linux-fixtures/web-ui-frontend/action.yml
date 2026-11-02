@@ -13,10 +13,16 @@ runs:
       version: 11.10.0
       run_install: false
   - uses: actions/setup-node@v7
+    id: lane_node
     with:
       node-version: 24.13.1
       cache: pnpm
       cache-dependency-path: apps/web/pnpm-lock.yaml
+  - name: Record selected lane Node version
+    shell: bash
+    env:
+      SELECTED_NODE_VERSION: ${{ steps.lane_node.outputs.node-version }}
+    run: printf 'LANE_NODE_VERSION=%s\n' "$SELECTED_NODE_VERSION" >> "$GITHUB_ENV"
   - run: pnpm install --frozen-lockfile
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
     working-directory: apps/web

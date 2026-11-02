@@ -18,16 +18,17 @@ Missing inventory or a failed inventory never authorizes a successful skip.
 Each composite retains its original checkout action and ref. A checkout cleans
 the previous workspace (including build outputs and nested qualification repo).
 The frozen paired-control checkout remains separate at its original commit.
-Each lane has a private `RUNNER_TEMP`, removed after its evidence uploads.
-Fixed `/tmp` outputs and `runner.temp` context paths retain their source names;
-these are used sequentially. Original desktop HOME/session isolation stays in
+Each lane declares a private `LANE_TEMP`, removed after its evidence uploads.
+The custom shell maps it to `RUNNER_TEMP` only for child commands. Actions keep
+the protected runner context; temporary evidence uploads use `LANE_TEMP`.
+Fixed `/tmp` outputs and explicit `runner.temp` context paths are used sequentially. Original desktop HOME/session isolation stays in
 the original command payloads.
 
 `lane_boundary.py` stores a mode-0600 ephemeral initial environment snapshot
 outside the checkout, restores exported values between lanes, and deletes that
 snapshot at the end. The runner's PATH-command list cannot be reset through
 GITHUB_ENV. Custom command shells therefore construct PATH from the initial
-PATH plus that lane's Python location, exact Node cache path, pnpm home/bin and
+PATH plus that lane's Python location, Node cache path from setup-node's selected-version output, pnpm home/bin and
 Cargo bin. Early steps can run before the lane's setup actions. Rust commands
 explicitly select stable or 1.99.0 through RUSTUP_TOOLCHAIN. Setup actions retain
 their original versions and inputs. Installations and tool caches are shared;
@@ -35,7 +36,10 @@ this is state isolation, not a security sandbox. Public apt dependencies and
 Cargo-installed tools can remain installed between lanes.
 
 Every composite invocation has its original job deadline. The aggregate job
-has a 480-minute deadline (438 minutes summed lane deadlines plus overhead).
+has a 360-minute ceiling, conservatively respecting the documented six-hour CI
+limit. Individual lane deadlines are unchanged; their worst-case sum exceeds
+this ceiling. A full run must demonstrate completion within the overall bound,
+and exhaustion fails rather than skipping unfinished checks into a pass.
 A tolerated lane failure still fails the final gate; later selected lanes and
 original always-run evidence steps remain eligible. Cancellation fails the job.
 Native jobs retain their separate runners and deadlines.
@@ -67,3 +71,7 @@ move to the central workflow, preserving their conditional build meaning.
 Timeout syntax is on the outer workflow `uses` step, not on composite internal
 steps. See [GitHub workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepstimeout-minutes).
 pnpm PATH ordering follows [the v6 action source](https://github.com/pnpm/action-setup/blob/v6/src/install-pnpm/run.ts).
+
+Initial validation uses one PR-triggered run at the independently reviewed
+commit. Do not also dispatch manually: a new workflow cannot be dispatched
+before it exists on default main, and duplicate PR/dispatch runs waste starts.

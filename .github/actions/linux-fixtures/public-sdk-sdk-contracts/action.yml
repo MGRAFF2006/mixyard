@@ -5,8 +5,14 @@ runs:
   steps:
   - uses: actions/checkout@v4
   - uses: actions/setup-node@v4
+    id: lane_node
     with:
       node-version: '24'
+  - name: Record selected lane Node version
+    shell: bash
+    env:
+      SELECTED_NODE_VERSION: ${{ steps.lane_node.outputs.node-version }}
+    run: printf 'LANE_NODE_VERSION=%s\n' "$SELECTED_NODE_VERSION" >> "$GITHUB_ENV"
   - name: Execute bounded mocked SDK contracts and owned loopback signaling
     run: node --test --test-timeout=10000 interoperability/tests/public_sdk/*.test.mjs
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

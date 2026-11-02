@@ -8,13 +8,14 @@ are reset separately. This is an environment boundary, not a security sandbox.
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import uuid
 
 
 def state_path():
-    # runner.temp context is stable even when a lane overrides RUNNER_TEMP.
+    # Keep this outside the workspace cleaned by each lane's checkout.
     return Path(os.environ['GITHUB_WORKSPACE']).parent / ('.mixyard-linux-environment-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'] + '.json')
 
 
@@ -29,12 +30,21 @@ def command_environment(baseline, current):
     for key in tuple(env):
         if env[key] == '' and key not in baseline:
             del env[key]
+    if env.get('LANE_ID') and not env.get('LANE_TEMP'):
+        raise ValueError('Missing lane temporary directory')
+    if env.get('LANE_TEMP'):
+        # RUNNER_* is protected in Actions. Remap only the child command's
+        # environment; setup/upload actions keep the runner's real context.
+        env['RUNNER_TEMP'] = env['LANE_TEMP']
     paths = []
     if env.get('LANE_PYTHON') == 'true' and env.get('pythonLocation'):
         paths.extend([env['pythonLocation'] + '/bin', env['pythonLocation']])
-    if env.get('LANE_NODE') == 'true':
+    if env.get('LANE_NODE') == 'true' and env.get('LANE_NODE_VERSION'):
+        version = env['LANE_NODE_VERSION'].removeprefix('v')
+        if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+            raise ValueError('Invalid setup-node selected version')
         arch = {'X64': 'x64', 'ARM64': 'arm64'}[env['RUNNER_ARCH']]
-        paths.append(f"{env['RUNNER_TOOL_CACHE']}/node/24.13.1/{arch}/bin")
+        paths.append(f"{env['RUNNER_TOOL_CACHE']}/node/{version}/{arch}/bin")
     if env.get('LANE_PNPM') == 'true' and env.get('PNPM_HOME'):
         # pnpm/action-setup exports PNPM_HOME via GITHUB_ENV.
         paths.extend([env['PNPM_HOME'] + '/bin', env['PNPM_HOME']])

@@ -17,7 +17,7 @@ runs:
   - uses: actions/upload-artifact@v4
     with:
       name: dsp-offline-ubuntu-latest
-      path: ${{ runner.temp }}/dsp-render/
+      path: ${{ env.LANE_TEMP }}/dsp-render/
   - name: Qualification boundary
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
     run: echo 'Synthetic offline host throughput only. A missed block budget is reported and does not remove the

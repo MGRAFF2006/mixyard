@@ -21,10 +21,16 @@ runs:
       version: 11.10.0
       run_install: false
   - uses: actions/setup-node@v7
+    id: lane_node
     with:
       node-version: 24.13.1
       cache: pnpm
       cache-dependency-path: apps/desktop/pnpm-lock.yaml
+  - name: Record selected lane Node version
+    shell: bash
+    env:
+      SELECTED_NODE_VERSION: ${{ steps.lane_node.outputs.node-version }}
+    run: printf 'LANE_NODE_VERSION=%s\n' "$SELECTED_NODE_VERSION" >> "$GITHUB_ENV"
   - name: Install locked local desktop dependencies
     run: |
       pnpm install --frozen-lockfile
