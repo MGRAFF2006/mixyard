@@ -101,7 +101,7 @@
     "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
     "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
     "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
-    "adapters/linux/private-audio/companion.cpp": "21be5ef2008325ce08282f3fd5fede9991ef3e12d625f2ac937738449efc740e",
+    "adapters/linux/private-audio/companion.cpp": "79a6c0909eb0f09bb87bf871f09d686bdd28b4cbd2452632f40b28a6071ac338",
     "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
@@ -120,10 +120,10 @@
     "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
     "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
     "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
-    "src/runtime/private_audio/mod.rs": "b6c3767e7f62a96207c2636500a9b7b1b96e0d91d9c29b61cec1b30538a04dca",
+    "src/runtime/private_audio/mod.rs": "77e0cc68bca168111e7a853b025e833f9ebe3c0b6b49a5d6fac776d6d2604ea4",
     "src/runtime/private_audio/process.rs": "8ae0489133c829461fb53384b7b5ef703bae9053986ae591ef23f96b5169c9e9",
     "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
-    "src/runtime/private_audio/service_tests.rs": "368059e6b4aa63da812d79d44ceae319b154d604b1319d97b8cd846a1558c710",
+    "src/runtime/private_audio/service_tests.rs": "810247daf96eb014ff4b244eb987ed00c6565d86900bb3e06cec5104c1ed3657",
     "src/runtime/private_audio/state.rs": "80a77f3b388a172c75e0da9c0f07552a97d1cb4fcfdf67b79e72b698c3e9d9cd",
     "src/runtime/private_audio/state_tests.rs": "7f70c027c7370befc3bceedc03993f9bc94dd7c7586d0c4bab3d5347e7be51b3"
   },
@@ -324,5 +324,42 @@
       "observed": "Complete35560B log: preceding core/lifecycle tests passed; named test ran over60s then operation was canceled. Cause unresolved; no assertion failure or automatic retry inferred."
     },
     "remaining": "Corrected parser/helper/companion compile and full helper run; actual native handlers/four consumers/productR1R2/heap/scrub,90/115 and prior holds."
+  },
+  "productTrial93f": {
+    "sourceHead": "93f41ab9efc1d7af971e8ecb41cc5bcfb5275eb6",
+    "actualBuild": "PASS offline locked j1 debug0 incremental0; two current product binaries, 25.2086s; target166250633B",
+    "actualProductTrial": "FAIL after defaultserve PASS, canonicalR1 store1/config2, Prepare fouroutputs; observerexit2/fourrecordersHostdown/runtime differentchildhandles",
+    "installedR1R2PCM": "NOT_REACHED; no WAVs",
+    "cleanup": "all capture leaders reaped; StopPending/FailedStopped; native scrub/StopComplete UNVERIFIED",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6581274694",
+    "buildReportSha256": "f2fec23de0adcc905e2041843459015291ba224a835fa7a023a9b8dcbe3653b7",
+    "trialReportSha256": "8411a5c55269e60f06a6600b5b7c484a2d317b9141eecdb82e6033becfaa76ef",
+    "diagnosticsSha256": "b6e41edd9b25914f72f03dbb674f13c2596ccc66a70403e9ee01ade7f1665aed",
+    "archiveSha256": "d410bda5910964f39bf70fcb7e36666dfc73ba0c29b614de94ce96dadd7f90e2",
+    "rootObservedSandboxStop": {
+      "completedNonforcedAt": "2026-11-02T15:37:01.115Z",
+      "snapshotVerifiedAt": "2026-11-02T15:37:01.057Z",
+      "scope": "sandbox stop, NOT native scrub proof"
+    }
+  },
+  "post93fLifecycleRepair": {
+    "scope": "secondary retirement reentry repair + initial native fault observability only",
+    "causalSourceTrace": [
+      "Native fault makes Service.failed true and starts forced owned retirement.",
+      "Previous dispatch Stop still called begin_stop and armed fence_started during that retirement.",
+      "prove_children_reaped consumes registered children exactly once and clears children=None.",
+      "Old fence deadline branch ignored retirement/retired and could invoke a second reap proof: different child handles."
+    ],
+    "changes": [
+      "Reject Stop while failed/retiring/retired before mutating coordinator or fence clock.",
+      "Do not re-fail an already-failed owner for a rejected IPC request; preserve first failure.",
+      "Fence deadline cannot restart retirement while retiring/retired; successful reap consumes all service deadlines.",
+      "App atomic firstfault latches like generation firstfault. Existing main-loop failure message includes app_fault/generation_fault/generation scalars only. No RT logging/allocation or gate relaxation."
+    ],
+    "regression": "owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice: actual owned API-double children, Store guard, two IPC peers/lateStop/staleDeadline; source added, UNRUN. Exact Coordinator PID check unchanged.",
+    "verification": "No compiler/build/test/SDK/Boat execution in this repair phase. Source diff/format/JSON/hash inspection only. No old-test RED or current GREEN claim.",
+    "nativeInitialCause": "UNPROVED: old generic owner-failed did not retain numeric app/generation fault. New message adds evidence for next budget; no format/buffer/clock/source/owner validation changed.",
+    "currentSourceExecution": "ALL changed Rust/C++/new regression UNCOMPILED/UNRUN; actual93f productFAIL preserved; new exactHEAD review + corrected compile/product run required",
+    "unchangedHolds": "90/115/base/main refs and historical setup/SDK/recorder/authorization-departure evidence remain unchanged."
   }
 }

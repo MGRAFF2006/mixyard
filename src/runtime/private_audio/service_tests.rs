@@ -719,3 +719,76 @@ fn expired_startup_fences_pending_prepare_and_late_ready_cannot_dispatch() {
         Phase::Stopped
     );
 }
+
+
+// Actual owned children and production Service/Coordinator retirement; no SDK.
+#[test]
+fn owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice() {
+    let mut fixture = Fixture::new("import time;time.sleep(60)");
+    fixture.staged_install();
+    fixture
+        .service()
+        .fail(failure(ErrorCode::OwnerFailed, "native fault double"));
+    let target = fixture.service().coordinator.snapshot().stop_target;
+    assert!(fixture.service().guard.is_some());
+
+    // Two IPC peers arrive after failure, as cleanup Stop did in the native run.
+    let mut first = fixture.client(Operation::Stop {
+        expected: target.clone(),
+    });
+    let mut second = fixture.client(Operation::Stop {
+        expected: target.clone(),
+    });
+    assert_eq!(
+        fixture.reply(&mut first).error.unwrap().code,
+        ErrorCode::Busy
+    );
+    assert_eq!(
+        fixture.reply(&mut second).error.unwrap().code,
+        ErrorCode::Busy
+    );
+    // Reaping may already have cleared pendingInstall, but Stop must not
+    // increment the epoch or reserve another owner operation.
+    assert_eq!(
+        fixture
+            .service()
+            .coordinator
+            .snapshot()
+            .stop_target
+            .control_epoch,
+        target.control_epoch
+    );
+    assert!(fixture.service().fence_started.is_none());
+    let start = Instant::now();
+    while !fixture.service().retired {
+        fixture.service().tick().unwrap();
+        assert!(start.elapsed() < Duration::from_secs(3));
+        std::thread::yield_now();
+    }
+    assert!(fixture.service().processes.reaped().unwrap());
+    assert!(fixture.service().guard.is_none());
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::FailedStopped
+    );
+
+    // A completed forced reap is still not native scrub or StopComplete.
+    let target = fixture.service().coordinator.snapshot().stop_target;
+    let mut late = fixture.client(Operation::Stop {
+        expected: target.clone(),
+    });
+    assert_eq!(
+        fixture.reply(&mut late).error.unwrap().code,
+        ErrorCode::Busy
+    );
+    // A stale timer cannot create a second retirement after PID proof was consumed.
+    fixture.service().fence_started = Some(Instant::now() - Duration::from_millis(FENCE_MS));
+    fixture.service().tick().unwrap();
+    assert!(fixture.service().retirement.is_none());
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::FailedStopped
+    );
+    assert_eq!(fixture.service().coordinator.snapshot().stop_target, target);
+    fixture.service().shutdown().unwrap();
+}

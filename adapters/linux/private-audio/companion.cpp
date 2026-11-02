@@ -286,6 +286,10 @@ static bool continue_build(App *a) {
          !a->closing;
 }
 
+static void app_fault(App *a, unsigned code) {
+  unsigned zero = 0;
+  a->fault.compare_exchange_strong(zero, code, std::memory_order_release);
+}
 static void rt_fault(Generation *g, unsigned code) {
   unsigned zero = 0;
   g->fault.compare_exchange_strong(zero, code, std::memory_order_release);
@@ -1014,7 +1018,7 @@ static void external_port_info(void *data, const pw_port_info *info) {
         (info->params[i].flags & SPA_PARAM_INFO_READ))
       if (pw_port_enum_params((pw_port *)p->proxy, 0, SPA_PARAM_Format, 0, 1,
                               nullptr) < 0)
-        p->app->fault.store(21, std::memory_order_release);
+        app_fault(p->app, 21);
 }
 static const pw_port_events port_events = {.version = PW_VERSION_PORT_EVENTS,
                                            .info = external_port_info,
@@ -1091,7 +1095,7 @@ static void added(void *data, uint32_t id, uint32_t permissions,
   } catch (const Error &e) {
     a->last_code = e.code;
     a->last_message = e.what();
-    a->fault.store(22, std::memory_order_release);
+    app_fault(a, 22);
     a->admission.store(false, std::memory_order_release);
   }
 }
@@ -1099,7 +1103,7 @@ static void removed(void *data, uint32_t id) {
   auto a = (App *)data;
   for (auto module : a->module_ids)
     if (module == id) {
-      a->fault.store(27, std::memory_order_release);
+      app_fault(a, 27);
       a->admission.store(false, std::memory_order_release);
     }
   auto p = global(a, id);
@@ -1134,7 +1138,7 @@ static void core_info(void *data, const pw_core_info *info) {
   a->core_ok = info->version && !strcmp(info->version, "1.4.8") && name &&
                !strcmp(name, "mixyard-private");
   if (!a->core_ok) {
-    a->fault.store(24, std::memory_order_release);
+    app_fault(a, 24);
     a->admission.store(false, std::memory_order_release);
   }
 }
@@ -1145,7 +1149,7 @@ static void core_error(void *data, uint32_t id, int seq, int result,
   (void)result;
   (void)message;
   auto a = (App *)data;
-  a->fault.store(25, std::memory_order_release);
+  app_fault(a, 25);
   a->admission.store(false, std::memory_order_release);
 }
 static const pw_core_events core_events = {
@@ -2220,6 +2224,12 @@ static void tick(void *data, uint64_t expirations) {
         a->last_message =
             "private graph closed; native generation cannot be re-admitted";
       }
+      // Main-loop serialization only: RT callbacks latch numeric first faults.
+      // No addresses, callback logging, allocation or admission changes.
+      a->last_message +=
+          "; app_fault=" + std::to_string(a->fault.load(std::memory_order_acquire)) +
+          "; generation_fault=" + std::to_string(g ? g->fault.load(std::memory_order_acquire) : 0) +
+          "; generation=" + std::to_string(g ? g->generation : 0);
       fault_reply(
           a, a->pending.load() ? a->pending.load()->install_op : "native-fault",
           a->last_code, a->last_message);

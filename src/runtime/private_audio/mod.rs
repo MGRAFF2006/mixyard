@@ -350,6 +350,14 @@ impl Service {
                 )
                 .map(Some),
             Operation::Stop { expected } => {
+                // Failure retirement already owns these exact children. A new
+                // fence cannot complete on its closed channel or re-arm its timer.
+                if self.failed || self.retired || self.retirement.is_some() {
+                    return Err(failure(
+                        ErrorCode::Busy,
+                        "owned retirement already in progress or finished",
+                    ));
+                }
                 let request = self.coordinator.begin_stop(&expected)?;
                 self.fence_started = Some(Instant::now());
                 self.deferred_native = None;
@@ -546,6 +554,8 @@ impl Service {
     }
     fn fail(&mut self, error: Failure) {
         self.operation_started = None;
+        self.startup_started = None;
+        self.deferred_native = None;
         self.coordinator.fail_held(error.code, &error.message);
         self.failed = true;
         for peer in &mut self.peers {
@@ -642,7 +652,7 @@ impl Service {
                         }
                     }
                     Err(error) => {
-                        if self.coordinator.snapshot().phase == Phase::FailedHeld {
+                        if !self.failed && self.coordinator.snapshot().phase == Phase::FailedHeld {
                             self.fail(error.clone());
                         }
                         self.peers[index].reply(Err(error));
@@ -674,9 +684,10 @@ impl Service {
             index += 1;
         }
         self.enforce_deadlines();
-        if self
-            .fence_started
-            .is_some_and(|start| start.elapsed() >= Duration::from_millis(FENCE_MS))
+        if !self.retired
+            && self.retirement.is_none()
+            && self.fence_started
+                .is_some_and(|start| start.elapsed() >= Duration::from_millis(FENCE_MS))
         {
             self.fail(failure(
                 ErrorCode::StopIncomplete,
@@ -729,6 +740,10 @@ impl Service {
         };
         if reaped {
             let retirement = self.retirement.take().unwrap();
+            self.fence_started = None;
+            self.operation_started = None;
+            self.startup_started = None;
+            self.deferred_native = None;
             self.retired = true;
             let permit = self
                 .coordinator
