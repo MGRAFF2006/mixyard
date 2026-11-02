@@ -518,10 +518,18 @@ impl Coordinator {
             Phase::FailedStopped
         };
         if !complete {
-            self.status.last_error = Some(failure(
-                ErrorCode::OwnerFailed,
-                "processes reaped; native scrub/normal StopComplete unverified",
-            ));
+            let retirement = format!(
+                "processes reaped; native scrub/normal StopComplete unverified; companion={a}; server={b}; forced={}",
+                self.forced
+            );
+            if let Some(error) = &mut self.status.last_error {
+                // Reaping proves process retirement, not the missing native
+                // fence. Preserve its initiating error for the next repair.
+                error.message.push_str("; ");
+                error.message.push_str(&retirement);
+            } else {
+                self.status.last_error = Some(failure(ErrorCode::OwnerFailed, &retirement));
+            }
         }
         self.status.installed = None;
         self.status.private_core = None;

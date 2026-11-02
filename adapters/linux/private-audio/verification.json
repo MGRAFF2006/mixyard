@@ -101,7 +101,7 @@
     "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
     "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
     "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
-    "adapters/linux/private-audio/companion.cpp": "02cc93c0b9384b493e581facbf7dcc9f347632801d93df31ae75da73ed7d83f2",
+    "adapters/linux/private-audio/companion.cpp": "9ba0f9603969a36db7f1069a71be9f6c2f5dae2265341352fb0bac91bd523b34",
     "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
@@ -120,11 +120,11 @@
     "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
     "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
     "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
-    "src/runtime/private_audio/mod.rs": "081517f01afaf3cb0c49c63245e302c4ad57ea8256e7d16eb35bafa593e621f4",
-    "src/runtime/private_audio/process.rs": "8ae0489133c829461fb53384b7b5ef703bae9053986ae591ef23f96b5169c9e9",
+    "src/runtime/private_audio/mod.rs": "acbf192cc2984b888c4455952fc183c2df551604eb776f42dab1653ceda7e6a1",
+    "src/runtime/private_audio/process.rs": "b71878247a0739c3d159566eb9a3c0a9c7de6e80e46d7974413b37d38255937a",
     "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
-    "src/runtime/private_audio/service_tests.rs": "a392b9e123636b2eab3152e593365991f4417a8e76ce6c28eeed3d59b511b164",
-    "src/runtime/private_audio/state.rs": "057d375d0ef69c4b0c3280a6273e190bd500e9f53525e343a0093a77254d9507",
+    "src/runtime/private_audio/service_tests.rs": "64c57a266476a0e18c7d66bb5c12d53c71f8e6d57c7536fa2d83c9623404b4b4",
+    "src/runtime/private_audio/state.rs": "5c890074524a0c0922e9c6038d40af3f5d8f36f1d685cf087126fe30772d5a75",
     "src/runtime/private_audio/state_tests.rs": "c81b6e403bebcf992e0114a847a3242ba6e49522c33ae69c2b5997040097ae02"
   },
   "rootReviewFollowup": {
@@ -401,5 +401,19 @@
     "nativeClassification": "Only actual EOF emits generation fault7. Non-current generation emits scrubbed silence without claiming EOF. A subsequent nonEOF RT fault supersedes7; app fault or scrub failure prevents SourceLost classification and can emit a second fatal notification. Owner-invoke failure records app27. All diagnostics/control remains offRT.",
     "addedRegressions": "source_loss filter covers4API/authority-double tests: settledEOF/stale/exactStop/actualreaps; pendingEOF/exactFence/Storeguard; lateInstalled completeFence evidence; binding/malformed/laterowner fatal. Not SDK proof.",
     "verification": "Source/diff/hash and rustfmt-only checks; changed native/Rust/tests UNCOMPILED/UNRUN. Exact independent review then strict native/helper and bounded fresh currentRust/targetedsource_loss+retirement/product trial required. No local compiler/test/target run."
+  },
+  "stopBoundaryDiagnosticFollowup": {
+    "previousHead": "12893be0779c01309677a21e0a92b852c072b24c",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "nativeDiagnosticAuthor": "mixyard-native-engine-lead; existing native lead thread, T3 Code/Codex/OpenAI gpt-6.1-sol high",
+    "actualReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6583332717",
+    "actual128": "Strict native/helper, currentRust, retirement1 and source_loss4 regressions passed. Actual productR1 Installed op6gen1epoch1store1config2inventory10clock12; all4commits nativeframe89972078. Four independent R1 WAV postACK PCM gain/privacy/return markers and1024zero tails passed; status SourceLost app0/g7/scrub0. All4recorders SIGINTexit1 emptydiagnostics. Stop Pendingfailed-stopped/unknownnativefence, parentTERM fallback. R2/restart UNRUN, aggregateFAIL. All captured/outerleadersreaped, explicitBoatstopcompleted/nonforced17:07:04.255Z snapshotverified17:07:04.187Z.",
+    "evidence": "/dev/shm/mixyard-product-attempt-12893be-root:150regularfiles8133316B including4WAVs, manifestverified. Root rehashed149manifestmembers and rechecked4PCMfiles fromsavedbytes, not a new native execution. Archive151188B SHA3001644dbacb13d83711fc406ba2ab303ce165442dbdcc07c9c77ed700f8de06.",
+    "causeUnknown": "Epoch advances at Fence; existingzero proofs need actual later liveborrow at newepoch. Actual128 does not identify blocked registration/barrier. This is a hypothesis, not permission to promoteoldzeroepochs or dereferenceopaque SDKtokens.",
+    "change": "Bounded offRT nativeFence state sample onexistingfailure replies and signal-beforeFenceproof, immediately boundednonblockingflush. Root retains originalStopfailure andactualchildExitStatus atforcedreap. Forcedretirement read-onlytransport retains one exactnonce/epoch/fence-operation StopIncomplete diagnostic, withoutflushingfencednormalbytes orprocessingcontrolprogress; invalid/oversized/truncatedobservations explicitlyrejected. Final read afteractualexit avoidsdropbetweenread/reap. Sameguard/reap/epoch/scrub/withdrawal/completiongates unchanged.",
+    "regression": "Existing owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice extends to retainfirstcause, actualownedSIGTERM-handler valid/unboundlateFault doubles, andstillFailedStopped/noStopComplete. NoSDKproof.",
+    "recorderFinding": "Exactpinned pw-cat.c SHA4e288855c8ad808ddafa6f2c170faba357282b6d91121db2ea545d4d0446a948 matchesretainedSDKsource. Capture doesnotmarkdrained;SIGINTquits+sf_closebutexit1. Pinnedversionhasnoduration/samplecount andnocaptureDrainhandler. No invocationonlyexit0routefound, no waiver/SDKmodification. Sourceanalysis by /root/source_loss_path, actualruntimeT3Code/Codex/OpenAIgpt-6.1-solhigh.",
+    "recorderPrimarySource": "https://github.com/PipeWire/pipewire/blob/8b43ed5c910e892d53de5a96aa01e9280a5b6650/src/tools/pw-cat.c",
+    "verification": "Source/diff/hash/rustfmt-only; changednative/Rust UNCOMPILED/UNRUN. FreshindependentexactHEAD review +strictnative/helper/currentRust/targetedregressions/actualproductStop trial required. No localcompiler/native/targettest run."
   }
 }

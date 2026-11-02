@@ -1728,6 +1728,76 @@ static int cleanup_owner(spa_loop *loop, bool async, uint32_t seq,
   a->cleanup_done.store(true, std::memory_order_release);
   return 0;
 }
+// Main-control diagnostic only. These independent atomic observations are a
+// sampled explanation of a blocked Fence, never an owner/scrub proof. Native
+// tokens remain opaque: no retained SDK pointer is dereferenced or serialized.
+static std::string fence_detail(App *a) {
+  uint64_t live[3]{}, lag[3]{}, never_zero = 0, changed = 0, scrub_failures = 0;
+  uint64_t first_generation = 0, first_zero = 0;
+  unsigned first_role = 0, first_node = 0, first_port = 0, first_output = 0;
+  bool first = false;
+  for (auto &entry : a->generations) {
+    auto g = entry.get();
+    scrub_failures += g->scrub_failed.load(std::memory_order_acquire);
+    if (!g->nodes)
+      continue;
+    for (size_t n = 0; n < 2 + g->no; n++) {
+      auto &node = g->nodes[n];
+      auto sample = [&](Port *p) {
+        for (auto &r : p->buffers) {
+          auto token = r.token.load(std::memory_order_acquire);
+          if (!token)
+            continue;
+          auto zero = r.zero_epoch.load(std::memory_order_acquire);
+          if (r.token.load(std::memory_order_acquire) != token) {
+            changed++;
+            continue;
+          }
+          live[node.role]++;
+          if (zero >= a->fence_epoch)
+            continue;
+          lag[node.role]++;
+          never_zero += zero == 0;
+          if (!first) {
+            first = true;
+            first_generation = g->generation;
+            first_zero = zero;
+            first_role = node.role;
+            first_node = node.index;
+            first_port = p->index;
+            first_output = p->output;
+          }
+        }
+      };
+      for (auto p : node.in)
+        sample(p);
+      for (auto p : node.out)
+        sample(p);
+    }
+  }
+  char detail[768];
+  snprintf(detail, sizeof(detail),
+           "; fence_sample epoch=%llu owner_queued=%u owner_done=%u build=%u"
+           " cleanup_queued=%u cleanup_done=%u app_fault=%u generation_fault=%u"
+           " scrub_failures=%llu"
+           " live=%llu/%llu/%llu lag=%llu/%llu/%llu never_zero=%llu changed=%llu"
+           " first_present=%u first_generation=%llu first_role=%u first_node=%u"
+           " first_port=%u first_output=%u first_zero_epoch=%llu",
+           (unsigned long long)a->fence_epoch, unsigned(a->fence_owner_queued),
+           unsigned(a->fence_owner_done.load(std::memory_order_acquire)),
+           unsigned(a->build.started), unsigned(a->cleanup_queued),
+           unsigned(a->cleanup_done.load(std::memory_order_acquire)),
+           a->fault.load(std::memory_order_acquire),
+           a->candidate ? a->candidate->fault.load(std::memory_order_acquire) : 0,
+           (unsigned long long)scrub_failures,
+           (unsigned long long)live[0], (unsigned long long)live[1],
+           (unsigned long long)live[2], (unsigned long long)lag[0],
+           (unsigned long long)lag[1], (unsigned long long)lag[2],
+           (unsigned long long)never_zero, (unsigned long long)changed,
+           unsigned(first), (unsigned long long)first_generation, first_role,
+           first_node, first_port, first_output, (unsigned long long)first_zero);
+  return detail;
+}
 static void begin_fence(App *a, const std::string &op, uint64_t epoch,
                         Generation *canceled = nullptr) {
   require(!a->fencing && epoch > a->epoch.load() && epoch != UINT64_MAX,
@@ -1746,7 +1816,8 @@ static void begin_fence(App *a, const std::string &op, uint64_t epoch,
     a->failed_held = true;
     a->phase = "failed-held";
     fault_reply(a, op, "stop-incomplete",
-                "native owner retirement could not be queued");
+                std::string("native owner retirement could not be queued") +
+                    fence_detail(a));
   } else
     a->fence_owner_queued = true;
 }
@@ -1799,7 +1870,8 @@ static void finish_fence(App *a) {
     a->failed_held = true;
     a->phase = "failed-held";
     fault_reply(a, a->fence_op, "stop-incomplete",
-                "private SDK ownership failed; no scrub proof");
+                std::string("private SDK ownership failed; no scrub proof") +
+                    fence_detail(a));
     return;
   }
   if (!a->cleanup_queued && scrubbed(a)) {
@@ -1811,7 +1883,7 @@ static void finish_fence(App *a) {
       a->failed_held = true;
       a->phase = "failed-held";
       fault_reply(a, a->fence_op, "stop-incomplete",
-                  "SDK withdrawal barrier failed");
+                  std::string("SDK withdrawal barrier failed") + fence_detail(a));
     }
     return;
   }
@@ -1822,7 +1894,8 @@ static void finish_fence(App *a) {
       a->failed_held = true;
       a->phase = "failed-held";
       fault_reply(a, a->fence_op, "stop-incomplete",
-                  "SDK buffer withdrawn without proven zero borrow");
+                  std::string("SDK buffer withdrawn without proven zero borrow") +
+                    fence_detail(a));
       return;
     }
   for (auto &entry : a->generations) {
@@ -2429,8 +2502,17 @@ static void nonblocking(int fd) {
           "protocol-error", "control pipe cannot become nonblocking");
 }
 static void stop_signal(void *data, int signal) {
-  (void)signal;
-  close_authority((App *)data);
+  auto a = (App *)data;
+  if (a->fencing && !a->fence_replied && !a->transport_failed) {
+    // The supervisor may interrupt a blocked Fence after its own deadline.
+    // Preserve the actual pending native state through the existing failure
+    // channel; a signal is never a successful Fence or scrub receipt.
+    fault_reply(a, a->fence_op, "stop-incomplete",
+                "signal before native Fence proof: signal=" +
+                    std::to_string(signal) + fence_detail(a));
+    flush(a); // Bounded nonblocking control output before supervisor retirement.
+  }
+  close_authority(a);
 }
 int main(int argc, char **argv) {
   App a;

@@ -975,6 +975,13 @@ fn owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice() {
         fixture.service().coordinator.snapshot().phase,
         Phase::FailedStopped
     );
+    let error = fixture.service().coordinator.snapshot().last_error.unwrap();
+    assert_eq!(error.code, ErrorCode::OwnerFailed);
+    assert!(error
+        .message
+        .starts_with("native fault double; processes reaped;"));
+    assert!(error.message.contains("StopComplete unverified"));
+    assert!(error.message.contains("forced=true"));
 
     // A completed forced reap is still not native scrub or StopComplete.
     let target = fixture.service().coordinator.snapshot().stop_target;
@@ -995,4 +1002,57 @@ fn owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice() {
     );
     assert_eq!(fixture.service().coordinator.snapshot().stop_target, target);
     fixture.service().shutdown().unwrap();
+
+    // Explicit signal/transport doubles. A final Stop failure must survive a
+    // forced reap, while an unbound message must never acquire proof authority.
+    for bound in [true, false] {
+        let source = r#"
+import json,signal,sys,time
+def emit(event,nonce='a'*64,epoch=1,op='startup'):
+ print(json.dumps({'companionVersion':1,'instanceNonce':nonce,'controlEpoch':epoch,'operationId':op,'event':event}),flush=True)
+def stopped(sig,frame):
+ emit({'kind':'fault','error':{'code':'stop-incomplete','message':'API_DOUBLE_FENCE_SAMPLE'}},'NONCE'*64,2,'fence-2')
+ sys.exit(0)
+signal.signal(signal.SIGTERM,stopped)
+emit({'kind':'stopped'}) # Test-only handshake: handler installed, not native Stop.
+while True: time.sleep(60)
+"#
+        .replace("NONCE", if bound { "a" } else { "f" });
+        let mut fixture = Fixture::new(&source);
+        let start = Instant::now();
+        loop {
+            let events = fixture.service().processes.retirement_events().unwrap();
+            if !events.is_empty() {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(events[0].event, CompanionEvent::Stopped {}));
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(2));
+            std::thread::yield_now();
+        }
+        fixture.staged_install();
+        let target = fixture.service().coordinator.snapshot().stop_target;
+        fixture.service().coordinator.begin_stop(&target).unwrap();
+        fixture.service().fail(failure(
+            ErrorCode::StopIncomplete,
+            "native fence deadline double",
+        ));
+        assert!(fixture.service().guard.is_some());
+        let start = Instant::now();
+        while !fixture.service().retired {
+            fixture.service().tick().unwrap();
+            assert!(start.elapsed() < Duration::from_secs(3));
+            std::thread::yield_now();
+        }
+        let status = fixture.service().coordinator.snapshot();
+        let error = status.last_error.unwrap();
+        assert_eq!(status.phase, Phase::FailedStopped);
+        assert_eq!(error.code, ErrorCode::StopIncomplete);
+        assert!(error.message.starts_with("native fence deadline double;"));
+        assert_eq!(error.message.contains("API_DOUBLE_FENCE_SAMPLE"), bound);
+        assert_eq!(error.message.contains("rejected unbound/oversized"), !bound);
+        assert!(error.message.contains("forced=true"));
+        assert!(fixture.service().processes.reaped().unwrap());
+        assert!(fixture.service().guard.is_none());
+    }
 }

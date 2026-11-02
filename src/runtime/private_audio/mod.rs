@@ -181,6 +181,7 @@ struct Retirement {
     killed: bool,
     operation: Option<String>,
     receipt: Option<Fenced>,
+    diagnostic_observed: bool,
 }
 
 pub(crate) struct Service {
@@ -531,6 +532,7 @@ impl Service {
                     killed: false,
                     operation: Some(operation.clone()),
                     receipt: Some(receipt),
+                    diagnostic_observed: false,
                 });
                 None
             }
@@ -719,6 +721,7 @@ impl Service {
                 killed: false,
                 operation: None,
                 receipt: None,
+                diagnostic_observed: false,
             });
             self.fence_started = None;
         }
@@ -731,12 +734,51 @@ impl Service {
                 killed: false,
                 operation: None,
                 receipt: None,
+                diagnostic_observed: false,
             });
         }
         self.progress_retirement()?;
         Ok(())
     }
+    fn observe_retirement_diagnostic(&mut self) {
+        let Some(retirement) = &mut self.retirement else {
+            return;
+        };
+        if self.failed && retirement.receipt.is_none() && !retirement.diagnostic_observed {
+            let status = self.coordinator.snapshot();
+            let observation = match self.processes.retirement_events() {
+                Ok(events) => events.into_iter().next().map(|reply| {
+                    if reply.companion_version == VERSION
+                        && reply.instance_nonce == status.stop_target.instance_nonce
+                        && reply.control_epoch == status.stop_target.control_epoch
+                        && status.pending_operation.as_ref() == Some(&reply.operation_id)
+                        && reply.operation_id.starts_with("fence-")
+                    {
+                        if let CompanionEvent::Fault { error } = reply.event {
+                            if error.code == ErrorCode::StopIncomplete
+                                && error.message.len() <= 1024
+                            {
+                                return format!("late native Stop observation: {}", error.message);
+                            }
+                        }
+                    }
+                    "rejected unbound/oversized late native Stop observation".into()
+                }),
+                Err(error) => Some(format!("late native Stop observation unreadable: {error}")),
+            };
+            if let Some(observation) = observation {
+                retirement.diagnostic_observed = true;
+                if let Some(error) = status.last_error {
+                    // Diagnostics cannot validate Fence, release a guard or
+                    // change the forced retirement's unsuccessful outcome.
+                    self.coordinator
+                        .fail_held(error.code, &format!("{}; {observation}", error.message));
+                }
+            }
+        }
+    }
     fn progress_retirement(&mut self) -> io::Result<()> {
+        self.observe_retirement_diagnostic();
         let Some(retirement) = &mut self.retirement else {
             return Ok(());
         };
@@ -758,6 +800,9 @@ impl Service {
             self.processes.reaped()?
         };
         if reaped {
+            // A child can write its final frame between the pre-reap read and
+            // wait. Drain once more after actual exit, before clearing bindings.
+            self.observe_retirement_diagnostic();
             let retirement = self.retirement.take().unwrap();
             self.fence_started = None;
             self.operation_started = None;

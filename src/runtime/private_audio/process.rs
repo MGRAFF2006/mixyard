@@ -362,11 +362,22 @@ impl Processes {
         self.check_diagnostics()?;
         self.priority.flush(&mut self.cancel)?;
         self.normal.flush(&mut self.stdin)?;
+        self.read_events(false)
+    }
+    // Failure retirement may retain a final native diagnostic. Never flush a
+    // fenced normal frame or treat these observations as control progress.
+    pub fn retirement_events(&mut self) -> io::Result<Vec<CompanionReply>> {
+        self.read_events(true)
+    }
+    fn read_events(&mut self, allow_eof: bool) -> io::Result<Vec<CompanionReply>> {
         let mut events = Vec::new();
         let mut buffer = [0; 8192];
         for _ in 0..16 {
             match self.stdout.read(&mut buffer) {
-                Ok(0) if !events.is_empty() => break,
+                Ok(0) if allow_eof && !self.input.is_empty() => {
+                    return Err(invalid("truncated final companion frame"));
+                }
+                Ok(0) if allow_eof || !events.is_empty() => break,
                 Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
                 Ok(n) => self.input.extend_from_slice(&buffer[..n]),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
