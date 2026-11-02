@@ -482,7 +482,7 @@ pub enum CompanionEvent {
         receipt: Fenced,
     },
     Snapshot {
-        status: Status,
+        status: Box<Status>,
     },
     Fault {
         error: Failure,
