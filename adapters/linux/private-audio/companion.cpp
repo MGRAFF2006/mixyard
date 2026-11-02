@@ -192,6 +192,13 @@ struct FirstInputFailure {
   bool admitted = false, registered = false, data_present = false,
        chunk = false, header = false, returned = false;
 };
+struct FirstClockFailure {
+  // Exclusive owner writes once; acquire readers see immutable scalars, not IO.
+  std::atomic<uint64_t> site{0}; // 1=stamp, 2=processed_native
+  uint64_t clock = 0, frame = 0, ns = 0;
+  mx_private_timeline timeline{};
+  mx_stamp stamp{};
+};
 struct Generation {
   App *app = nullptr;
   uint64_t generation = 0, epoch = 0, store = 0, revision = 0,
@@ -211,6 +218,7 @@ struct Generation {
   mx_host *host = nullptr, *staged_host = nullptr;
   mx_private_timeline timeline{};
   FirstInputFailure first_input_failure;
+  FirstClockFailure first_clock_failure;
   std::atomic<bool> sealed{false}, warming{false}, headers{false},
       switched{false}, retired{false}, complete{false};
   std::atomic<unsigned> fault{0};
@@ -499,6 +507,14 @@ static bool graph_clock(Generation *g, uint64_t clock) {
       return false;
   return true;
 }
+static void capture_clock_failure(Generation *g, uint64_t site, uint64_t clock,
+                                  uint64_t frame, uint64_t ns, const mx_stamp &stamp) {
+  auto &f = g->first_clock_failure;
+  if (f.site.load(std::memory_order_relaxed)) return;
+  f.clock = clock; f.frame = frame; f.ns = ns;
+  f.timeline = g->timeline; f.stamp = stamp;
+  f.site.store(site, std::memory_order_release);
+}
 static void process(void *userdata, spa_io_position *pos) {
   auto e = (EndpointNode *)userdata;
   auto g = e->generation;
@@ -715,8 +731,10 @@ static void process(void *userdata, spa_io_position *pos) {
   }
   if (running && ready && current(g)) {
     mx_stamp stamp{};
-    if (!mx_private_stamp(&g->timeline, pos->clock.id, pos->clock.position,
-                          pos->clock.nsec, &stamp)) {
+    const uint64_t clock = pos->clock.id, frame = pos->clock.position,
+                   ns = pos->clock.nsec;
+    if (!mx_private_stamp(&g->timeline, clock, frame, ns, &stamp)) {
+      capture_clock_failure(g, 1, clock, frame, ns, stamp);
       rt_fault(g, 13);
       revoke(g);
     } else {
@@ -726,8 +744,11 @@ static void process(void *userdata, spa_io_position *pos) {
                           g->inputs.get(), g->ns) == MX_OK) {
         rendered = true;
         uint64_t native_processed = 0;
+        const uint64_t processed_clock = pos->clock.id,
+                       processed_frame = pos->clock.position, processed_ns = pos->clock.nsec;
         if (!mx_private_processed_native(&g->timeline, &stamp,
-                                         pos->clock.position, &native_processed)) {
+                                         processed_frame, &native_processed)) {
+          capture_clock_failure(g, 2, processed_clock, processed_frame, processed_ns, stamp);
           rt_fault(g, 13); revoke(g); rendered = false;
         } else {
           uint64_t unset = UINT64_MAX;
@@ -2347,6 +2368,38 @@ static void cancel_ready(void *data, int fd, uint32_t mask) {
     a->phase = "failed-held";
   }
 }
+static bool append_clock_failure(Generation *g, std::string &message) {
+  if (!g || !g->first_clock_failure.site.load(std::memory_order_acquire)) return false;
+  const auto &f = g->first_clock_failure;
+  const auto &t = f.timeline;
+  const auto &s = f.stamp;
+  char detail[384];
+  // obs=clock/frame/ns; tl=clock/gen/rev/zero/nextNative/nextFrame/seq/started;
+  // st=gen/rev/clock/firstFrame/capturedNs. No mirrored rejection predicates.
+  int n = snprintf(detail, sizeof(detail),
+      "; clock site=%u obs=%llu/%llu/%llu tl=%llu/%llu/%llu/%llu/%llu/%llu/%llu/%u"
+      " st=%llu/%llu/%llu/%llu/%llu",
+      unsigned(f.site.load(std::memory_order_relaxed)),
+      (unsigned long long)f.clock, (unsigned long long)f.frame, (unsigned long long)f.ns,
+      (unsigned long long)t.clock_id, (unsigned long long)t.generation,
+      (unsigned long long)t.revision, (unsigned long long)t.native_zero,
+      (unsigned long long)t.next_native, (unsigned long long)t.next_frame,
+      (unsigned long long)t.sequence, unsigned(t.started),
+      (unsigned long long)s.generation, (unsigned long long)s.revision,
+      (unsigned long long)s.clock_id, (unsigned long long)s.first_frame,
+      (unsigned long long)s.captured_ns);
+  const std::string marker = "; clock_truncated=1";
+  size_t kept = n < 0 ? 0 : std::min((size_t)n, sizeof(detail) - 1);
+  bool clipped = n < 0 || (size_t)n >= sizeof(detail) || message.size() > 511 ||
+                 kept > 511 - message.size();
+  if (clipped) {
+    kept = std::min(kept, 511 - marker.size());
+    message.resize(std::min(message.size(), 511 - kept - marker.size()));
+  }
+  message.append(detail, kept);
+  if (clipped) message += marker;
+  return true;
+}
 static void append_input_failure(Generation *g, std::string &message) {
   if (!g || !g->first_input_failure.ready.load(std::memory_order_acquire))
     return;
@@ -2457,7 +2510,8 @@ static void tick(void *data, uint64_t expirations) {
           "; generation_fault=" + std::to_string(generation_failure) +
           "; scrub_failed=" + std::to_string(scrub_failure) +
           "; generation=" + std::to_string(g ? g->generation : 0);
-      append_input_failure(g, a->last_message);
+      if (!append_clock_failure(g, a->last_message))
+        append_input_failure(g, a->last_message);
       fault_reply(
           a, a->pending.load() ? a->pending.load()->install_op : "native-fault",
           a->last_code, a->last_message);

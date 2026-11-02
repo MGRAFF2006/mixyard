@@ -473,5 +473,16 @@
     "privateEvidence": "/dev/shm/mixyard-product-attempt-c5f1322-stop-continuation-root: archive143975B SHAa3226ff05590049b61a5e4cbbe4deec91b33ee42872fa50296fb1a1cf468bbbc; complete named stderr and validated Fence observations. Explicit Boat stop completed/nonforced2026-11-02T20:01:46.383+01:00, snapshot20:01:46.327+01:00.",
     "operatorFailure": "The preceding c5f host wrapper used an obsolete human operation label after native compilation and never launched product testing. It stopped and retained evidence. The continuation reused matching native artifacts and prevalidated the unique pinned controller command before any start. This was an operator error, not product failure.",
     "verification": "Source/whitespace/hash inspection only for the cleanup change; companion UNCOMPILED/UNRUN. Fresh exact-HEAD review and actual product recording/Stop/R2 testing remain required. Any stderr still fails. Historical SDK/metadata/clock/recorder-exit holds remain separate; no merge or public eligibility claim."
+  },
+  "clockFailure13Followup": {
+    "previousHead": "f9cc8179682a55c13de13bc502064220a564dc10",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actualReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6586475242",
+    "actualF9c": "Strict companion/JSON compile/helper, portable owner C helper, fresh Rust product build and6focused Rust regressions PASS.799native prechecks match. Four product Links and actual R1 Installed op6/gen1/epoch1/inventory10/clock12/nativeframe17333562, then generationfault13/app0/scrub0 before recorder finalize. All4recorders exit1/Brokenpipe; noPCM/explicitStop/R2/restart acceptance. ForcedcompanionSIGKILL/server0, allcapture/outerleadersreaped, complete evidence copyout. Defaultunavailable/false/null.",
+    "evidence": "Private /dev/shm/mixyard-product-attempt-f9cc817-full-root;156manifestverifiedregularfiles3498428B; archive145246B SHA256c547fdbd6188e5c6c6d7cf47f1ddfbf4076b05f8b61596590dc7aa559c2294b9. ExplicitBoatstoprequested; lastinfo stopping/pending/nonforced, completionnotyetclaimed.",
+    "nextSourceBoundary": "Capture first rejected operands at existing mx_private_stamp/mx_private_processed_native fault13 sites without changing clock acceptance or deadlines. Changed source remains UNCOMPILED/UNRUN until reviewed successor execution. Currentproxycleanupcompiled but normal warningfreeStopCompleteunproved.",
+    "nativeAuthor": "mixyard-native-engine-lead; existing delegated native lead, T3 Code/Codex/OpenAI gpt-6.1-sol high",
+    "repair": "Preallocated immutable first-clock-failure scalar snapshot atstamp andprocessed-native rejection before revoke; release/acquire publication with existing lockfreeuint64 type. OffRT Fault formatting prioritizes observed/timeline/stamp values overinputdetail, <=511ASCIIbytes with explicitclock_truncated marker. No duplicatedpredicates, callbacklogging/allocation/nativepointerretention or clockacceptance/deadline changes.",
+    "verification": "Source/diff/hash checks only for diagnostic successor. Changedcompanion UNCOMPILED/UNRUN; fresh independent exactHEADreview then bounded actualnative/helper/productexecution required. Currentf9c compiledproxycleanup has no normalStop proof."
   }
 }
