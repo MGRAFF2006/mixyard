@@ -11,6 +11,21 @@ fn failure(code: ErrorCode, message: &str) -> Failure {
     }
 }
 
+fn child_exit(pid: u32, status: &std::process::ExitStatus) -> ChildExit {
+    #[cfg(unix)]
+    let signal = {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    };
+    #[cfg(not(unix))]
+    let signal = None;
+    ChildExit {
+        pid,
+        code: status.code(),
+        signal,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ReleasePermit {
     nonce: String,
@@ -99,6 +114,7 @@ impl Coordinator {
                 outputs: vec![],
                 pending_operation: None,
                 last_error: None,
+                last_child_reap: None,
             },
             next_operation: 1,
             next_generation: 1,
@@ -505,6 +521,7 @@ impl Coordinator {
         }
         self.children = Some((companion.id(), server.id()));
         self.forced = false;
+        self.status.last_child_reap = None;
         Ok(())
     }
     pub fn note_forced_termination(&mut self) {
@@ -527,6 +544,12 @@ impl Coordinator {
         let (Some(a), Some(b)) = (a, b) else {
             return self.err(ErrorCode::StopIncomplete, "owned children not both reaped");
         };
+        self.status.last_child_reap = Some(ChildReap {
+            control_epoch: self.status.stop_target.control_epoch,
+            companion: child_exit(companion.id(), &a),
+            server: child_exit(server.id(), &b),
+            forced: self.forced,
+        });
         #[cfg(unix)]
         let server_normal = {
             use std::os::unix::process::ExitStatusExt;

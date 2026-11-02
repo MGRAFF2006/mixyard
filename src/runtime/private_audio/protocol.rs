@@ -260,6 +260,23 @@ pub struct Fenced {
     pub no_late_install: bool,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChildExit {
+    pub pid: u32,
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChildReap {
+    pub control_epoch: u64,
+    pub companion: ChildExit,
+    pub server: ChildExit,
+    pub forced: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Status {
@@ -276,6 +293,9 @@ pub struct Status {
     pub outputs: Vec<PublishedOutput>,
     pub pending_operation: Option<String>,
     pub last_error: Option<Failure>,
+    /// Observed wait results only; this field grants no Fence or Stop authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_child_reap: Option<ChildReap>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

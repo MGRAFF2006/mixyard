@@ -496,5 +496,17 @@
     "repair": "Newproductonlyserver/clientconfigs loadRTmodule mandatory, rt.prio20, directrlimitsenabled, RTKit/portal/DBusdisabled, oneDataLoop. Companion startupbarrieridentifiesthread thenmainqueriesactualFIFO20 beforeconnecting/Ready. ParentboundedoffRTtaskidentity+starttimerechecks querybothownedDataLoopspolicy atbindingobservations. Pinnedmoduleactualmappingrequiredforbothroles; serverexactmoduleallowlist7. Frozensixmodulefixtureunchanged.",
     "authorityLimits": "ProductdoesnotinvokeSUDO/raiseRTPRIO/addcapabilities; pinnedSDKmoduleperformsitsdocumentedRTprobe/RTTIMEsetupusinginheritedpermissions. Clockcontinuity/epoch/mutationdeadlines/Storeguard/Stop/defaultunavailableunchanged. Pointpolicyobservationsnotongoingguaranteeagainstxruns; actualRTproductflowUNRUN. NoSDKrebuild/upgrade/physical/supporteligibilityclaims.",
     "verification": "Source/diff/hash andrustfmtonly, no localhostcompiler/test/target/nativeexecution. Changednative/Rust/configsUNCOMPILED/UNRUN. Newtestprivate_rt_policy_and_task_identity_fail_closedUNRUN. NewconfigfilesmustbeincludedinnextGitinputpacket(64to66Rustclosure). FreshindependentexactHEADbehavior+bugreviews, strictnative/helper/currentRust/targetedtestsandfullproductattemptrequired."
+  },
+  "actualChildReapObservationFollowup": {
+    "previousHead": "cbe4daee5e85fa5385bc9d31e6b10c387ad37b96",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actualProductReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6587790719",
+    "independentEvidenceReview": "https://github.com/MGRAFF2006/mixyard/pull/116#pullrequestreview-5742896181",
+    "actualCbe": "CurrentRust/portableowner/sevenRusttestsPASS; matchingcurrentnative/JSONretainedandfreshlymatched. RealFIFO20DataLoopsinR1/R2. ProductR1Installed Store1/Config2/gen1/epoch1/native23552496; StopComplete/Fenceepoch2. Freshcore/children R2Installed Store2/Config3/gen2/epoch2/native23846690; StopComplete/Fenceepoch3. All8postACKPCM/gain/privacy/Recordmarkers/1024zerotailsPASS;freshnonce/disarmedrestart+defaultfalsePASS. AggregateFAILonlyeightpw-recordSIGINTexit1/quiet, allreaped. Nocleanupfallback.",
+    "evidence": "164manifestverifiedfiles15681024B; archive206592B SHA809ce7053e9c39c83e5034a90f605f2b20c5e5b6cd4dfd32e48676cf967136fb. Private /dev/shm/mixyard-product-attempt-cbe4dae-rt-continuation-root. IndependentBoatstopcompletednonforced2026-11-02T21:24:32.686+01:00 snapshot21:24:32.625+01:00.",
+    "coverageLimits": "OldR1revision/token+endpointbundle rejected; freshtoken+oldbareintegersnotseparatelytested. Nativeper-childexitcodes/signalswerenotseparatelyserialized; existingStopCompleteclassifierallowsserver0orSIGTERM, notproof0/0. Historicalnarrowclassifier/SDKscrubinstrumentation/lowerstackholdsremain.",
+    "repair": "AddnonauthoritylastChildReap privateStatus withcontrolEpoch,actualregisteredPIDs,code/signalperchild,andforcedflagafterbothtry_waitresults. Clearonfreshchildregistration. Do notnormalizeSIGTERMto0 orchangeclassification, Fence/Store/clock/deadline/Stop/defaultgates.",
+    "regressionCoverage": "Extendexistingactualchildmetadata/restarttestforexit0/PID/epoch/reset; source_lossservicefixtureassertsactualcompanionexit0andserverSIGTERMremainseparate. API/authorityfixturesarenotnativeSDKproof.",
+    "verification": "Source/diff/hash/rustfmtonly; changedRustdiagnosticandassertionsUNCOMPILED/UNRUN, nativeCPPunchanged. FreshindependentexactHEADreviewandboundedcurrentbuild/tests/productrunrequired. GStreamerEOS/filefinalizationcandidateunrun; pinnedpw-recordexit1holdunwaived."
   }
 }

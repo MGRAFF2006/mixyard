@@ -113,6 +113,8 @@ DataLoops at existing off-RT binding checks. These point observations neither
 change clock continuity rules nor guarantee freedom from later xruns. The
 frozen six-module native-host fixture is unchanged.
 
+Private status may include `lastChildReap`: `{controlEpoch,companion:{pid,code,signal},server:{pid,code,signal},forced}`. These are actual wait observations after both registered owned children are reaped, not Fence or Stop authority. Exit codes and signals stay distinct; SIGTERM is never presented as exit0. The observation clears on fresh child registration. The existing teardown classifier is unchanged and remains a separate acceptance decision.
+
 The concrete unrun product acceptance and command sequence is in
 [product-flow.md](product-flow.md).
 

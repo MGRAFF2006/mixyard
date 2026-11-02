@@ -530,9 +530,27 @@ fn private_connection_metadata_requires_children_and_is_retired_before_restart()
         .unwrap()
         .allows_stop_complete());
     assert!(c.snapshot().private_core.is_none());
+    assert_eq!(
+        c.snapshot().last_child_reap,
+        Some(ChildReap {
+            control_epoch: 2,
+            companion: ChildExit {
+                pid: companion.id(),
+                code: Some(0),
+                signal: None
+            },
+            server: ChildExit {
+                pid: daemon.id(),
+                code: Some(0),
+                signal: None
+            },
+            forced: false,
+        })
+    );
     assert!(c.register_private_core(core.clone()).is_err());
     let (mut companion, mut daemon) = (child(), child());
     c.register_children(&companion, &daemon).unwrap();
+    assert!(c.snapshot().last_child_reap.is_none());
     let fresh = PrivateCore {
         runtime_directory: "/owned/private-r2".into(),
         config_directory: "/owned/private-r2".into(),

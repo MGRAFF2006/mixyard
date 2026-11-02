@@ -402,6 +402,24 @@ fn settled_source_loss_rejects_mutations_without_retirement_and_exact_stop_reaps
     assert!(children_reaped);
     assert_eq!(status.phase, Phase::Stopped);
     assert!(status.private_core.is_none());
+    let reap = status.last_child_reap.as_ref().unwrap();
+    assert_eq!(reap.control_epoch, status.stop_target.control_epoch);
+    assert_eq!(
+        reap.companion.pid,
+        fixture.service().processes.companion.id()
+    );
+    assert_eq!(
+        (reap.companion.code, reap.companion.signal),
+        (Some(0), None)
+    );
+    assert_eq!(reap.server.pid, fixture.service().processes.daemon.id());
+    // This fixture's plain sleeping Python daemon is terminated by SIGTERM.
+    // Preserve the actual signal instead of presenting classification as exit0.
+    assert_eq!(
+        (reap.server.code, reap.server.signal),
+        (None, Some(libc::SIGTERM))
+    );
+    assert!(!reap.forced);
     assert!(fixture.service().processes.reaped().unwrap());
 }
 
