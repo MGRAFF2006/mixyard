@@ -682,7 +682,9 @@ static void process(void *userdata, spa_io_position *pos) {
   }
   for (size_t o = 0; o < g->no; o++) {
     auto p = e->out[o];
-    if (!p->format_ok.load(std::memory_order_acquire)) {
+    // Missing format during warm-up is not an admitted destination failure.
+    // param_changed still rejects an explicitly malformed negotiated format.
+    if (running && !p->format_ok.load(std::memory_order_acquire)) {
       g->outputs[o].closed.store(true, std::memory_order_release);
     }
     auto b = pw_filter_dequeue_buffer(p);
@@ -2011,9 +2013,24 @@ static void handle(App *a, const std::string &line, bool priority) {
       require(num(get(action, "expectedInventoryRevision")) ==
                   g->inventory.load(),
               "stale-inventory", "native inventory revision changed");
-      require(all_bindings(g) && g->headers.load(std::memory_order_acquire),
-              "clock-unqualified",
-              "links/formats/fresh source headers not ready");
+      bool bindings = all_bindings(g);
+      bool headers = g->headers.load(std::memory_order_acquire);
+      if (!bindings || !headers) {
+        size_t active_links = 0, closed_outputs = 0;
+        for (size_t i = 0; i < g->ns + 2 * g->no; i++)
+          active_links += g->links[i].active.load(std::memory_order_acquire);
+        for (size_t i = 0; i < g->no; i++)
+          closed_outputs += g->outputs[i].closed.load(std::memory_order_acquire);
+        throw Error(
+            "clock-unqualified",
+            "links/formats/fresh source headers not ready; sampled bindings=" +
+                std::to_string(bindings) + "; headers=" + std::to_string(headers) +
+                "; formats=" + std::to_string(graph_formats(g)) +
+                "; active_links=" + std::to_string(active_links) +
+                "; closed_outputs=" + std::to_string(closed_outputs) +
+                "; seen_clock=" + std::to_string(g->seen_clock.load()) +
+                "; generator_clock=" + std::to_string(g->generator_clock.load()));
+      }
       g->clock = g->seen_clock.load(std::memory_order_acquire);
       require(g->clock &&
                   g->clock ==

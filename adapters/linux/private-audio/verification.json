@@ -101,7 +101,7 @@
     "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
     "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
     "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
-    "adapters/linux/private-audio/companion.cpp": "e9c36c02cbb1602d9299fe9597bcde8dabf916e09c404f07e7cb7d0c53f626ec",
+    "adapters/linux/private-audio/companion.cpp": "9f8c6a03eb2628c8140983b8778a1aa7a7f6301780edf8ddfed5cff8818786c4",
     "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
@@ -380,5 +380,14 @@
     "causalLimit": "Observed app_fault25 identifies a core error callback, not its offending request. This source defect is a plausible initiating cause; causal confirmation requires actual rerun.",
     "repair": "Remove unconditional subscription. Enumerate only on parameter-info changes advertising readable Format; invalidate prior format proof when Format is not readable. Retain exact endpoint/format/owner/admission gates and fail on unexpected API errors. Existing core failure includes bounded ASCII id/sequence/result/message on control.",
     "verification": "Source/diff/hash checks only; changed companion is UNCOMPILED/UNRUN. No local compiler/tests or live in-sandbox repair. Next native compile and actual product rerun required."
+  },
+  "warmupDestinationFollowup": {
+    "previousHead": "306de91b382db49fb4979255034c8c7cea638f73",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actual306Results": "Companion/JSON helper, current Rust binaries and named retirement regression passed. Actual product Prepare and all4Link commands succeeded; no app_fault25 recurrence. Apply returned Pending/FailedHeld clock-unqualified: links/formats/fresh source headers not ready. No Installed/PCM/R2 or StopComplete proof.",
+    "sourceDefect": "Engine callback permanently latched output.closed for a missing format even before installation, unlike the admitted-only format-loss callback scope. A later negotiated format cannot clear the closed destination, and Stage requires every destination open.",
+    "repair": "Only an admitted running destination can be latched closed by the engine format-not-ready check. Explicit malformed negotiated formats, buffer/return failures and post-admission format loss remain failures. Stage retains identical bindings/header/common-clock gates.",
+    "causalLimit": "The generic Stage rejection did not identify which predicate failed. This is a confirmed warm-up source defect and plausible Stage blocker, not causal proof; sampled off-RT readiness counts identify any remaining failed predicate in the next run.",
+    "verification": "Source/diff/hash inspection only. Changed companion UNCOMPILED/UNRUN; actual product rerun required."
   }
 }
