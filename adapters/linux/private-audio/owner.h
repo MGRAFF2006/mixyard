@@ -39,16 +39,21 @@ mx_private_copy_input(const struct mx_private_input_view *v, bool admitted,
   if (v->size != 2048 || v->stride != 16 || v->chunk_flags || v->header_flags ||
       v->header_offset || v->dts_offset || ns > INT64_MAX)
     return MX_PRIVATE_INPUT_FATAL;
-  // Fixed private 128-frame/48000-Hz graph only: a coherent previous-quantum
-  // header before admission is not current PCM. Leave the destination zero;
-  // the caller returns the token and cannot mark this source/header ready.
-  // Both guarded subtractions must match; no future or arbitrary stale input.
-  if (!admitted && frame >= 128 && v->sequence == frame - 128 &&
-      v->pts >= 0 && (uint64_t)v->pts <= ns) {
-    uint64_t age = ns - (uint64_t)v->pts;
-    const uint64_t quantum_ns_floor = UINT64_C(128000000000) / 48000;
-    const uint64_t quantum_ns_ceil = (UINT64_C(128000000000) + 47999) / 48000;
-    if (age == quantum_ns_floor || age == quantum_ns_ceil)
+  // Fixed private 128-frame/48000-Hz graph only. Coherent past warm-up
+  // allocations grant no readiness: discard PCM and return the token. Metadata
+  // has no clock/epoch identity; admission still needs exact-current headers
+  // plus the caller's independent binding, epoch and common-clock checks.
+  if (!admitted && v->sequence < frame && v->pts >= 0 &&
+      (uint64_t)v->pts <= ns) {
+    const uint64_t frames = frame - v->sequence, age = ns - (uint64_t)v->pts;
+    // Compare whole seconds and the bounded remainder separately: multiplying
+    // an arbitrary frame delta by 1e9 could overflow even before admission.
+    const uint64_t remainder = (frames % 48000) * UINT64_C(1000000000);
+    const uint64_t floor_ns = remainder / 48000;
+    const uint64_t ceil_ns = floor_ns + (remainder % 48000 != 0);
+    if (frames % 128 == 0 && frames / 48000 == age / UINT64_C(1000000000) &&
+        (age % UINT64_C(1000000000) == floor_ns ||
+         age % UINT64_C(1000000000) == ceil_ns))
       return MX_PRIVATE_INPUT_UNAVAILABLE;
   }
   if (v->pts != (int64_t)ns || v->sequence != frame)

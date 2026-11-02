@@ -508,5 +508,17 @@
     "repair": "AddnonauthoritylastChildReap privateStatus withcontrolEpoch,actualregisteredPIDs,code/signalperchild,andforcedflagafterbothtry_waitresults. Clearonfreshchildregistration. Do notnormalizeSIGTERMto0 orchangeclassification, Fence/Store/clock/deadline/Stop/defaultgates.",
     "regressionCoverage": "Extendexistingactualchildmetadata/restarttestforexit0/PID/epoch/reset; source_lossservicefixtureassertsactualcompanionexit0andserverSIGTERMremainseparate. API/authorityfixturesarenotnativeSDKproof.",
     "verification": "Source/diff/hash/rustfmtonly; changedRustdiagnosticandassertionsUNCOMPILED/UNRUN, nativeCPPunchanged. FreshindependentexactHEADreviewandboundedcurrentbuild/tests/productrunrequired. GStreamerEOS/filefinalizationcandidateunrun; pinnedpw-recordexit1holdunwaived."
+  },
+  "coherentPastWarmupDiscardFollowup": {
+    "previousHead": "bdf50497ab0ee36b680aa8f0599a5eba2c17d1dc",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actualBdfBuildReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6588737000",
+    "actualBdf": "Strict native companion/JSON helper, portable owner, current Rust product/observer build and eight focused Rust tests passed. Exact current artifacts preserved on cloud ROOT. GStreamer tools1.24.2/private plugins setup passed. No product PCM/EOS success at this head.",
+    "actualFailureReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6589190560",
+    "actualFailure": "GStreamer boxed-property quoting failed before recording. Separately native fault26 captured valid preadmission src0 sequence19329690/PTS402701875000 vs expected19330074/402709875000:384frames/8000000ns old, token returned. Reap diagnostic observed companionSIGKILL/server0/forcedtrue; not StopComplete. SDK stale-delivery cause unknown.",
+    "change": "Generalize only coherent past preadmission discard to any integral128-frame age whose48000Hz floor/ceiling PTS age agrees. Compare whole seconds and bounded remainder separately to avoid overflow. No stale PCM is copied, no readiness granted, every native token returned once; failed return fatal. Admitted stale/malformed/future/incoherent input remains fatal. Existing exact-current Stage/Install/RT-switch/common-clock/epoch/binding gates and original2s deadlines unchanged.",
+    "regressions": "Extend actual production owner helper cases: captured3quantum tuple,2quantum floor/ceil and near misses, repeated zero/one-return discards then fresh readiness, whole-second crossing/long age/arithmetic extremes, admitted rejection/return failure and existing malformed negatives. Caller gating inspected independently; helper tests do not execute full SDK caller scheduling.",
+    "verification": "Source/diff only; changed owner header/test UNCOMPILED/UNRUN. Fresh independent exactHEAD review, strict native companion/JSON, portable owner, current Rust/focused tests and product R1/R2/EOS/native0/0 execution required. Local compiler/test/target hold remains. Historical pw-record exit1, malformed/EMPTY causes, admitted continuity and SDK qualification stay separate.",
+    "boatHealthBoundary": "2026-11-02T22:47:37+01:00 corrected recorder packet health preflight failed: Boat API healthy=false/bootstrap request failed; limits/list succeeded with box stopped/completed/nonforced snapshot2026-11-02T22:31:18.632+01:00. No resume/build/native/product execution; no retry loop. Corrected whole-property quotation plus NULL-only parser/readback remains UNRUN."
   }
 }

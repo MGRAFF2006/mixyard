@@ -330,7 +330,7 @@ static void readiness_case(const struct mx_private_input_view *view,
     assert(destination[i] == (expected == MX_PRIVATE_INPUT_READY
                                  ? ((const double *)view->data)[i] : 0.0));
 }
-static void previous_quantum_is_not_ready(void) {
+static void past_warmup_is_not_ready(void) {
   double source[256];
   for (unsigned i = 0; i < 256; i++)
     source[i] = 0.25 + (double)i / 1024.0;
@@ -357,7 +357,50 @@ static void previous_quantum_is_not_ready(void) {
   v.sequence = frame + 128;
   readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
   v.sequence = frame - 256; v.pts = (int64_t)ns - 5333333;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&v, true, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v.pts = (int64_t)ns - 5333334;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_UNAVAILABLE);
+  v.pts = (int64_t)ns - 5333332;
   readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  v.pts = (int64_t)ns - 5333335;
+  readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
+  /* Actual gst-ports failure: structurally valid, three quanta/8ms old. */
+  v = observed; v.sequence = 19329690; v.pts = INT64_C(402701875000);
+  readiness_case(&v, false, 19330074, UINT64_C(402709875000), false,
+                 MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&v, true, 19330074, UINT64_C(402709875000), false,
+                 MX_PRIVATE_INPUT_FATAL);
+  readiness_case(&v, false, 19330074, UINT64_C(402709875000), true,
+                 MX_PRIVATE_INPUT_FATAL);
+  /* Repeated discards cannot become Ready; a later exact buffer can. */
+  const uint64_t later_ns[] = {402709875000, 402712541666, 402715208333,
+                               402717875000, 402720541666, 402723208333,
+                               402725875000, 402728541666};
+  for (unsigned i = 0; i < 8; i++)
+    readiness_case(&v, false, 19330074 + i * 128, later_ns[i], false,
+                   MX_PRIVATE_INPUT_UNAVAILABLE);
+  v.sequence = 19330074; v.pts = INT64_C(402709875000);
+  readiness_case(&v, false, 19330074, UINT64_C(402709875000), false,
+                 MX_PRIVATE_INPUT_READY);
+  /* Crossing a whole second, long coherent age, and arithmetic extremes. */
+  v = observed; v.sequence = 0; v.pts = 0;
+  readiness_case(&v, false, 48128, UINT64_C(1002666666), false,
+                 MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&v, false, 48128, UINT64_C(1002666667), false,
+                 MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&v, true, 48128, UINT64_C(1002666667), false,
+                 MX_PRIVATE_INPUT_FATAL);
+  readiness_case(&v, false, 480000000000, UINT64_C(10000000000000000), false,
+                 MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&v, false, UINT64_MAX - 127, INT64_MAX, false,
+                 MX_PRIVATE_INPUT_FATAL);
+  readiness_case(&v, false, 128, INT64_MAX, false, MX_PRIVATE_INPUT_FATAL);
+  v.sequence = UINT64_MAX - 255; v.pts = INT64_MAX - 2666667;
+  readiness_case(&v, false, UINT64_MAX - 127, INT64_MAX, false,
+                 MX_PRIVATE_INPUT_UNAVAILABLE);
+  readiness_case(&v, true, UINT64_MAX - 127, INT64_MAX, false,
+                 MX_PRIVATE_INPUT_FATAL);
   v = observed; v.pts = (int64_t)ns - 2666665;
   readiness_case(&v, false, frame, ns, false, MX_PRIVATE_INPUT_FATAL);
   v.pts = (int64_t)ns - 2666668;
@@ -424,7 +467,7 @@ int main(int argc, char **argv) {
   exact_pending_fence();
   native_failure_classification();
   every_borrow_returns();
-  previous_quantum_is_not_ready();
+  past_warmup_is_not_ready();
   digest_vectors();
   puts("owner clock/revision, exact fence tuple, late-ticket rejection, strict "
        "native input classification, SHA256: OK");

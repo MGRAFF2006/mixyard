@@ -1,11 +1,15 @@
-# Product private-audio test flow (native execution pending)
+# Product private-audio test flow
 
 This is the separate Linux generated-only scope. The default lifecycle wire
 continues to report backend unavailable and false capabilities. The persistent
 companion is new production-path source, not the timed graph.c test. Its actual
-SDK build and the following product-to-recorder flow have **not** run yet.
+product flow at `cbe4daee5e85fa5385bc9d31e6b10c387ad37b96` reached Installed
+and verified all eight R1/R2 recordings, source-loss zeros and two StopComplete
+receipts. Aggregate acceptance still failed: all eight pw-record processes
+exited 1 after SIGINT. That does not qualify recorder shutdown or the current
+source revision. See the [execution receipt](https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6587790719).
 
-Prerequisites: an independently qualified experimental pinned 1.4.8 prefix,
+Prerequisites: an independently verified experimental pinned 1.4.8 prefix identity,
 complete files/symlinks/totalBytes manifest, the actual compiled companion and
 its hash, and an owned descriptor using the schema in protocol-v1.md. No SDK
 installer, network service, cloud dependency or fallback prefix is provided.
@@ -16,7 +20,13 @@ Use Config source IDs matching the descriptor's generated source IDs. First
 format: f64-le, 48000 Hz, stereo FL/FR, 128-frame native quantum; every mix uses
 this rate/layout and every output target is virtual-input. Physical devices
 and arbitrary process/application capture are unavailable. Config selectors
-are policy aliases for these generated inputs only. Use arbitrary canonical
+are policy aliases for these generated inputs only. Before admission, structurally
+valid past buffers whose sequence and PTS ages agree in whole native quanta
+are returned and discarded with zero owned PCM. They never grant readiness;
+only exact-current headers can satisfy Stage/Install and the RT switch.
+Malformed, future, incoherent or admitted stale buffers remain fatal. Metadata
+alone does not authenticate clock or epoch; independent binding/common-clock/
+epoch gates and the original operation deadline remain mandatory. Use arbitrary canonical
 mix/output IDs and names, including a fourth output; do not rename a fixed
 three-output fixture and call it dynamic publication.
 
