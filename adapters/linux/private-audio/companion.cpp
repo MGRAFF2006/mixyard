@@ -965,6 +965,16 @@ static void create_graph(Generation *g) {
   }
 }
 
+// Registry observers are client-owned proxies, even after server-side removal.
+// Control/main-loop ONLY; Global userdata remains alive until App destruction.
+static void destroy_global_proxy(Global *p) {
+  if (!p->proxy)
+    return;
+  auto proxy = p->proxy;
+  p->proxy = nullptr;
+  spa_hook_remove(&p->hook);
+  pw_proxy_destroy(proxy);
+}
 static Global *global(App *a, uint32_t id) {
   for (auto &g : a->globals)
     if (g->alive && g->id == id)
@@ -1179,6 +1189,7 @@ static void removed(void *data, uint32_t id) {
   if (p) {
     p->alive = false;
     p->format_ok = false;
+    destroy_global_proxy(p);
   }
   for (auto &entry : a->generations) {
     auto g = entry.get();
@@ -2695,8 +2706,12 @@ int main(int argc, char **argv) {
     // Native objects/pools have already been scrubbed and withdrawn through
     // the owner barriers. Context destruction retires the SDK itself before
     // the final Stopped event is serialized. All userdata stays alive here.
+    spa_hook_remove(&a.registry_hook);
+    for (auto &entry : a.globals)
+      destroy_global_proxy(entry.get());
     pw_proxy_destroy((pw_proxy *)a.registry);
     a.registry = nullptr;
+    spa_hook_remove(&a.core_hook);
     pw_core_disconnect(a.core);
     a.core = nullptr;
     pw_context_destroy(a.context);

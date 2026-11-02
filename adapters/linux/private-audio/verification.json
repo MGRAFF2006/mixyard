@@ -101,7 +101,7 @@
     "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
     "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
     "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
-    "adapters/linux/private-audio/companion.cpp": "11fef1e9a3296b586958630f73c8a6d319d72efde264f9203e661b327ad53ac1",
+    "adapters/linux/private-audio/companion.cpp": "a257eac5db54bda93bdf09cc9f340d9c95f6ae846eadc12940351b0d449f9932",
     "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
@@ -460,5 +460,18 @@
     "proofLimits": "This is pre-admission readiness only. No stale sample is copied or installed. No historical malformed/EMPTY cause, StopComplete, R2, clock13, recorder-exit contract or SDK eligibility hold is closed.",
     "nextProbe": "Stop-only diagnostic may use descriptor frameLimit0 (documented infinite source) until explicit Stop. Its full EOF/PCM/R2 milestone remains UNRUN; the original full recording experiment keeps144000-frame sources. All existing resource/deadline/file/capture caps stay unchanged.",
     "verification": "Source, whitespace and hash inspection only. Changed native header and owner-test source are UNCOMPILED/UNRUN. Fresh exact-HEAD independent review, strict native/JSON, portable owner-helper compile/run, current Rust/six regressions and bounded actual Stop probe are required. Local compiler/test/target hold remains."
+  },
+  "observerProxyCleanupRepair": {
+    "previousHead": "c5f1322bf45568320949c10d48a4413ead35a82e",
+    "integrationAgent": "mixyard-integration-owner-cad895ac",
+    "implementationAgent": "mixyard-native-engine-lead; existing delegated native lead; T3 Code / Codex harness / OpenAI; gpt-6.1-sol high",
+    "actualReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6585957885",
+    "actualC5f": "Prior exact-source native compile/JSON passed with799 checks and matching ROOT artifacts. Product-only continuation freshly verified native/SDK/archive identity, passed portable owner C helper, fresh Rust build and six focused tests. Product reached Installed, then supervisor validated Fence(no-pending, ownerQuiesced/pendingPcmZero/noLateInstall true, switched receipt). Companion shutdown emitted22 leaked-proxy warnings, so strict stderr handling produced FailedStopped/forced=true despite both children exit0. No StopComplete.",
+    "completeDiagnostics": "Daemon stderr0 bytes. Companion stderr2793 bytes,22 pw.core/core.c:199 destroy_proxy leaked-proxy warnings, EOFtrue/overflowfalse/incompletefalse/readFailedfalse. Raw pointer addresses remain only in private receipt. Observed port bindings lacked explicit destruction on removal and shutdown.",
+    "change": "A main-control null-safe helper removes the port listener, clears the stored proxy pointer, and calls pw_proxy_destroy once. Registry removal uses it; final shutdown releases remaining observers before registry/core disconnect and detaches registry/core listeners. Pinned SDK destroy releases the reference; no extra unref. No warning classifier, logging suppression, RT barrier, scrub, Fence, deadline or Stopped-order change.",
+    "sdkSource": "https://github.com/PipeWire/pipewire/blob/8b43ed5c910e892d53de5a96aa01e9280a5b6650/src/pipewire/proxy.c",
+    "privateEvidence": "/dev/shm/mixyard-product-attempt-c5f1322-stop-continuation-root: archive143975B SHAa3226ff05590049b61a5e4cbbe4deec91b33ee42872fa50296fb1a1cf468bbbc; complete named stderr and validated Fence observations. Explicit Boat stop completed/nonforced2026-11-02T20:01:46.383+01:00, snapshot20:01:46.327+01:00.",
+    "operatorFailure": "The preceding c5f host wrapper used an obsolete human operation label after native compilation and never launched product testing. It stopped and retained evidence. The continuation reused matching native artifacts and prevalidated the unique pinned controller command before any start. This was an operator error, not product failure.",
+    "verification": "Source/whitespace/hash inspection only for the cleanup change; companion UNCOMPILED/UNRUN. Fresh exact-HEAD review and actual product recording/Stop/R2 testing remain required. Any stderr still fails. Historical SDK/metadata/clock/recorder-exit holds remain separate; no merge or public eligibility claim."
   }
 }
