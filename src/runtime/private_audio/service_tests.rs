@@ -280,6 +280,211 @@ impl Fixture {
         assert!(service.guard.is_some());
         assert_eq!(service.coordinator.snapshot().phase, Phase::Installing);
     }
+    fn install_receipt(&mut self) -> (CompanionRequest, Installed) {
+        let status = self.service().coordinator.snapshot();
+        let pending = status.stop_target.pending_install.as_ref().unwrap();
+        let request = CompanionRequest {
+            companion_version: VERSION,
+            instance_nonce: status.stop_target.instance_nonce.clone(),
+            control_epoch: status.stop_target.control_epoch,
+            operation_id: pending.operation_id.clone(),
+            action: CompanionAction::Install {
+                staged_token: "e".repeat(64),
+            },
+        };
+        let receipt = Installed {
+            instance_nonce: request.instance_nonce.clone(),
+            control_epoch: request.control_epoch,
+            operation_id: request.operation_id.clone(),
+            generation: pending.reserved_generation,
+            store_revision: 1,
+            config_revision: 1,
+            inventory_revision: status.inventory_revision.unwrap(),
+            request_digest: "c".repeat(64),
+            endpoint_set_digest: "d".repeat(64),
+            clock_id: 11,
+            native_switch_frame: 1024,
+            engine_first_frame: 0,
+            first_processed_frame: 1024,
+            output_commits: status
+                .outputs
+                .iter()
+                .map(|o| OutputCommit {
+                    output_id: o.output_id.clone(),
+                    native_frame: 1024,
+                })
+                .collect(),
+            owner_install_terminal: true,
+            no_late_install: true,
+        };
+        (request, receipt)
+    }
+}
+
+// Native-owner API doubles: these prove control/Store/process behavior, not PCM.
+#[test]
+fn settled_source_loss_rejects_mutations_without_retirement_and_exact_stop_reaps() {
+    let mut fixture = Fixture::new(COMPANION);
+    fixture.staged_install();
+    let (mut request, receipt) = fixture.install_receipt();
+    fixture
+        .service()
+        .event(reply(&request, CompanionEvent::Installed { receipt }))
+        .unwrap();
+    request.operation_id = "native-fault".into();
+    fixture
+        .service()
+        .event(reply(
+            &request,
+            CompanionEvent::Fault {
+                error: failure(ErrorCode::SourceLost, "finite source EOF API double"),
+            },
+        ))
+        .unwrap();
+    let status = fixture.service().coordinator.snapshot();
+    assert_eq!(status.phase, Phase::FailedHeld);
+    assert!(status.installed.is_some());
+    assert!(fixture.service().guard.is_none());
+    let mut stale = status.stop_target.clone();
+    stale.active_generation = Some(999);
+    for operation in [
+        Operation::Prepare {
+            instance_nonce: request.instance_nonce.clone(),
+            expected_store_revision: 0,
+            expected_config_revision: 0,
+        },
+        Operation::Prepare {
+            instance_nonce: request.instance_nonce.clone(),
+            expected_store_revision: 1,
+            expected_config_revision: 1,
+        },
+        Operation::Link {
+            instance_nonce: request.instance_nonce.clone(),
+            prepared_token: "b".repeat(64),
+            output_id: "output-0".into(),
+            consumer: status.outputs[0].linked_consumer.clone().unwrap(),
+        },
+        Operation::Apply {
+            instance_nonce: request.instance_nonce.clone(),
+            prepared_token: "b".repeat(64),
+            expected_store_revision: 1,
+            expected_config_revision: 1,
+            expected_inventory_revision: status.inventory_revision.unwrap(),
+        },
+        Operation::Stop { expected: stale },
+    ] {
+        let mut client = fixture.client(operation);
+        assert!(fixture.reply(&mut client).error.is_some());
+        assert!(!fixture.service().failed);
+        assert!(!fixture.service().retired);
+        assert!(fixture.service().retirement.is_none());
+        assert!(!fixture.service().processes.any_exited().unwrap());
+        assert_eq!(
+            fixture.service().coordinator.snapshot().stop_target,
+            status.stop_target
+        );
+    }
+    let mut stop = fixture.client(Operation::Stop {
+        expected: status.stop_target,
+    });
+    let response = fixture.reply(&mut stop);
+    let Some(ResultValue::StopComplete {
+        children_reaped,
+        status,
+        ..
+    }) = response.result
+    else {
+        panic!("source loss must retain the normal exact Stop path: {response:?}")
+    };
+    assert!(children_reaped);
+    assert_eq!(status.phase, Phase::Stopped);
+    assert!(status.private_core.is_none());
+    assert!(fixture.service().processes.reaped().unwrap());
+}
+
+#[test]
+fn pending_source_loss_cancels_now_retains_guard_and_ignores_late_stage() {
+    let mut fixture = Fixture::new(COMPANION);
+    fixture.staged_install();
+    let (request, _) = fixture.install_receipt();
+    let target = fixture.service().coordinator.snapshot().stop_target;
+    let started = Instant::now() - Duration::from_millis(INSTALL_MS / 2);
+    fixture.service().operation_started = Some(started);
+    fixture
+        .service()
+        .event(reply(
+            &request,
+            CompanionEvent::Fault {
+                error: failure(
+                    ErrorCode::SourceLost,
+                    "finite source EOF during install API double",
+                ),
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopping
+    );
+    assert_eq!(
+        fixture
+            .service()
+            .coordinator
+            .snapshot()
+            .stop_target
+            .control_epoch,
+        target.control_epoch + 1
+    );
+    assert!(fixture.service().guard.is_some()); // Queuing Fence is not release proof.
+    assert!(fixture.service().operation_started.is_none());
+    assert!(fixture.service().deferred_native.is_none());
+    let deadline = fixture.service().fence_started;
+    fixture
+        .service()
+        .event(reply(
+            &request,
+            CompanionEvent::Staged {
+                staged_token: "e".repeat(64),
+                generation: 1,
+                config_revision: 1,
+                inventory_revision: 5,
+                request_digest: "c".repeat(64),
+                endpoint_set_digest: "d".repeat(64),
+            },
+        ))
+        .unwrap();
+    assert_eq!(fixture.service().fence_started, deadline);
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopping
+    );
+    assert!(fixture.service().guard.is_some());
+    let snapshot = fixture
+        .service()
+        .store
+        .current_snapshot(STORE_LIMIT)
+        .unwrap();
+    assert_eq!(
+        fixture
+            .service()
+            .store
+            .edit(1, crate::profiles::Edit::Draft(snapshot.config))
+            .unwrap_err()
+            .code,
+        "store-busy"
+    );
+    let start = Instant::now();
+    while !fixture.service().retired {
+        fixture.service().tick().unwrap();
+        assert!(start.elapsed() < Duration::from_secs(3));
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        fixture.service().coordinator.snapshot().phase,
+        Phase::Stopped
+    );
+    assert!(fixture.service().guard.is_none());
+    assert!(fixture.service().processes.reaped().unwrap());
 }
 
 #[test]

@@ -314,6 +314,103 @@ fn late_installed_cannot_escape_stop_or_be_omitted_from_fence() {
 }
 
 #[test]
+fn source_loss_pending_fence_retains_exact_late_install_evidence() {
+    for include_complete in [false, true] {
+        let (mut c, install, receipt) = installing();
+        // Scalar registered handles are an authority double, not SDK evidence.
+        c.children = Some((1, 2));
+        assert!(matches!(
+            c.accept(reply(
+                &install,
+                CompanionEvent::Fault {
+                    error: failure(ErrorCode::SourceLost, "finite EOF authority double"),
+                }
+            ))
+            .unwrap(),
+            Transition::SourceLost
+        ));
+        let target = c.snapshot().stop_target;
+        let fence = c.begin_stop(&target).unwrap();
+        assert!(matches!(
+            c.accept(reply(
+                &install,
+                CompanionEvent::Installed {
+                    receipt: receipt.clone(),
+                }
+            ))
+            .unwrap(),
+            Transition::Snapshot
+        ));
+        assert_eq!(c.snapshot().phase, Phase::Stopping);
+        assert!(c.snapshot().installed.is_none());
+        // Complete late evidence cannot be omitted merely because EOF preceded
+        // the parent observing Installed. No permit exists before this fence.
+        assert_eq!(
+            c.accept(fenced(&fence, &receipt, include_complete)).is_ok(),
+            include_complete
+        );
+    }
+}
+
+#[test]
+fn source_loss_requires_owned_binding_and_later_owner_fault_is_fatal() {
+    for invalid in 0..4 {
+        let (mut c, mut install, _) = installing();
+        c.children = Some((1, 2));
+        match invalid {
+            0 => c.children = None,
+            1 => install.operation_id = "unrelated-operation".into(),
+            2 => install.instance_nonce = "f".repeat(64),
+            3 => install.control_epoch += 1,
+            _ => unreachable!(),
+        }
+        assert!(c
+            .accept(reply(
+                &install,
+                CompanionEvent::Fault {
+                    error: failure(ErrorCode::SourceLost, "unbound EOF authority double"),
+                }
+            ))
+            .is_err());
+        assert!(!c.source_lost_held());
+    }
+    let (mut c, mut install, receipt) = installing();
+    c.children = Some((1, 2));
+    c.accept(reply(&install, CompanionEvent::Installed { receipt }))
+        .unwrap();
+    install.operation_id = "native-fault".into();
+    assert!(matches!(
+        c.accept(reply(
+            &install,
+            CompanionEvent::Fault {
+                error: failure(ErrorCode::SourceLost, "finite EOF authority double"),
+            }
+        ))
+        .unwrap(),
+        Transition::SourceLost
+    ));
+    assert!(c.source_lost_held());
+    assert!(matches!(
+        c.accept(reply(
+            &install,
+            CompanionEvent::Fault {
+                error: failure(
+                    ErrorCode::OwnerFailed,
+                    "subsequent owner failure authority double"
+                ),
+            }
+        ))
+        .unwrap(),
+        Transition::Fault
+    ));
+    assert!(!c.source_lost_held());
+    assert_eq!(
+        c.snapshot().last_error.unwrap().code,
+        ErrorCode::OwnerFailed
+    );
+}
+
+#[test]
 fn linked_reply_cannot_erase_another_approved_consumer() {
     let mut c = Coordinator::new("a".repeat(64)).unwrap();
     let (_, mut outputs) = prepared(&mut c);

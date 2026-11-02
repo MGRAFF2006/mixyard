@@ -277,7 +277,7 @@ struct App {
   std::string phase = "idle", last_code, last_message;
   std::set<std::string> operations;
   bool exit_ready = false, transport_failed = false,
-       native_fault_reported = false;
+       native_fault_reported = false, source_loss_reported = false;
 };
 static void pump(App *a, bool priority);
 static bool continue_build(App *a) {
@@ -292,7 +292,12 @@ static void app_fault(App *a, unsigned code) {
 }
 static void rt_fault(Generation *g, unsigned code) {
   unsigned zero = 0;
-  g->fault.compare_exchange_strong(zero, code, std::memory_order_release);
+  if (!g->fault.compare_exchange_strong(zero, code, std::memory_order_release) &&
+      zero == 7 && code != 7) {
+    // EOF may retain a silent graph; a subsequent ownership/scrub failure may
+    // not remain hidden behind that otherwise recoverable first fault.
+    g->fault.compare_exchange_strong(zero, code, std::memory_order_release);
+  }
   g->headers.store(false, std::memory_order_release);
 }
 static bool current(Generation *g) {
@@ -528,10 +533,17 @@ static void process(void *userdata, spa_io_position *pos) {
         discard_output(p, b);
         continue;
       }
-      if (eof || !current(g)) {
+      if (!current(g)) {
+        memset(pcm, 0, bytes);
+        if (!submit(p, b, pos, true))
+          rt_fault(g, 9);
+        continue;
+      }
+      if (eof) {
         memset(pcm, 0, bytes);
         rt_fault(g, 7);
-        (void)submit(p, b, pos, true);
+        if (!submit(p, b, pos, true))
+          rt_fault(g, 9);
         continue;
       }
       for (unsigned f = 0; f < frames; f++) {
@@ -1434,8 +1446,10 @@ static void canonical_request(Generation *g) {
   add(limits, "maxMixes", g->nm);
   add(limits, "maxSends", count(get(g->config.get(), "sends")));
   add(limits, "maxOutputs", g->no);
+  // The canonical processor owns a Float64 accumulator and a render buffer
+  // per mix, plus each output buffer. Source PCM is borrowed, not render storage.
   add(limits, "maxBufferSamples",
-      uint64_t((g->ns + g->nm + g->no) * frames * 2));
+      uint64_t((2 * g->nm + g->no) * frames * 2));
   add(limits, "maxTotalBytes", g->budget / 2);
   add(limits, "maxDspWorkUnitsPerBlock", uint64_t(1000000));
   add(request.get(), "limits", limits);
@@ -2249,21 +2263,24 @@ static void tick(void *data, uint64_t expirations) {
         a->phase = "running";
       }
     }
-    if (!a->fencing && !a->native_fault_reported &&
-        (a->fault.load(std::memory_order_acquire) ||
-         (g && g->fault.load(std::memory_order_acquire)))) {
+    unsigned app_failure = a->fault.load(std::memory_order_acquire);
+    unsigned generation_failure = g ? g->fault.load(std::memory_order_acquire) : 0;
+    bool scrub_failure = g && g->scrub_failed.load(std::memory_order_acquire);
+    bool source_lost = g && generation_failure == 7 && !app_failure && !scrub_failure;
+    if (!a->fencing && (app_failure || generation_failure || scrub_failure) &&
+        (!a->native_fault_reported || (a->source_loss_reported && !source_lost))) {
       a->admission.store(false, std::memory_order_release);
-      if (a->last_code.empty()) {
-        a->last_code =
-            g && g->fault.load() == 7 ? "source-lost" : "owner-failed";
+      if (a->last_code.empty() || a->source_loss_reported) {
+        a->last_code = source_lost ? "source-lost" : "owner-failed";
         a->last_message =
             "private graph closed; native generation cannot be re-admitted";
       }
       // Main-loop serialization only: RT callbacks latch numeric first faults.
       // No addresses, callback logging, allocation or admission changes.
       a->last_message +=
-          "; app_fault=" + std::to_string(a->fault.load(std::memory_order_acquire)) +
-          "; generation_fault=" + std::to_string(g ? g->fault.load(std::memory_order_acquire) : 0) +
+          "; app_fault=" + std::to_string(app_failure) +
+          "; generation_fault=" + std::to_string(generation_failure) +
+          "; scrub_failed=" + std::to_string(scrub_failure) +
           "; generation=" + std::to_string(g ? g->generation : 0);
       fault_reply(
           a, a->pending.load() ? a->pending.load()->install_op : "native-fault",
@@ -2271,10 +2288,13 @@ static void tick(void *data, uint64_t expirations) {
       // Automatic loss closes/revokes; the parent still owns the exact
       // StopTarget and must Fence explicitly. It NEVER reopens admission.
       a->native_fault_reported = true;
+      a->source_loss_reported = a->last_code == "source-lost";
       a->phase = "failed-held";
       if (pw_data_loop_invoke(a->owner, fault_owner, 0, nullptr, 0, false, a) <
-          0)
+          0) {
+        app_fault(a, 27);
         a->failed_held = true;
+      }
     }
     finish_fence(a);
     pump(a, false);

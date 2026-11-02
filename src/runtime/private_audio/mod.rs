@@ -535,6 +535,21 @@ impl Service {
                 None
             }
             Transition::Snapshot => None,
+            Transition::SourceLost => {
+                let status = self.coordinator.snapshot();
+                if status.installed.is_none()
+                    || status.pending_operation.is_some()
+                    || status.stop_target.pending_install.is_some()
+                {
+                    // A source cannot finish a pending admission after EOF.
+                    // Cancel the exact operation now; never restart its 2s
+                    // mutation budget or release the writer without proof.
+                    self.timeout_fence();
+                }
+                // A settled graph stays admission-closed and streams zeros
+                // until its owner requests the exact normal Stop.
+                None
+            }
             Transition::Fault => {
                 return Err(self
                     .coordinator
@@ -652,7 +667,10 @@ impl Service {
                         }
                     }
                     Err(error) => {
-                        if !self.failed && self.coordinator.snapshot().phase == Phase::FailedHeld {
+                        if !self.failed
+                            && self.coordinator.snapshot().phase == Phase::FailedHeld
+                            && !self.coordinator.source_lost_held()
+                        {
                             self.fail(error.clone());
                         }
                         self.peers[index].reply(Err(error));

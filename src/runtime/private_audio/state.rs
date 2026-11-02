@@ -42,6 +42,7 @@ pub enum Transition {
     Installed(ReleasePermit),
     Fenced(ReleasePermit),
     Snapshot,
+    SourceLost,
     Fault,
 }
 
@@ -71,6 +72,7 @@ pub struct Coordinator {
     late_install: Option<Installed>,
     children: Option<(u32, u32)>,
     forced: bool,
+    source_lost_held: bool,
 }
 
 impl Coordinator {
@@ -112,6 +114,7 @@ impl Coordinator {
             late_install: None,
             children: None,
             forced: false,
+            source_lost_held: false,
         })
     }
     pub fn snapshot(&self) -> Status {
@@ -188,8 +191,12 @@ impl Coordinator {
         }
     }
     pub fn fail_held(&mut self, code: ErrorCode, message: &str) {
+        self.source_lost_held = false;
         self.status.phase = Phase::FailedHeld;
         self.status.last_error = Some(failure(code, message));
+    }
+    pub fn source_lost_held(&self) -> bool {
+        self.source_lost_held
     }
     fn err<T>(&mut self, code: ErrorCode, text: &str) -> Result<T, Failure> {
         self.fail_held(code, text);
@@ -443,6 +450,7 @@ impl Coordinator {
             },
         };
         self.stopping = Some((expected.clone(), request.clone()));
+        self.source_lost_held = false;
         self.expected_native = None;
         self.fenced = None;
         self.status.phase = Phase::Stopping;
@@ -711,8 +719,30 @@ impl Coordinator {
             return Ok(Transition::Ready);
         }
         if let CompanionEvent::Fault { error } = &reply.event {
+            if error.code == ErrorCode::SourceLost {
+                // Only the owned native EOF notification may retain a silent
+                // graph. Client errors or an unrelated native operation cannot
+                // turn an unknown failure into this recoverable control path.
+                if self.children.is_none()
+                    || self.stopping.is_some()
+                    || self.reserved_generation.is_none()
+                    || (reply.operation_id != "native-fault"
+                        && self.status.pending_operation.as_ref() != Some(&reply.operation_id))
+                {
+                    return self.err(ErrorCode::ProtocolError, "unbound native source loss");
+                }
+                self.fail_held(error.code, &error.message);
+                self.source_lost_held = true;
+                return Ok(Transition::SourceLost);
+            }
             self.fail_held(error.code, &error.message);
             return Ok(Transition::Fault);
+        }
+        if self.source_lost_held {
+            return self.err(
+                ErrorCode::ProtocolError,
+                "native progress after source loss",
+            );
         }
         if let CompanionEvent::Fenced { receipt } = &reply.event {
             let (old, request) = self

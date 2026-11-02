@@ -101,7 +101,7 @@
     "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
     "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
     "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
-    "adapters/linux/private-audio/companion.cpp": "9f8c6a03eb2628c8140983b8778a1aa7a7f6301780edf8ddfed5cff8818786c4",
+    "adapters/linux/private-audio/companion.cpp": "02cc93c0b9384b493e581facbf7dcc9f347632801d93df31ae75da73ed7d83f2",
     "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
     "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
     "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
@@ -120,12 +120,12 @@
     "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
     "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
     "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
-    "src/runtime/private_audio/mod.rs": "a46171257e71375052a52ab3cd683df6cdb4d81b1af85e06aa7ae37ab3fba64f",
+    "src/runtime/private_audio/mod.rs": "081517f01afaf3cb0c49c63245e302c4ad57ea8256e7d16eb35bafa593e621f4",
     "src/runtime/private_audio/process.rs": "8ae0489133c829461fb53384b7b5ef703bae9053986ae591ef23f96b5169c9e9",
     "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
-    "src/runtime/private_audio/service_tests.rs": "69ac938ef42e3e9ed2e18944562f7135d8ebf00b8d41d41fb7ef44910903c766",
-    "src/runtime/private_audio/state.rs": "80a77f3b388a172c75e0da9c0f07552a97d1cb4fcfdf67b79e72b698c3e9d9cd",
-    "src/runtime/private_audio/state_tests.rs": "7f70c027c7370befc3bceedc03993f9bc94dd7c7586d0c4bab3d5347e7be51b3"
+    "src/runtime/private_audio/service_tests.rs": "a392b9e123636b2eab3152e593365991f4417a8e76ce6c28eeed3d59b511b164",
+    "src/runtime/private_audio/state.rs": "057d375d0ef69c4b0c3280a6273e190bd500e9f53525e343a0093a77254d9507",
+    "src/runtime/private_audio/state_tests.rs": "c81b6e403bebcf992e0114a847a3242ba6e49522c33ae69c2b5997040097ae02"
   },
   "rootReviewFollowup": {
     "reviewedHead": "5ab148108b8e82e0278e0647321c9986adcf0eab",
@@ -389,5 +389,17 @@
     "repair": "Only an admitted running destination can be latched closed by the engine format-not-ready check. Explicit malformed negotiated formats, buffer/return failures and post-admission format loss remain failures. Stage retains identical bindings/header/common-clock gates.",
     "causalLimit": "The generic Stage rejection did not identify which predicate failed. This is a confirmed warm-up source defect and plausible Stage blocker, not causal proof; sampled off-RT readiness counts identify any remaining failed predicate in the next run.",
     "verification": "Source/diff/hash inspection only. Changed companion UNCOMPILED/UNRUN; actual product rerun required."
+  },
+  "productInstallAndSourceLossFollowup": {
+    "previousHead": "f3758f4f290890eae014d7eaf9e2f5cbeef39c93",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "rustImplementationAgent": "source_loss_path; T3 Code/Codex/OpenAI gpt-6.1-sol high; /root/source_loss_path",
+    "actualReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6583156276",
+    "actualF375Results": "Strict native compile/link/size and JSON helper, current Rust CLI/runtime build and named retirement regression passed. Canonical R1 prepared and linked all4ordinary outputs. Apply advanced beyond readiness but canonical processor rejected render storage caller budget. Pending/FailedHeld, no Installed/PCM/R2. Stop Busy then owned TERM fallback, not StopComplete. All captured/outer leaders reaped. Sandbox explicit stop completed/nonforced2026-11-02T17:00:30.190Z with ROOT snapshot verified17:00:29.577Z.",
+    "confirmedBudgetDefect": "Caller counted sources+mixes+outputs but canonical processor render storage owns2mix slots(accumulator/render)+output slots; sources are borrowed. Current3source4mix4output requested2816samples instead of3072. Fix uses2mixes+outputs; descriptor/resident/maxTotalBytes limits unchanged.",
+    "sourceLossDefect": "Rust previously forced retirement for every native Fault. Genuine finite EOF therefore could not retain zero output until explicit exact Stop or normal fresh-core R2. Settled SourceLost now retains FailedHeld/admissionclosed graph; pendingSourceLost immediately priority-fences the exact operation with existing guard and late-event quarantine. Stale client rejection cannot force heldEOF retirement. Unknown/malformed/owner faults remain fatal.",
+    "nativeClassification": "Only actual EOF emits generation fault7. Non-current generation emits scrubbed silence without claiming EOF. A subsequent nonEOF RT fault supersedes7; app fault or scrub failure prevents SourceLost classification and can emit a second fatal notification. Owner-invoke failure records app27. All diagnostics/control remains offRT.",
+    "addedRegressions": "source_loss filter covers4API/authority-double tests: settledEOF/stale/exactStop/actualreaps; pendingEOF/exactFence/Storeguard; lateInstalled completeFence evidence; binding/malformed/laterowner fatal. Not SDK proof.",
+    "verification": "Source/diff/hash and rustfmt-only checks; changed native/Rust/tests UNCOMPILED/UNRUN. Exact independent review then strict native/helper and bounded fresh currentRust/targetedsource_loss+retirement/product trial required. No local compiler/test/target run."
   }
 }
