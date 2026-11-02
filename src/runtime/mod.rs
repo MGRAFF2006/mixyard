@@ -15,6 +15,8 @@ mod inventory_state;
 pub mod linux_audio;
 #[cfg(any(target_os = "macos", windows, test))]
 mod native_inventory;
+#[cfg(target_os = "linux")]
+pub mod private_audio;
 pub mod recording;
 pub mod worker;
 pub use client::{
@@ -236,10 +238,40 @@ pub fn serve(instance: &str) -> io::Result<()> {
 }
 
 pub fn serve_with_inventory(instance: &str, options: inventory::Options) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    return serve_with_private_audio(instance, options, None);
+    #[cfg(not(target_os = "linux"))]
+    serve_inner(instance, options)
+}
+
+#[cfg(target_os = "linux")]
+pub fn serve_with_private_audio(
+    instance: &str,
+    options: inventory::Options,
+    private: Option<private_audio::Options>,
+) -> io::Result<()> {
+    serve_inner(instance, options, private)
+}
+
+fn serve_inner(
+    instance: &str,
+    options: inventory::Options,
+    #[cfg(target_os = "linux")] private: Option<private_audio::Options>,
+) -> io::Result<()> {
     let mut listener = transport::Listener::bind(&endpoint(instance)?)?;
+    #[cfg(target_os = "linux")]
+    let mut private = private
+        .map(|options| {
+            private_audio::Service::start(instance, &listener.owned_directory()?, options)
+        })
+        .transpose()?;
     let mut peers: Vec<Peer> = Vec::new();
     let mut stopping: Option<Instant> = None;
     loop {
+        #[cfg(target_os = "linux")]
+        if let Some(service) = &mut private {
+            service.tick()?;
+        }
         if stopping.is_none() && peers.len() < MAX_CLIENTS {
             if let Some(stream) = listener.accept()? {
                 peers.push(Peer::new(stream));
@@ -404,6 +436,10 @@ pub fn serve_with_inventory(instance: &str, options: inventory::Options) -> io::
         });
         if let Some(start) = stopping {
             if peers.is_empty() || start.elapsed() >= REQUEST_TIMEOUT {
+                #[cfg(target_os = "linux")]
+                if let Some(service) = &mut private {
+                    service.shutdown()?;
+                }
                 return Ok(());
             }
         }

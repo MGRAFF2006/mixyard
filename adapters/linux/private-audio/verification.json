@@ -1,0 +1,525 @@
+{
+  "schemaVersion": 2,
+  "scope": "owned-private-generated-v1",
+  "qualification": "portable source repair only; no SDK qualification",
+  "historical341Delivery": {
+    "schemaVersion": 1,
+    "scope": "owned-private-generated-v1",
+    "qualification": "portable-source-delivery-only",
+    "sourcePrerequisites": {
+      "frozenNativeSource": "5b3399a63468bdcd1cb0dbc4b40d0ecc5f14fc24",
+      "standardRecordingSource": "89f601800af6b555386f7c69d037908ad79a5865",
+      "acceptedMain": "b63ccd2ac9e25566364ec179eaf9a2fc1f964bf7",
+      "normalJoin": "c0c9a0291316f00ed6c4100d7c196dfaa13eac1f"
+    },
+    "toolchain": {
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+      "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
+    },
+    "passed": {
+      "rustLibTests": 73,
+      "rustCommand": "cargo test --offline --locked --jobs 1 --lib -- --test-threads=1",
+      "clippyCommand": "cargo clippy --offline --locked --jobs 1 --lib --bin mixyard --bin mixyard-runtime -- -D warnings",
+      "rustBinsBuilt": [
+        "mixyard",
+        "mixyard-runtime"
+      ],
+      "cliHelpExecuted": [
+        "mixyard private-audio --help",
+        "mixyard-runtime --help"
+      ],
+      "portableC": "bash adapters/linux/private-audio/test.sh --owner-only",
+      "formatAndSourceChecks": [
+        "cargo fmt --check",
+        "git diff --check",
+        "bash -n build.sh test.sh",
+        "Python AST parse"
+      ]
+    },
+    "proofLimits": [
+      "Service tests use explicitly labeled native-owner API doubles and real owned child processes; they are not SDK evidence.",
+      "Current source manifest is a delivery record, not an independent fresh SDK/compiler-input attestation.",
+      "Final rustfmt changed only process.rs whitespace after the last semantic test/build run."
+    ],
+    "unrun": [
+      "PipeWire companion SDK compilation/link/run",
+      "json-c helper (development headers/pkg-config absent)",
+      "actual product serve/private R1 and R2 ordinary-recorder PCM",
+      "native fourth-output execution, SDK buffer retirement coverage and callback heap audit",
+      "fresh all-target Cargo/platform checks and independent exact-head final review"
+    ],
+    "resource": {
+      "targetHardCapBytes": 268435456,
+      "combinedAreaCapBytes": 402653184,
+      "largestSampledCountedTargetBytes": 220875340,
+      "initialForecastBytes": 201326592,
+      "initialForecastWasExceeded": true,
+      "blockedInvocation": "A later 256MiB additional-growth preflight failed before Cargo launch; subsequent preflight used verified remaining growth to the unchanged hard256MiB target cap (67303235 bytes), preserving root10GiB+16MiB and continuous cap checks.",
+      "noDownloads": true,
+      "incrementalCompilation": false,
+      "buildJobs": 1,
+      "targetOnRoot": true,
+      "tmpOutputs": false
+    },
+    "holds": [
+      "PR90/115 and both historical native cause/SDK eligibility holds remain separate; no ordinary error waiver.",
+      "Default lifecycle backend/capabilities remain unavailable/false/null.",
+      "No physical, personal-server, application capture, hardware clock or broad SDK support claim."
+    ],
+    "sourceFilesSha256": {
+      "Cargo.lock": "cdddf79a58bdd729f86c307458315d1d07199744752d2ddc7bcd98982bab5f27",
+      "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
+      "adapters/linux/private-audio/README.md": "9f7e8b427013f185d8da2f68df1936f86a5bdd31e12322a9b11bd157acfea785",
+      "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
+      "adapters/linux/private-audio/companion.cpp": "cdb916a5e0d54773991ea5d3d97eccb5400616039b775ced6bcc0ca643e3614e",
+      "adapters/linux/private-audio/json.hpp": "2d4985171a1bbb7fabc323db7fb9d5f125f011a50119c655a2215e7421e24876",
+      "adapters/linux/private-audio/owner.h": "59d65f8143fbb3cb86c7092968037401658ddc81fd1c88c800deafa7ca1869a0",
+      "adapters/linux/private-audio/product-flow.md": "8ec86d414c5b5c94fb3bbc63f9f53ed978c6399f71690a541290a8a2ab205860",
+      "adapters/linux/private-audio/protocol-v1.md": "49b91bf764ff08ef79c0edd37b2c6bb6e1c92afe981b46c996cfd8907064765b",
+      "adapters/linux/private-audio/resource_guard.py": "1053b6e6111533351a8995f46407a0095604ee2dae2d5745c02459abbb55fc5b",
+      "adapters/linux/private-audio/sha256.h": "4366b1629d55205939f4d974402005406c0910b12ce4d7dc0a4a03605b647499",
+      "adapters/linux/private-audio/test.sh": "e3ee70a32f8bdf64d3fc856b429d9306eb30340330e22dedf6cb19078f5036a9",
+      "adapters/linux/private-audio/test_json.cpp": "413b609bc08dae5e7c546ff24ddb3060ce64571206b17df86fcecac0c75de0aa",
+      "adapters/linux/private-audio/test_owner.c": "88cc53f2b4898a4a23152140a02f97fa870d8ab78c2a38e754eec54512ddd48e",
+      "src/bin/mixyard-runtime.rs": "3cfbc9c1c32bfb3aa5e006f5a8ccd8d7468e9e8e5b9390712b42c9989bb65b48",
+      "src/main.rs": "9fab453d2d5fcde26b8e7a31c1aff015ec3f7a19abc86e24732a8a89715a70a5",
+      "src/profiles.rs": "8d5bc6fdc89275d46cdc70dddf68abfc3157c3068613002cd0cfd60d87b17fc3",
+      "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
+      "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
+      "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
+      "src/runtime/private_audio/mod.rs": "85e4c8f0eceaf377f1ddf52a1a24a6b9128121ab20b91477c9e6adf51c5db38b",
+      "src/runtime/private_audio/process.rs": "4ca88840cfa393773cc988c52cf76907af4172a652c6cae367d39bc767eb0564",
+      "src/runtime/private_audio/protocol.rs": "f79cff3b6a324b3981297ceeede996cccb2cbb53db1db0ff690084d5cf9c2031",
+      "src/runtime/private_audio/service_tests.rs": "8d5fbbefdf459dc9d110f83b3b02d7f7a1c29b2a48ca8b9f24f4ab79c6b95f8a",
+      "src/runtime/private_audio/state.rs": "9533f179a6037a270e528fe1d3638b8d457ba0071f4b74947efe5fd0474240b7",
+      "src/runtime/private_audio/state_tests.rs": "500b43297d25f0ea86775bd5a378bb7eec6f063ea3706497dbc214c710bf40a9"
+    }
+  },
+  "currentReviewRepairRecord": "review-repairs.json",
+  "currentSourceFilesSha256": {
+    "Cargo.lock": "cdddf79a58bdd729f86c307458315d1d07199744752d2ddc7bcd98982bab5f27",
+    "Cargo.toml": "17d666d2541d0dea4f93d179c20d9b32da452f5b709415f0730e05bd67f1bcd9",
+    "adapters/linux/private-audio/README.md": "dafdd741283de9546ac96a1ca1a96c392eebc975199570560abd438376115011",
+    "adapters/linux/private-audio/build.sh": "88105c13dcfe2e6e8f3d847e828c2fd6413fde3b719d599b04b857ef10ba468d",
+    "adapters/linux/private-audio/companion.cpp": "a257eac5db54bda93bdf09cc9f340d9c95f6ae846eadc12940351b0d449f9932",
+    "adapters/linux/private-audio/compile-plan.json": "2a79270a17e95d91191568eb4da367b0b13f04db6b880bf4687d4e7d970f2a5c",
+    "adapters/linux/private-audio/control_transport.h": "9d2c1b7f710ae2cd899c8e62bddd3c8a0f3b1bb9554c3685a8ba14a85586bfd0",
+    "adapters/linux/private-audio/json.hpp": "cf06426a58a1c8da1b5e1b0739c493d6e20224055ca11c66a0f6d47f9472d6b4",
+    "adapters/linux/private-audio/owner.h": "52c96b9bf6e3cd8cb8f2856e85241eecf3131acee28f279dadbf625928a1a64a",
+    "adapters/linux/private-audio/product-flow.md": "8ec86d414c5b5c94fb3bbc63f9f53ed978c6399f71690a541290a8a2ab205860",
+    "adapters/linux/private-audio/protocol-v1.md": "42b7e3fbe16b67444f61e52d17f44fcdeaf19282bd2099f505f1967f87c15628",
+    "adapters/linux/private-audio/resource_guard.py": "1053b6e6111533351a8995f46407a0095604ee2dae2d5745c02459abbb55fc5b",
+    "adapters/linux/private-audio/review-repairs.json": "9f401256f224f5741b5d8e7865322b4be0f915da15f9a6c24f8c0c2b14658c9c",
+    "adapters/linux/private-audio/sha256.h": "4366b1629d55205939f4d974402005406c0910b12ce4d7dc0a4a03605b647499",
+    "adapters/linux/private-audio/test.sh": "e3ee70a32f8bdf64d3fc856b429d9306eb30340330e22dedf6cb19078f5036a9",
+    "adapters/linux/private-audio/test_json.cpp": "78c7fae1f78cdba323f6b8a3a1a72e1f845b170f2612e2ea89bb6bb55cbf3fbf",
+    "adapters/linux/private-audio/test_owner.c": "85388572d9fc9cb12fc76bc653246ce07d58bf5c0fad6f82d0be8f037739efad",
+    "src/bin/mixyard-runtime.rs": "3cfbc9c1c32bfb3aa5e006f5a8ccd8d7468e9e8e5b9390712b42c9989bb65b48",
+    "src/main.rs": "9fab453d2d5fcde26b8e7a31c1aff015ec3f7a19abc86e24732a8a89715a70a5",
+    "src/profiles.rs": "8d5bc6fdc89275d46cdc70dddf68abfc3157c3068613002cd0cfd60d87b17fc3",
+    "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
+    "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
+    "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
+    "src/runtime/private_audio/mod.rs": "b5ab3d36a7a6724e6390414bfcf9195fe135e7af7c244612857628f4173e94a0",
+    "src/runtime/private_audio/process.rs": "23c53995e384e0961d5d35250652bbfff0bcddb5098abef5a3d68084f60d72eb",
+    "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
+    "src/runtime/private_audio/service_tests.rs": "452266ae51f0370e59deb63073a75a6f395851fe7b8b0ef0b3024ed3565b7305",
+    "src/runtime/private_audio/state.rs": "6353c7efb7746731ee6db693f8ca08b03ba79f41d1db7eab65dc845ea2c0d8e5",
+    "src/runtime/private_audio/state_tests.rs": "c81b6e403bebcf992e0114a847a3242ba6e49522c33ae69c2b5997040097ae02"
+  },
+  "rootReviewFollowup": {
+    "reviewedHead": "5ab148108b8e82e0278e0647321c9986adcf0eab",
+    "review": "https://github.com/MGRAFF2006/mixyard/pull/116#pullrequestreview-5714565460",
+    "agent": "mixyard-web-owner",
+    "changes": [
+      "Shutdown travels on the existing priority socket; partially sent normal frames are neither replaced nor resumed during graceful retirement.",
+      "Each accepted Prepare/Link/Apply owns one original2s service budget through Ready/Reserved/Stage/Install; terminal outcome or priority fencing clears it, not peer disconnect.",
+      "Deadline checks precede late child-event acceptance and deferred normal dispatch; Staged does not reset either operation or peer budget."
+    ],
+    "newRegressionSourcesUnrun": [
+      "graceful_shutdown_uses_priority_after_a_partially_written_normal_frame",
+      "ready_child_reservation_deadline_fences_without_a_peer_and_ignores_late_reserved",
+      "late_staged_cannot_acquire_guard_or_restart_an_expired_apply",
+      "staged_preserves_original_apply_and_peer_deadlines"
+    ],
+    "checksPerformed": [
+      "rustfmt edition2021 with skip_children=true (source parsing/formatting only)",
+      "git diff --check",
+      "current source-manifest SHA256 equality"
+    ],
+    "executionLimits": [
+      "No local compiler/build/test or test-helper process was launched for this followup; existing operational hold remains in force.",
+      "The four added Rust regressions are uncompiled and unexecuted at source delivery; source-derived defects were not reproduced against the old binary.",
+      "Historical77/2ignored library and2explicit bridge passes apply to5ab source only; new-head CI/review pending.",
+      "Actual companion SDK compilation, JSON helper, native handlers, four-consumer R1/R2 recordings, heap and SDK scrub remain unrun."
+    ],
+    "followupSourceHead": "7e370f8088321930ba10fb68cc4d3ab8bbe5d21e"
+  },
+  "rootTestFixtureFollowup": {
+    "previousHead": "7e370f8088321930ba10fb68cc4d3ab8bbe5d21e",
+    "review": "https://github.com/MGRAFF2006/mixyard/pull/116#pullrequestreview-5714894836",
+    "agent": "mixyard-web-owner",
+    "productionDisposition": "Prior production framing/deadline findings assessed source-resolved by independent whole review; actual SDK execution remains unrun.",
+    "observedPreviousHeadFailures": {
+      "library": "Six inspected Ubuntu jobs80 passed/1 failed/2ignored; IPC job79 passed/2 failed/2ignored. Duplicate reservation in new test setup failed before deadline assertions; IPC also observed generic retirement error replacing the Ready marker.",
+      "linuxShell": "Push job124156558259 timed out waiting for visible native window; separate current failure/cause unresolved."
+    },
+    "changes": [
+      "Expected generation and exact-frame digest are constructed without reserving the same operation twice; production queue_command remains the single reservation owner.",
+      "Ready regression reads the actual owner-double Fault through production Processes.events before cleanup, instead of asserting a transient marker in the mutable retirement error."
+    ],
+    "newHeadVerification": "Source formatting/parsing, diff and manifest checks only; corrected regressions have not run locally under the compiler hold. New-head CI and fresh independent review pending.",
+    "scope": "Only service_tests.rs plus this verification record change versus7e; production source/guards/protocol/budgets are unchanged.",
+    "holds": [
+      "No local compiler/test/helper process/cloud execution authorized or launched for this followup.",
+      "Actual companion SDK compile/link/native-handler/four-consumer R1/R2/heap/scrub execution remains unrun.",
+      "Historical90/115/SDK/cause/recorder and Linux visibility holds remain."
+    ],
+    "followupSourceHead": "1d56ac4f92f67352b95e78bb2002c0b81fc93521"
+  },
+  "actualSdkCompileFollowup": {
+    "sourceHead": "1d56ac4f92f67352b95e78bb2002c0b81fc93521",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6527817270",
+    "outcome": "First companion compilation failed; link, final size and JSON stages not reached. No native companion/product execution.",
+    "archive": {
+      "kind": "static-ar-archive",
+      "bytes": 26178288,
+      "sha256": "04a3547066acd9e55d77b21e4d971e4b67041530b6720908f31578a9223d0a73",
+      "canonicalRegularNonSymlink": true,
+      "magicHex": "213c617263683e0a",
+      "freshRustBuild": false
+    },
+    "prefix": {
+      "files": 347,
+      "symlinks": 11,
+      "bytes": 10517488,
+      "elfBuildIds": 57,
+      "version": "1.4.8",
+      "librarySha256": "a137541d8e98b71b53d3294535212dd311bf5e77fe8a5791c71977dbe0b4cbf1",
+      "libraryBuildId": "05f1c03afc6324831bf032ed7274f34f70a16216",
+      "scope": "Compile inputs and identity-only public version query; no companion runtime binding or general SDK eligibility."
+    },
+    "compiler": {
+      "executable": "/usr/bin/x86_64-linux-gnu-g++-13",
+      "exitCode": 1,
+      "stderrBytes": 1435,
+      "stderrSha256": "8a2f9f5dd64fb047fe7f477f934ee09f2dbf60f4a8ff6723b1b88f075388063b",
+      "failure": "companion.cpp1087: const uint32_t* supplied to public pw_port_subscribe_params uint32_t* parameter",
+      "flagsUnchanged": true,
+      "retry": false
+    },
+    "report": {
+      "bytes": 545047,
+      "sha256": "958ec63c644f5f41a8dc8e7990e4f5619018a0e621e6547b0814c1043909833d",
+      "prechecks": 797,
+      "allStartedLeadersReaped": true,
+      "remainingOwnedGroupMembers": 0,
+      "processScanUnavailableEntries": 0
+    },
+    "rootStopVerification": {
+      "state": "stopped",
+      "status": "completed",
+      "forced": false,
+      "stoppedAt": "2026-10-30T16:25:36.525Z",
+      "completedAt": "2026-10-30T16:25:36.575Z",
+      "snapshotVerifiedAt": "2026-10-30T16:25:36.465Z",
+      "note": "Author immediate stop receipt was pending; root independently observed completion afterward."
+    },
+    "currentSourceRepair": [
+      "Mutable local uint32_t parameter agrees with the public API; no const_cast, warning relaxation or lifetime/ownership change.",
+      "Tracked compile-plan now pins the actual static archive04a rather than shared ELF0e8, with explicit artifact kind and evidence provenance."
+    ],
+    "currentValidation": "Source/diff/manifest checks only. No local compiler/test, cloud retry or helper launched for this followup; changed companion remains uncompiled.",
+    "remaining": "Link/size/JSON/native handlers/four consumers/product R1/R2/heap/scrub and all90/115/cause/SDK/recorder holds remain.",
+    "followupSourceHead": "1834dc4f39381668f73a727423e37e8072253c48"
+  },
+  "compiledCompanionJsonFixtureFollowup": {
+    "sourceHead": "1834dc4f39381668f73a727423e37e8072253c48",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6528250798",
+    "overallOutcome": "FAIL at JSON fixture compiler after companion compile/link/size PASS; no retry or helper/native execution.",
+    "companion": {
+      "compileAndLinkPassed": true,
+      "exitCode": 0,
+      "seconds": 2.04478,
+      "stdoutBytes": 0,
+      "stderrBytes": 0,
+      "binaryBytes": 1315640,
+      "binarySha256": "91eada3b9b1b25ce33c61408ddad4939ffa14c5412c7c4348f9f60757f063658",
+      "recipe2MiBLimitPassed": true,
+      "strictFlagsUnchanged": true,
+      "executed": false
+    },
+    "jsonFixture": {
+      "compileExitCode": 1,
+      "seconds": 0.30553,
+      "stderrBytes": 1016,
+      "stderrSha256": "c73bc6e8f4b64470ad0d93fa7a9a3be5424410aef12560681a977099cca853a6",
+      "cause": "test_json.cpp20: length13 requests bytes beyond a const char[12] literal; GCC13 -Werror=array-bounds",
+      "executed": false
+    },
+    "preflight": "Fresh static archive04a,23 scoped host inputs,347 prefix files/11 links/10517488bytes/57ELF build IDs/header/runtime/pkg/compiler checks passed; historical host reuse only.",
+    "report": {
+      "bytes": 543422,
+      "sha256": "c2d41a29b20f318217e7d4beb0654b9be95193b8ca38428e6b754213508c69c9",
+      "prechecks": 798,
+      "allStartedLeadersReaped": true,
+      "remainingOwnedGroupMembers": 0,
+      "processScanUnavailableEntries": 0,
+      "sampledCompileAreaPeakBytes": 1987458
+    },
+    "artifactPreservation": "Not invoked because both stages did not pass; compiled binary was not copied to persistent root or host, future availability UNKNOWN.",
+    "rootStopVerification": {
+      "state": "stopped",
+      "status": "completed",
+      "forced": false,
+      "stoppedAt": "2026-10-30T16:46:43.368Z",
+      "completedAt": "2026-10-30T16:46:43.391Z",
+      "snapshotVerifiedAt": "2026-10-30T16:46:43.325Z",
+      "note": "Author immediate verification remained pending; root independently observed completion afterward."
+    },
+    "currentFixtureRepair": "Use a constexpr char array and sizeof(array)-1 for the embedded-NUL negative, preserving all intended JSON bytes without an out-of-bounds read. No warning suppression or parser weakening.",
+    "sourceApplicability": "Current companion translation unit, headers, build flags and host inputs remain byte-identical to compiled1834; only test_json.cpp plus verification metadata change.",
+    "currentVerification": "Source/diff/manifest checks only; corrected JSON helper is uncompiled/unexecuted locally. Local compiler/test hold active.",
+    "remaining": "JSON helper compile/run and actual native handlers/four consumers/product R1/R2/heap/scrub execution,90/115 and other historical holds remain.",
+    "followupSourceHead": "7f76a8a180b43887b63cdcce5b4f2bce68e6e85e"
+  },
+  "jsonNonFiniteRepair": {
+    "observedAtSource": "7f76a8a180b43887b63cdcce5b4f2bce68e6e85e",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6528561946",
+    "actualPreviousResults": {
+      "companion": "Compile/link/size PASS, exit0, empty diagnostics, ELF1315640B SHA91eada3b9b1b25ce33c61408ddad4939ffa14c5412c7c4348f9f60757f063658; never executed.",
+      "jsonHelperCompile": "PASS, exit0, empty diagnostics,41736B SHA1ed90ac7b382bbfbb0c0fbc9d2dd30db7ae93c78f00c898d6f46e014dcc390e1",
+      "jsonHelperRun": "FAIL SIGABRT(-6) at existing assert rejected({a:NaN}); production wire::parse accepted the input. Subsequent controls including embeddedNUL were not reached.",
+      "runStderrBytes": 166,
+      "runStderrSha256": "0b5911e15a63c7bc4894c634851ab92d1ceb994b6b2d5146bc2918ba61908ef5",
+      "overall": "FAIL; no retry, assertion removal or binary preservation."
+    },
+    "report": {
+      "bytes": 544907,
+      "sha256": "8d34818b54133605daa9205ca90eba5b7dcd48a0b011fbc890778f1ec93e3783",
+      "prechecks": 799,
+      "allStartedLeadersReaped": true,
+      "remainingOwnedGroupMembers": 0,
+      "processScanUnavailableEntries": 0
+    },
+    "rootStopVerification": {
+      "state": "stopped",
+      "status": "completed",
+      "forced": false,
+      "stoppedAt": "2026-10-30T17:01:34.775Z",
+      "completedAt": "2026-10-30T17:01:34.807Z",
+      "snapshotVerifiedAt": "2026-10-30T17:01:34.689Z",
+      "note": "Author immediate verification was pending; root independently observed completion."
+    },
+    "repair": "After existing bounded-depth/size scan and strict json-c parse, recursively reject non-finite double values throughout objects/arrays. Preserve finite numbers, null/booleans and text containing NaN/Infinity. No reserialization or config-byte changes.",
+    "controlsAdded": "Retain original actual-failing NaN assertion; add Infinity, negativeInfinity, nestedNaN, exponent overflow rejection and finite/boolean/null/string positive parsing. Existing duplicate/unknown/size/NUL/exactConfig-byte controls remain.",
+    "executionScope": "wire::parse callers are control/startup/builder paths; no callback JSON traversal or new RT work.",
+    "currentVerification": "Source/diff/manifest checks only. Changed production header and expanded control are UNCOMPILED/UNRUN under local hold; actual earlier NaN failure is RED, no current GREEN claim.",
+    "separateWindowsCiHold": {
+      "head": "7f76a8a180b43887b63cdcce5b4f2bce68e6e85e",
+      "job": 124194391182,
+      "conclusion": "cancelled",
+      "configuredJobBudgetMinutes": 10,
+      "lastLongRunningTest": "cancelled_client_and_shutdown_kill_owned_job_or_process_group",
+      "observed": "Complete35560B log: preceding core/lifecycle tests passed; named test ran over60s then operation was canceled. Cause unresolved; no assertion failure or automatic retry inferred."
+    },
+    "remaining": "Corrected parser/helper/companion compile and full helper run; actual native handlers/four consumers/productR1R2/heap/scrub,90/115 and prior holds."
+  },
+  "productTrial93f": {
+    "sourceHead": "93f41ab9efc1d7af971e8ecb41cc5bcfb5275eb6",
+    "actualBuild": "PASS offline locked j1 debug0 incremental0; two current product binaries, 25.2086s; target166250633B",
+    "actualProductTrial": "FAIL after defaultserve PASS, canonicalR1 store1/config2, Prepare fouroutputs; observerexit2/fourrecordersHostdown/runtime differentchildhandles",
+    "installedR1R2PCM": "NOT_REACHED; no WAVs",
+    "cleanup": "all capture leaders reaped; StopPending/FailedStopped; native scrub/StopComplete UNVERIFIED",
+    "receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6581274694",
+    "buildReportSha256": "f2fec23de0adcc905e2041843459015291ba224a835fa7a023a9b8dcbe3653b7",
+    "trialReportSha256": "8411a5c55269e60f06a6600b5b7c484a2d317b9141eecdb82e6033becfaa76ef",
+    "diagnosticsSha256": "b6e41edd9b25914f72f03dbb674f13c2596ccc66a70403e9ee01ade7f1665aed",
+    "archiveSha256": "d410bda5910964f39bf70fcb7e36666dfc73ba0c29b614de94ce96dadd7f90e2",
+    "rootObservedSandboxStop": {
+      "completedNonforcedAt": "2026-11-02T15:37:01.115Z",
+      "snapshotVerifiedAt": "2026-11-02T15:37:01.057Z",
+      "scope": "sandbox stop, NOT native scrub proof"
+    }
+  },
+  "post93fLifecycleRepair": {
+    "scope": "secondary retirement reentry repair + initial native fault observability only",
+    "causalSourceTrace": [
+      "Native fault makes Service.failed true and starts forced owned retirement.",
+      "Previous dispatch Stop still called begin_stop and armed fence_started during that retirement.",
+      "prove_children_reaped consumes registered children exactly once and clears children=None.",
+      "Old fence deadline branch ignored retirement/retired and could invoke a second reap proof: different child handles."
+    ],
+    "changes": [
+      "Reject Stop while failed/retiring/retired before mutating coordinator or fence clock.",
+      "Do not re-fail an already-failed owner for a rejected IPC request; preserve first failure.",
+      "Fence deadline cannot restart retirement while retiring/retired; successful reap consumes all service deadlines.",
+      "App atomic firstfault latches like generation firstfault. Existing main-loop failure message includes app_fault/generation_fault/generation scalars only. No RT logging/allocation or gate relaxation."
+    ],
+    "regression": "owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice: actual owned API-double children, Store guard, two IPC peers/lateStop/staleDeadline; source added, UNRUN. Exact Coordinator PID check unchanged.",
+    "verification": "No compiler/build/test/SDK/Boat execution in this repair phase. Source diff/format/JSON/hash inspection only. No old-test RED or current GREEN claim.",
+    "nativeInitialCause": "UNPROVED: old generic owner-failed did not retain numeric app/generation fault. New message adds evidence for next budget; no format/buffer/clock/source/owner validation changed.",
+    "currentSourceExecution": "ALL changed Rust/C++/new regression UNCOMPILED/UNRUN; actual93f productFAIL preserved; new exactHEAD review + corrected compile/product run required",
+    "unchangedHolds": "90/115/base/main refs and historical setup/SDK/recorder/authorization-departure evidence remain unchanged."
+  },
+  "retirementRepairFormattingFollowup": {
+    "previousHead": "aba7bed452a34cedf12193aec53793171ef51a03",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "observedFailure": "Hosted profile/HTTP checks stopped at cargo fmt --all --check before behavior tests; mod.rs chain wrapping and extra blank line in new service test.",
+    "repair": "Apply exact hosted rustfmt diff; production and test semantics unchanged.",
+    "verification": "Source formatting/checks only; native and product execution remain pending for current source."
+  },
+  "readableFormatFollowup": {
+    "previousHead": "3c4cd4dbf2c004c8718436f4df4174325b2d85c3",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actualNativeCompile": "Current3c4 companion compile/link/size and full JSON helper passed. Full report545731B SHA076364fb51af00018b187fdf2b5f0439c56b2c67e407fee29c448a24b9b5949d; matching ROOT artifacts retained, completed nonforced snapshot verified.",
+    "actualProduct": "Current3c4 Rust build and owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice passed in Boat. Actual product again prepared4outputs but failed before Link/Apply with app_fault=25,generation_fault=0,generation=1. Stop now returned Busy; different-child-handles did not recur. Forced fallback was failure, not StopComplete. No PCM/R2 proof.",
+    "controllerFailures": "Earlier resumed3c4 attempt stopped on JSONL host decoder before remote exec. Corrected host wrapper then native compile passed but controller size sampling killed Cargo on a disappearing proc-macro2 probe file. A reviewed stat sampler successor ignored only ENOENT and the next current Rust build/regression ran successfully. These are retained controller failures, not product compiler errors.",
+    "confirmedSourceDefect": "Unconditional Format subscription at registry bind can enumerate an unavailable parameter. Pinned PipeWire port_subscribe_params immediately calls port_enum_params; enum failure emits a core error.",
+    "upstreamSource": "https://raw.githubusercontent.com/PipeWire/pipewire/8b43ed5c910e892d53de5a96aa01e9280a5b6650/src/pipewire/impl-port.c",
+    "causalLimit": "Observed app_fault25 identifies a core error callback, not its offending request. This source defect is a plausible initiating cause; causal confirmation requires actual rerun.",
+    "repair": "Remove unconditional subscription. Enumerate only on parameter-info changes advertising readable Format; invalidate prior format proof when Format is not readable. Retain exact endpoint/format/owner/admission gates and fail on unexpected API errors. Existing core failure includes bounded ASCII id/sequence/result/message on control.",
+    "verification": "Source/diff/hash checks only; changed companion is UNCOMPILED/UNRUN. No local compiler/tests or live in-sandbox repair. Next native compile and actual product rerun required."
+  },
+  "warmupDestinationFollowup": {
+    "previousHead": "306de91b382db49fb4979255034c8c7cea638f73",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actual306Results": "Companion/JSON helper, current Rust binaries and named retirement regression passed. Actual product Prepare and all4Link commands succeeded; no app_fault25 recurrence. Apply returned Pending/FailedHeld clock-unqualified: links/formats/fresh source headers not ready. No Installed/PCM/R2 or StopComplete proof.",
+    "sourceDefect": "Engine callback permanently latched output.closed for a missing format even before installation, unlike the admitted-only format-loss callback scope. A later negotiated format cannot clear the closed destination, and Stage requires every destination open.",
+    "repair": "Only an admitted running destination can be latched closed by the engine format-not-ready check. Explicit malformed negotiated formats, buffer/return failures and post-admission format loss remain failures. Stage retains identical bindings/header/common-clock gates.",
+    "causalLimit": "The generic Stage rejection did not identify which predicate failed. This is a confirmed warm-up source defect and plausible Stage blocker, not causal proof; sampled off-RT readiness counts identify any remaining failed predicate in the next run.",
+    "verification": "Source/diff/hash inspection only. Changed companion UNCOMPILED/UNRUN; actual product rerun required."
+  },
+  "productInstallAndSourceLossFollowup": {
+    "previousHead": "f3758f4f290890eae014d7eaf9e2f5cbeef39c93",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "rustImplementationAgent": "source_loss_path; T3 Code/Codex/OpenAI gpt-6.1-sol high; /root/source_loss_path",
+    "actualReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6583156276",
+    "actualF375Results": "Strict native compile/link/size and JSON helper, current Rust CLI/runtime build and named retirement regression passed. Canonical R1 prepared and linked all4ordinary outputs. Apply advanced beyond readiness but canonical processor rejected render storage caller budget. Pending/FailedHeld, no Installed/PCM/R2. Stop Busy then owned TERM fallback, not StopComplete. All captured/outer leaders reaped. Sandbox explicit stop completed/nonforced2026-11-02T17:00:30.190Z with ROOT snapshot verified17:00:29.577Z.",
+    "confirmedBudgetDefect": "Caller counted sources+mixes+outputs but canonical processor render storage owns2mix slots(accumulator/render)+output slots; sources are borrowed. Current3source4mix4output requested2816samples instead of3072. Fix uses2mixes+outputs; descriptor/resident/maxTotalBytes limits unchanged.",
+    "sourceLossDefect": "Rust previously forced retirement for every native Fault. Genuine finite EOF therefore could not retain zero output until explicit exact Stop or normal fresh-core R2. Settled SourceLost now retains FailedHeld/admissionclosed graph; pendingSourceLost immediately priority-fences the exact operation with existing guard and late-event quarantine. Stale client rejection cannot force heldEOF retirement. Unknown/malformed/owner faults remain fatal.",
+    "nativeClassification": "Only actual EOF emits generation fault7. Non-current generation emits scrubbed silence without claiming EOF. A subsequent nonEOF RT fault supersedes7; app fault or scrub failure prevents SourceLost classification and can emit a second fatal notification. Owner-invoke failure records app27. All diagnostics/control remains offRT.",
+    "addedRegressions": "source_loss filter covers4API/authority-double tests: settledEOF/stale/exactStop/actualreaps; pendingEOF/exactFence/Storeguard; lateInstalled completeFence evidence; binding/malformed/laterowner fatal. Not SDK proof.",
+    "verification": "Source/diff/hash and rustfmt-only checks; changed native/Rust/tests UNCOMPILED/UNRUN. Exact independent review then strict native/helper and bounded fresh currentRust/targetedsource_loss+retirement/product trial required. No local compiler/test/target run."
+  },
+  "stopBoundaryDiagnosticFollowup": {
+    "previousHead": "12893be0779c01309677a21e0a92b852c072b24c",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "nativeDiagnosticAuthor": "mixyard-native-engine-lead; existing native lead thread, T3 Code/Codex/OpenAI gpt-6.1-sol high",
+    "actualReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6583332717",
+    "actual128": "Strict native/helper, currentRust, retirement1 and source_loss4 regressions passed. Actual productR1 Installed op6gen1epoch1store1config2inventory10clock12; all4commits nativeframe89972078. Four independent R1 WAV postACK PCM gain/privacy/return markers and1024zero tails passed; status SourceLost app0/g7/scrub0. All4recorders SIGINTexit1 emptydiagnostics. Stop Pendingfailed-stopped/unknownnativefence, parentTERM fallback. R2/restart UNRUN, aggregateFAIL. All captured/outerleadersreaped, explicitBoatstopcompleted/nonforced17:07:04.255Z snapshotverified17:07:04.187Z.",
+    "evidence": "/dev/shm/mixyard-product-attempt-12893be-root:150regularfiles8133316B including4WAVs, manifestverified. Root rehashed149manifestmembers and rechecked4PCMfiles fromsavedbytes, not a new native execution. Archive151188B SHA3001644dbacb13d83711fc406ba2ab303ce165442dbdcc07c9c77ed700f8de06.",
+    "causeUnknown": "Epoch advances at Fence; existingzero proofs need actual later liveborrow at newepoch. Actual128 does not identify blocked registration/barrier. This is a hypothesis, not permission to promoteoldzeroepochs or dereferenceopaque SDKtokens.",
+    "change": "Bounded offRT nativeFence state sample onexistingfailure replies and signal-beforeFenceproof, immediately boundednonblockingflush. Root retains originalStopfailure andactualchildExitStatus atforcedreap. Forcedretirement read-onlytransport retains one exactnonce/epoch/fence-operation StopIncomplete diagnostic, withoutflushingfencednormalbytes orprocessingcontrolprogress; invalid/oversized/truncatedobservations explicitlyrejected. Final read afteractualexit avoidsdropbetweenread/reap. Sameguard/reap/epoch/scrub/withdrawal/completiongates unchanged.",
+    "regression": "Existing owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice extends to retainfirstcause, actualownedSIGTERM-handler valid/unboundlateFault doubles, andstillFailedStopped/noStopComplete. NoSDKproof.",
+    "recorderFinding": "Exactpinned pw-cat.c SHA4e288855c8ad808ddafa6f2c170faba357282b6d91121db2ea545d4d0446a948 matchesretainedSDKsource. Capture doesnotmarkdrained;SIGINTquits+sf_closebutexit1. Pinnedversionhasnoduration/samplecount andnocaptureDrainhandler. No invocationonlyexit0routefound, no waiver/SDKmodification. Sourceanalysis by /root/source_loss_path, actualruntimeT3Code/Codex/OpenAIgpt-6.1-solhigh.",
+    "recorderPrimarySource": "https://github.com/PipeWire/pipewire/blob/8b43ed5c910e892d53de5a96aa01e9280a5b6650/src/tools/pw-cat.c",
+    "verification": "Source/diff/hash/rustfmt-only; changednative/Rust UNCOMPILED/UNRUN. FreshindependentexactHEAD review +strictnative/helper/currentRust/targetedregressions/actualproductStop trial required. No localcompiler/native/targettest run.",
+    "reviewRepair": "Exact0af independent review found oversized serde parser-error text could exceed64KiB clientresult limit and erase originalfailure. Replace parser-error text>1024bytes with explicitbounded rejection; addactualownedchild malformed70000bytevariant toexistingretirementregression. UNRUN.",
+    "durableReceiptCorrection": "Two root-authored GitHub executioncomments initiallycontained literal@filepath due raw gh argument; patchedsamecomments via structuredJSON andGETreadbackverifiedfullbodies. PRbodyalreadycontainedactualevidence; no evidencefilereplacement.",
+    "withdrawalReviewRepair": "Exact528 independent review found diagnostic iteration could dereference Port userdata after pw_filter_destroy freesit. fence_detail now skips objects_destroyed generations andnullfilter nodes before touchingPortpointers, reportingwithdrawngenerationcount. This changes onlydiagnostics, never scrub/withdrawal/proof gates. Sourceinferred andfixedbeforeany528execution; currentnativeUNCOMPILED/UNRUN."
+  },
+  "nativeStderrRetentionFollowup": {
+    "previousHead": "9322541a05097da5047940b74d7ce53d51452231",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "implementationAgent": "source_loss_path; T3 Code/Codex/OpenAI gpt-6.1-sol high; /root/source_loss_path",
+    "actualStopProbeReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6584211991",
+    "actual932FullReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6583815154",
+    "actualStopProbe": "Exact932 retainednative identitymatched;freshRust/retirement1/source_loss4 passed;actualR1Installed thenexactStopwith4liveconsumers returnedPendingfailed-stopped. Firstcause ownedprivatechildunexpectedstderr, discardedbyte/unknownchild. Bothnativechildrenexit0 butforced=true;runtimecleanupshutdown0/no parentfallback. NoStopComplete/EOF/PCM/R2/restartclaim. ExplicitBoatstopcompleted/nonforced2026-11-02T17:46:12.481Z,snapshotverified17:46:12.423Z.",
+    "privateEvidence": "/dev/shm/mixyard-product-attempt-9322541-stop-probe-root: archive139841B SHA652fe4d097eb98d84590a72747b36d9fb431b0be0b2c6b842dc9bca17301dd6f, manifestverified. Rootactualcapture/exitsnotSDKqualification.",
+    "causeUnknown": "Unexpecteddaemon/companionstderr isconcretefirstfailure. Exactmessage/childwerepreviouslydiscardedbyquiet(). Scrubepochstallunconfirmed;clock13isaseparaterealearlierfailure. Historical#115daemon/graph/recorderstderrwereemptyanddonotidentifythiswarning.",
+    "change": "Retainfirst4096exactstderrbytespernameddaemon/companion,total8192, observed/retainedcounts+EOF/overflow/incomplete/readFailed andrawhex; continuouslydrainboundedduringgraceful/forced/reapedpaths. ANYbyte/readfailure/incompletepostreap stillinvalidatesStopComplete. PreservevalidatedFence scalars/unacceptedboundlateeventkind asdiagnosticsonly, nevercontrolprogress. Originalfailurecode/causeandFailedHeld/SourceLostresetonlaterfatal retained.",
+    "limits": "Retirementobservationappend24KiBrawmessage/48KiBJSONencodedmessage withreservedexplicitoversizedrejection; fullstderrhex<=16384characters+labels. Existinggenericfailure512/nativeparser1024limitsunchanged. Onlyboundedretirementobservationpathuseslargerspace; postreapstatusclearbeforefullstderrappend.",
+    "focusedRegressions": "Existingowner_failure_stop_cannot_rearm_retirement_or_reap_children_twice extendslong768nativeFaultsample,boundStopped/Fenced,actualownednormalexitstderrhandlers(binaryfirstbyte/two4352byteoverflow),strictFailedStopped/guard/reaps/RESULT_LIMIT, laterfataluncertaintyreturnsFailedHeld. Existingactual_success_exit_does_not_hide_owned_child_diagnostics updatedexactbytes. Source_loss4unchanged. ExplicitAPI/transportdoubles, notSDKproof.",
+    "prototype": "ClockfailureCPPprototype preserved /dev/shm/mixyard-clock-failure-9322541-diagnosis/root-preserved.patch, notintegratedorcompiled. CPPremainsbyteidenticalexact932.",
+    "verification": "Source/diff/rustfmt-only. ChangedRust/testsUNCOMPILED/UNRUN; newindependentexactHEADreview +freshcurrentRust/focusedtests/Stopprobe required. Strictnative/helperwillrunifrefreshedfullpacket; no localcompiler/native/targettestexecution.",
+    "actual00c": "Strictnativecompile/helper/currentRustbuildpassed. Firstfocusedretirementregressionfailedexit101 atservice_tests.rs1166 expectedbothnativeAPIdoubleexit0/forcedtrue. Source_loss/childdiagnostic/producttrialUNRUN; controllerstoppedfirstfailure, receiptscopied, explicitBoatstoprequested. No assertionwaiver orrunning-sandboxrepair.",
+    "fixtureSuccessor": "Onlytesthandlerschanged: companionignoresTERMwhilecompletingalreadyreceivedShutdown; daemonignoreRepeatTERMwhenfirsthandlerstarts; bothos._exit0afterboundedrawstderrwriteavoidPythoninterpreterexitinterruption. Requiredbothnormal0/strictwarningfailure/bytecounts/overflow/guard/reapschecksunchanged. Addactualstatusmessagecontexttofailureassertion. A handler/shutdownraceisplausiblefromsourcebutactualfirstreceiptomittedmessage; causalityrequiresrerun. ProductionRust/nativeunchangedfrom00c."
+  },
+  "firstInputFailureFollowup": {
+    "previousHead": "592c3c2c906e50664f1095f86491dc4b6a0502c4",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "implementationAgent": "mixyard-native-engine-lead; existing delegated native lead; T3 Code/Codex/OpenAI gpt-6.1-sol high",
+    "actualReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6584777823",
+    "actual592": "Strictnative/helper/currentRustbuildandALL6focusedtests passed. Normalzero/strictstderr/exactbytes/overflow/guardassertionsunchanged. Actualproductprepared4outputsandlinkedfirst3; fourthLinkPendingfailedHeldapp0/generation26/scrub0. NoInstalled/Fence/productPCM. Genericcleanupshutdown0andallcaptured/outerreaps, notStopComplete. ExplicitBoatstopcompleted/nonforced2026-11-02T19:11:47.893+01:00snapshotverified19:11:47.839+01:00.",
+    "privateReceipt": "/dev/shm/mixyard-product-attempt-592c3c2-stop-probe-root:152regularfiles1061921B,archive120765B SHA fcc0589c03273593796e3067fe6f93e2c26ac6837f5265b313b12f2de9ef15df,manifestverified.",
+    "causeUnknown": "Fault26aliasesfatalinputdescriptorvalidationorqueue-returnfailure. Exactrejectedoperandswerenotrecorded. Thismayrelatetohistoricalnativeinputfailuresbutcausalityunproved; noEMPTY/metadata/clockwaiver.",
+    "change": "Preallocatedexclusive-owner firstfatalinput scalarcapture: source/admitted/registered/data/shape/chunk/header/flags/offsets/stride/PTS/sequence/exactexpectedframe+ns/actualreturnoutcome. NoSDKpointerretained/serialized, RTallocation/log/JSON. Release/acquirepublishesimmutablefirstsample; maincontrolappendnumericmessagebounded511byteswithinput_truncated=1ifclipped. Existingcanonicalinputhelpersandallacceptance/owner/epoch/clock/returngatesunchanged.",
+    "harnessNext": "Stopprobecleanupmustalsoobservealready-ownedfailureretirementbeforeStopattempt, bounded4.02s/max8statusreads; no newStop orretry. Thisretainsactualfinalstderr/statusafterearlyLinkfailure withoutqualifyingfullmilestone.",
+    "verification": "Source/whitespace/hashonly; nativechangedUNCOMPILED/UNRUN. NewindependentexactHEADreviewthenstrictnative/helper/freshRust/sixfocusedtests/actualshortStopprobe required. No localcompiler/native/targetrun."
+  },
+  "preAdmissionWarmupRepair": {
+    "previousHead": "7c9fb104bd8082c86a6098f28c6bf9336eee8aa5",
+    "integrationAgent": "mixyard-integration-owner-cad895ac",
+    "implementationAgent": "mixyard-native-engine-lead; existing delegated native lead; T3 Code / Codex harness / OpenAI; gpt-6.1-sol high",
+    "observedReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6585125584",
+    "observedFailure": "At exact7c9, native compile/helper, current Rust and six focused tests passed. All four Links completed; Apply failed before admission. A registered valid2048-byte stereo F64 buffer returned successfully, but header sequence39902890/PTS831310208333 lagged expected39903018/831312875000 by exactly128frames/2666667ns. The helper freshness predicate caused fault26; SDK delivery mechanism remains unknown.",
+    "change": "Only a structurally valid, zero-offset/flag pre-admission previous quantum becomes Unavailable, with owned PCM remaining zero and exactly one token return. Both deltas must match128frames and2666666/2666667ns using guarded subtraction. It never becomes Ready. Admitted stale input, arbitrary/future/other stale metadata, malformed shape and failed returns remain fatal. Stage fresh-header/common-clock/link/install/epoch/guard/deadline gates are unchanged.",
+    "regressions": "Actual owner helper receives the captured tuple, both timestamp boundaries, admitted rejection, zero output/one return, failed return, fresh copying and near-miss malformed/range/future/other-age cases. Expectations use captured data and explicit boundaries, not a copied production predicate. Tests are UNRUN until cloud execution.",
+    "sdkContract": "https://raw.githubusercontent.com/PipeWire/pipewire/8b43ed5c910e892d53de5a96aa01e9280a5b6650/spa/include/spa/buffer/meta.h",
+    "proofLimits": "This is pre-admission readiness only. No stale sample is copied or installed. No historical malformed/EMPTY cause, StopComplete, R2, clock13, recorder-exit contract or SDK eligibility hold is closed.",
+    "nextProbe": "Stop-only diagnostic may use descriptor frameLimit0 (documented infinite source) until explicit Stop. Its full EOF/PCM/R2 milestone remains UNRUN; the original full recording experiment keeps144000-frame sources. All existing resource/deadline/file/capture caps stay unchanged.",
+    "verification": "Source, whitespace and hash inspection only. Changed native header and owner-test source are UNCOMPILED/UNRUN. Fresh exact-HEAD independent review, strict native/JSON, portable owner-helper compile/run, current Rust/six regressions and bounded actual Stop probe are required. Local compiler/test/target hold remains."
+  },
+  "observerProxyCleanupRepair": {
+    "previousHead": "c5f1322bf45568320949c10d48a4413ead35a82e",
+    "integrationAgent": "mixyard-integration-owner-cad895ac",
+    "implementationAgent": "mixyard-native-engine-lead; existing delegated native lead; T3 Code / Codex harness / OpenAI; gpt-6.1-sol high",
+    "actualReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6585957885",
+    "actualC5f": "Prior exact-source native compile/JSON passed with799 checks and matching ROOT artifacts. Product-only continuation freshly verified native/SDK/archive identity, passed portable owner C helper, fresh Rust build and six focused tests. Product reached Installed, then supervisor validated Fence(no-pending, ownerQuiesced/pendingPcmZero/noLateInstall true, switched receipt). Companion shutdown emitted22 leaked-proxy warnings, so strict stderr handling produced FailedStopped/forced=true despite both children exit0. No StopComplete.",
+    "completeDiagnostics": "Daemon stderr0 bytes. Companion stderr2793 bytes,22 pw.core/core.c:199 destroy_proxy leaked-proxy warnings, EOFtrue/overflowfalse/incompletefalse/readFailedfalse. Raw pointer addresses remain only in private receipt. Observed port bindings lacked explicit destruction on removal and shutdown.",
+    "change": "A main-control null-safe helper removes the port listener, clears the stored proxy pointer, and calls pw_proxy_destroy once. Registry removal uses it; final shutdown releases remaining observers before registry/core disconnect and detaches registry/core listeners. Pinned SDK destroy releases the reference; no extra unref. No warning classifier, logging suppression, RT barrier, scrub, Fence, deadline or Stopped-order change.",
+    "sdkSource": "https://github.com/PipeWire/pipewire/blob/8b43ed5c910e892d53de5a96aa01e9280a5b6650/src/pipewire/proxy.c",
+    "privateEvidence": "/dev/shm/mixyard-product-attempt-c5f1322-stop-continuation-root: archive143975B SHAa3226ff05590049b61a5e4cbbe4deec91b33ee42872fa50296fb1a1cf468bbbc; complete named stderr and validated Fence observations. Explicit Boat stop completed/nonforced2026-11-02T20:01:46.383+01:00, snapshot20:01:46.327+01:00.",
+    "operatorFailure": "The preceding c5f host wrapper used an obsolete human operation label after native compilation and never launched product testing. It stopped and retained evidence. The continuation reused matching native artifacts and prevalidated the unique pinned controller command before any start. This was an operator error, not product failure.",
+    "verification": "Source/whitespace/hash inspection only for the cleanup change; companion UNCOMPILED/UNRUN. Fresh exact-HEAD review and actual product recording/Stop/R2 testing remain required. Any stderr still fails. Historical SDK/metadata/clock/recorder-exit holds remain separate; no merge or public eligibility claim."
+  },
+  "clockFailure13Followup": {
+    "previousHead": "f9cc8179682a55c13de13bc502064220a564dc10",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actualReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6586475242",
+    "actualF9c": "Strict companion/JSON compile/helper, portable owner C helper, fresh Rust product build and6focused Rust regressions PASS.799native prechecks match. Four product Links and actual R1 Installed op6/gen1/epoch1/inventory10/clock12/nativeframe17333562, then generationfault13/app0/scrub0 before recorder finalize. All4recorders exit1/Brokenpipe; noPCM/explicitStop/R2/restart acceptance. ForcedcompanionSIGKILL/server0, allcapture/outerleadersreaped, complete evidence copyout. Defaultunavailable/false/null.",
+    "evidence": "Private /dev/shm/mixyard-product-attempt-f9cc817-full-root;156manifestverifiedregularfiles3498428B; archive145246B SHA256c547fdbd6188e5c6c6d7cf47f1ddfbf4076b05f8b61596590dc7aa559c2294b9. ExplicitBoatstoprequested; lastinfo stopping/pending/nonforced, completionnotyetclaimed.",
+    "nextSourceBoundary": "Capture first rejected operands at existing mx_private_stamp/mx_private_processed_native fault13 sites without changing clock acceptance or deadlines. Changed source remains UNCOMPILED/UNRUN until reviewed successor execution. Currentproxycleanupcompiled but normal warningfreeStopCompleteunproved.",
+    "nativeAuthor": "mixyard-native-engine-lead; existing delegated native lead, T3 Code/Codex/OpenAI gpt-6.1-sol high",
+    "repair": "Preallocated immutable first-clock-failure scalar snapshot atstamp andprocessed-native rejection before revoke; release/acquire publication with existing lockfreeuint64 type. OffRT Fault formatting prioritizes observed/timeline/stamp values overinputdetail, <=511ASCIIbytes with explicitclock_truncated marker. No duplicatedpredicates, callbacklogging/allocation/nativepointerretention or clockacceptance/deadline changes.",
+    "verification": "Source/diff/hash checks only for diagnostic successor. Changedcompanion UNCOMPILED/UNRUN; fresh independent exactHEADreview then bounded actualnative/helper/productexecution required. Currentf9c compiledproxycleanup has no normalStop proof."
+  },
+  "realTimeSchedulingFollowup": {
+    "previousHead": "d55c03f35239ff0dd0816d43205c45cd956ffc5f",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "nativeImplementation": "mixyard-native-engine-lead; existing delegated native lead, T3 Code/Codex/OpenAI gpt-6.1-sol high",
+    "actualD55Receipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6586656031",
+    "actualD55": "Native/JSON/portableowner/currentRust/6focusedtestsPASS. ProductfourLinks+InstalledR1native42323957; after646quanta observed42406773 vs expected42406645 (clock12same) =>one128-frame interval omitted; stampfault13/app0/scrub0. Allrecorders1/Brokenpipe. NoPCM/explicitStop/R2/restartacceptance. Forcedcompanion9/server0, allcapture/outerleadersreaped. Boatstopcompletednonforced2026-11-02T20:37:22.940+01:00 snapshot20:37:22.879+01:00.",
+    "schedulingEvidence": "BothownedcontextspreviouslyomittedRTmodule, RT_PROCESSflagnotOSpolicyproof. Boundedcloudinspectionordinaryuid1000 OTHER0,RTPRIO0/0,CapEff4(noSYS_NICE). PinnedRTmodulehashverified. Separateprocess-localprobeexistingSUDO-n raisedonlylaunchedRTPRIO20/20, droppedgroups/gid/uid1000withCapEff0; FIFO20success thenrestoreOTHER0 exit0/quiet/reaped. NoOSglobalsettings/filecaps/systemservices changed. Notproduct/nativeexecutionproof.",
+    "preflightReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6586942227",
+    "repair": "Newproductonlyserver/clientconfigs loadRTmodule mandatory, rt.prio20, directrlimitsenabled, RTKit/portal/DBusdisabled, oneDataLoop. Companion startupbarrieridentifiesthread thenmainqueriesactualFIFO20 beforeconnecting/Ready. ParentboundedoffRTtaskidentity+starttimerechecks querybothownedDataLoopspolicy atbindingobservations. Pinnedmoduleactualmappingrequiredforbothroles; serverexactmoduleallowlist7. Frozensixmodulefixtureunchanged.",
+    "authorityLimits": "ProductdoesnotinvokeSUDO/raiseRTPRIO/addcapabilities; pinnedSDKmoduleperformsitsdocumentedRTprobe/RTTIMEsetupusinginheritedpermissions. Clockcontinuity/epoch/mutationdeadlines/Storeguard/Stop/defaultunavailableunchanged. Pointpolicyobservationsnotongoingguaranteeagainstxruns; actualRTproductflowUNRUN. NoSDKrebuild/upgrade/physical/supporteligibilityclaims.",
+    "verification": "Source/diff/hash andrustfmtonly, no localhostcompiler/test/target/nativeexecution. Changednative/Rust/configsUNCOMPILED/UNRUN. Newtestprivate_rt_policy_and_task_identity_fail_closedUNRUN. NewconfigfilesmustbeincludedinnextGitinputpacket(64to66Rustclosure). FreshindependentexactHEADbehavior+bugreviews, strictnative/helper/currentRust/targetedtestsandfullproductattemptrequired."
+  },
+  "actualChildReapObservationFollowup": {
+    "previousHead": "cbe4daee5e85fa5385bc9d31e6b10c387ad37b96",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actualProductReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6587790719",
+    "independentEvidenceReview": "https://github.com/MGRAFF2006/mixyard/pull/116#pullrequestreview-5742896181",
+    "actualCbe": "CurrentRust/portableowner/sevenRusttestsPASS; matchingcurrentnative/JSONretainedandfreshlymatched. RealFIFO20DataLoopsinR1/R2. ProductR1Installed Store1/Config2/gen1/epoch1/native23552496; StopComplete/Fenceepoch2. Freshcore/children R2Installed Store2/Config3/gen2/epoch2/native23846690; StopComplete/Fenceepoch3. All8postACKPCM/gain/privacy/Recordmarkers/1024zerotailsPASS;freshnonce/disarmedrestart+defaultfalsePASS. AggregateFAILonlyeightpw-recordSIGINTexit1/quiet, allreaped. Nocleanupfallback.",
+    "evidence": "164manifestverifiedfiles15681024B; archive206592B SHA809ce7053e9c39c83e5034a90f605f2b20c5e5b6cd4dfd32e48676cf967136fb. Private /dev/shm/mixyard-product-attempt-cbe4dae-rt-continuation-root. IndependentBoatstopcompletednonforced2026-11-02T21:24:32.686+01:00 snapshot21:24:32.625+01:00.",
+    "coverageLimits": "OldR1revision/token+endpointbundle rejected; freshtoken+oldbareintegersnotseparatelytested. Nativeper-childexitcodes/signalswerenotseparatelyserialized; existingStopCompleteclassifierallowsserver0orSIGTERM, notproof0/0. Historicalnarrowclassifier/SDKscrubinstrumentation/lowerstackholdsremain.",
+    "repair": "AddnonauthoritylastChildReap privateStatus withcontrolEpoch,actualregisteredPIDs,code/signalperchild,andforcedflagafterbothtry_waitresults. Clearonfreshchildregistration. Do notnormalizeSIGTERMto0 orchangeclassification, Fence/Store/clock/deadline/Stop/defaultgates.",
+    "regressionCoverage": "Extendexistingactualchildmetadata/restarttestforexit0/PID/epoch/reset; source_lossservicefixtureassertsactualcompanionexit0andserverSIGTERMremainseparate. API/authorityfixturesarenotnativeSDKproof.",
+    "verification": "Source/diff/hash/rustfmtonly; changedRustdiagnosticandassertionsUNCOMPILED/UNRUN, nativeCPPunchanged. FreshindependentexactHEADreviewandboundedcurrentbuild/tests/productrunrequired. GStreamerEOS/filefinalizationcandidateunrun; pinnedpw-recordexit1holdunwaived."
+  },
+  "coherentPastWarmupDiscardFollowup": {
+    "previousHead": "bdf50497ab0ee36b680aa8f0599a5eba2c17d1dc",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "actualBdfBuildReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6588737000",
+    "actualBdf": "Strict native companion/JSON helper, portable owner, current Rust product/observer build and eight focused Rust tests passed. Exact current artifacts preserved on cloud ROOT. GStreamer tools1.24.2/private plugins setup passed. No product PCM/EOS success at this head.",
+    "actualFailureReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6589190560",
+    "actualFailure": "GStreamer boxed-property quoting failed before recording. Separately native fault26 captured valid preadmission src0 sequence19329690/PTS402701875000 vs expected19330074/402709875000:384frames/8000000ns old, token returned. Reap diagnostic observed companionSIGKILL/server0/forcedtrue; not StopComplete. SDK stale-delivery cause unknown.",
+    "change": "Generalize only coherent past preadmission discard to any integral128-frame age whose48000Hz floor/ceiling PTS age agrees. Compare whole seconds and bounded remainder separately to avoid overflow. No stale PCM is copied, no readiness granted, every native token returned once; failed return fatal. Admitted stale/malformed/future/incoherent input remains fatal. Existing exact-current Stage/Install/RT-switch/common-clock/epoch/binding gates and original2s deadlines unchanged.",
+    "regressions": "Extend actual production owner helper cases: captured3quantum tuple,2quantum floor/ceil and near misses, repeated zero/one-return discards then fresh readiness, whole-second crossing/long age/arithmetic extremes, admitted rejection/return failure and existing malformed negatives. Caller gating inspected independently; helper tests do not execute full SDK caller scheduling.",
+    "verification": "Source/diff only; changed owner header/test UNCOMPILED/UNRUN. Fresh independent exactHEAD review, strict native companion/JSON, portable owner, current Rust/focused tests and product R1/R2/EOS/native0/0 execution required. Local compiler/test/target hold remains. Historical pw-record exit1, malformed/EMPTY causes, admitted continuity and SDK qualification stay separate.",
+    "boatHealthBoundary": "2026-11-02T22:47:37+01:00 corrected recorder packet health preflight failed: Boat API healthy=false/bootstrap request failed; limits/list succeeded with box stopped/completed/nonforced snapshot2026-11-02T22:31:18.632+01:00. No resume/build/native/product execution; no retry loop. Corrected whole-property quotation plus NULL-only parser/readback remains UNRUN.",
+    "requiredCheckRepair": "Exact638 CI settings/loopback Clippy failed large_enum_variant: bdf child-reap diagnostic increased Status/Snapshot to568bytes vsFenced360. Box only CompanionEvent::Snapshot.status offRT; serde wire shape and all admission/Stop behavior unchanged. No source constructors require change. No lint waiver/CI workflow change. Required CI compiler/lint checks and actual current Rust execution pending."
+  }
+}
