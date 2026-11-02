@@ -26,6 +26,7 @@ jobs:
       windows_present: ${{ steps.qualification_offline.outputs.windows_present }}
       macos_present: ${{ steps.qualification_offline.outputs.macos_present }}
       qualification_success: ${{ steps.qualification_offline.outcome == 'success' }}
+      macos_input_success: ${{ steps.macos_input_provenance.outcome == 'success' }}
     steps:
     - uses: actions/checkout@v4
       with:
@@ -33,6 +34,8 @@ jobs:
     - name: Save pristine runner environment
       shell: bash
       run: python3 .github/ci/lane_boundary.py snapshot
+    - name: Test CI selection and dependency boundaries
+      run: python3 -B -m unittest discover -s .github/ci -p 'test_*.py' -v
     - name: Select Linux lanes conservatively
       id: select
       run: python3 .github/ci/select_linux_fixtures.py
@@ -1214,3 +1217,46 @@ jobs:
     - uses: actions/checkout@v4
     - name: Compile Core Audio probe with SDK/disk preflight
       run: bash adapters/macos/build.sh
+  macos-input-artifact:
+    name: Apple ABI and authenticated anonymous XPC fixture
+    needs: fixtures
+    if: always() && !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+      && needs.fixtures.outputs.macos_input_success == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 10
+    env:
+      MIXYARD_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      MIXYARD_CURRENT_BASE: ${{ github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before) ||
+        github.sha }}
+      MIXYARD_TARGET_BASE_REF: ${{ format('refs/remotes/origin/{0}', github.event.pull_request.base.ref || 'main') }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Fetch the configured target branch independently of the test merge
+      run: "git check-ref-format \"$MIXYARD_TARGET_BASE_REF\"\ngit fetch --no-tags --no-recurse-submodules origin \\\n  \"refs/heads/${MIXYARD_TARGET_BASE_REF#refs/remotes/origin/}:$MIXYARD_TARGET_BASE_REF\"\
+        \n"
+    - name: Bind source, current base and executed ancestry before building
+      run: python3 verification/macos-input/evidence.py verification/macos-input/build incomplete
+    - name: Build, sign, and test in-process only (no install or audio access)
+      run: bash verification/macos-input/build-check.sh
+    - name: Native authenticated process fixtures (no install or audio access)
+      run: bash verification/macos-input/broker-check.sh
+    - name: Evidence boundary
+      if: always()
+      run: 'echo ''Artifact ABI plus native app-owned/anonymous XPC peer requirements, packet, credit and lifetime fixtures
+        only.'' >> "$GITHUB_STEP_SUMMARY"
+
+        echo ''System bootstrap, hosted HAL peer identity/loading, external consumer PCM, TCC, restart, physical quality and
+        production apply remain BLOCKED.'' >> "$GITHUB_STEP_SUMMARY"
+
+        '
+    - name: Preserve source and partial artifact hashes on every outcome
+      if: always()
+      run: python3 verification/macos-input/evidence.py verification/macos-input/build '${{ job.status }}'
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: macos-input-artifact-${{ github.sha }}
+        path: verification/macos-input/build/
+        if-no-files-found: warn

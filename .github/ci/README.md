@@ -9,8 +9,10 @@ history, unknown paths, shared sources, manifests and CI changes.
 
 Individual workflow dispatch entrypoints retain their original jobs. Mixed
 matrices select only native rows on automatic events and their original rows
-on dispatch. Qualification's automatic native consumers live in the central
-workflow because they need its offline inventory outputs. Central dispatch runs
+on dispatch. Qualification's automatic native consumers and the macOS input artifact live
+in the central workflow because they depend on consolidated Linux results.
+The macOS artifact requires its own provenance result, not success of unrelated
+Linux lanes, and retains its PR/main event boundary. Central dispatch runs
 Linux only; the original qualification dispatch retains its native consumers. They use `always()`
 and the offline outcome rather than the unrelated aggregate gate result.
 Missing inventory or a failed inventory never authorizes a successful skip.

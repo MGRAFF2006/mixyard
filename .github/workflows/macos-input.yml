@@ -37,7 +37,7 @@ jobs:
   artifact:
     name: Apple ABI and authenticated anonymous XPC fixture
     needs: provenance
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: macos-latest
     timeout-minutes: 10
     env:
