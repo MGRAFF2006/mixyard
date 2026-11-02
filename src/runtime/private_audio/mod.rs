@@ -183,6 +183,32 @@ struct Retirement {
     receipt: Option<Fenced>,
     diagnostic_observed: bool,
 }
+fn fence_observation(receipt: &Fenced) -> String {
+    let outcome = match receipt.outcome {
+        FenceOutcome::CanceledBeforeSwitch => "canceled-before-switch",
+        FenceOutcome::AbortedAfterSwitch => "aborted-after-switch",
+        FenceOutcome::NoPending => "no-pending",
+    };
+    format!(
+        "event=fenced outcome={outcome} ownerQuiesced={} pendingPcmZero={} noLateInstall={} switched={} switchEvidence={}",
+        receipt.owner_quiesced, receipt.pending_pcm_zero, receipt.no_late_install,
+        receipt.switched.is_some(), receipt.switch_evidence.is_some(),
+    )
+}
+fn native_event_kind(event: &CompanionEvent) -> &'static str {
+    match event {
+        CompanionEvent::Reserved { .. } => "reserved",
+        CompanionEvent::Ready { .. } => "ready",
+        CompanionEvent::Prepared { .. } => "prepared",
+        CompanionEvent::Linked { .. } => "linked",
+        CompanionEvent::Staged { .. } => "staged",
+        CompanionEvent::Installed { .. } => "installed",
+        CompanionEvent::Fenced { .. } => "fenced",
+        CompanionEvent::Stopped {} => "stopped",
+        CompanionEvent::Snapshot { .. } => "snapshot",
+        CompanionEvent::Fault { .. } => "fault",
+    }
+}
 
 pub(crate) struct Service {
     listener: super::transport::Listener,
@@ -524,9 +550,15 @@ impl Service {
                     operation_id: operation.clone(),
                     action: CompanionAction::Shutdown {},
                 };
-                self.processes
-                    .begin_graceful(&shutdown)
-                    .map_err(|e| failure(ErrorCode::OwnerFailed, e.to_string()))?;
+                if let Err(error) = self.processes.begin_graceful(&shutdown) {
+                    let error = failure(ErrorCode::OwnerFailed, error.to_string());
+                    self.fail(error.clone());
+                    self.coordinator.append_failure_observation(&format!(
+                        "validated Fence retained as observation only: {}",
+                        fence_observation(&receipt)
+                    ));
+                    return Err(error);
+                }
                 self.retirement = Some(Retirement {
                     started: Instant::now(),
                     killed: false,
@@ -573,7 +605,12 @@ impl Service {
         self.operation_started = None;
         self.startup_started = None;
         self.deferred_native = None;
-        self.coordinator.fail_held(error.code, &error.message);
+        if self.failed {
+            self.coordinator
+                .fail_held_preserving_error(error.code, &error.message);
+        } else {
+            self.coordinator.fail_held(error.code, &error.message);
+        }
         self.failed = true;
         for peer in &mut self.peers {
             if peer.operation.is_some() {
@@ -748,21 +785,33 @@ impl Service {
             let status = self.coordinator.snapshot();
             let observation = match self.processes.retirement_events() {
                 Ok(events) => events.into_iter().next().map(|reply| {
-                    if reply.companion_version == VERSION
+                    let kind = native_event_kind(&reply.event);
+                    let bound = reply.companion_version == VERSION
                         && reply.instance_nonce == status.stop_target.instance_nonce
                         && reply.control_epoch == status.stop_target.control_epoch
                         && status.pending_operation.as_ref() == Some(&reply.operation_id)
-                        && reply.operation_id.starts_with("fence-")
-                    {
-                        if let CompanionEvent::Fault { error } = reply.event {
+                        && reply.operation_id.starts_with("fence-");
+                    if bound {
+                        if let CompanionEvent::Fault { error } = &reply.event {
                             if error.code == ErrorCode::StopIncomplete
                                 && error.message.len() <= 1024
                             {
                                 return format!("late native Stop observation: {}", error.message);
                             }
                         }
+                        if let CompanionEvent::Fenced { receipt } = &reply.event {
+                            if receipt.instance_nonce == reply.instance_nonce
+                                && receipt.control_epoch == reply.control_epoch
+                                && receipt.operation_id == reply.operation_id
+                            {
+                                return format!("unaccepted late native Stop observation only: bound=true {}", fence_observation(receipt));
+                            }
+                        }
+                        if matches!(&reply.event, CompanionEvent::Stopped {}) {
+                            return "unaccepted late native Stop observation only: bound=true event=stopped".into();
+                        }
                     }
-                    "rejected unbound/oversized late native Stop observation".into()
+                    format!("rejected unbound/oversized late native Stop observation: event={kind} bound={bound}")
                 }),
                 Err(error) => {
                     let message = error.to_string();
@@ -775,12 +824,9 @@ impl Service {
             };
             if let Some(observation) = observation {
                 retirement.diagnostic_observed = true;
-                if let Some(error) = status.last_error {
-                    // Diagnostics cannot validate Fence, release a guard or
-                    // change the forced retirement's unsuccessful outcome.
-                    self.coordinator
-                        .fail_held(error.code, &format!("{}; {observation}", error.message));
-                }
+                // Diagnostics cannot validate Fence, release a guard or
+                // change the forced retirement's unsuccessful outcome.
+                self.coordinator.append_failure_observation(&observation);
             }
         }
     }
@@ -793,8 +839,19 @@ impl Service {
             match self.processes.graceful_progress() {
                 Ok(reaped) => reaped,
                 Err(error) => {
-                    self.coordinator
-                        .fail_held(ErrorCode::OwnerFailed, &error.to_string());
+                    if self.failed {
+                        self.coordinator
+                            .fail_held_preserving_error(ErrorCode::OwnerFailed, &error.to_string());
+                    } else {
+                        self.coordinator
+                            .fail_held(ErrorCode::OwnerFailed, &error.to_string());
+                    }
+                    if let Some(receipt) = &retirement.receipt {
+                        self.coordinator.append_failure_observation(&format!(
+                            "validated Fence retained as observation only: {}",
+                            fence_observation(receipt)
+                        ));
+                    }
                     self.coordinator.note_forced_termination();
                     self.failed = true;
                     retirement.receipt = None;
@@ -810,7 +867,25 @@ impl Service {
             // A child can write its final frame between the pre-reap read and
             // wait. Drain once more after actual exit, before clearing bindings.
             self.observe_retirement_diagnostic();
-            let retirement = self.retirement.take().unwrap();
+            let mut retirement = self.retirement.take().unwrap();
+            let diagnostics = self.processes.diagnostic_summary();
+            if diagnostics.is_some() && !self.failed {
+                // Diagnostics arriving after the last graceful check still
+                // invalidate StopComplete even when both children exited0.
+                self.coordinator.fail_held(
+                    ErrorCode::OwnerFailed,
+                    "owned private child stderr failed final capture",
+                );
+                self.coordinator.note_forced_termination();
+                self.failed = true;
+                if let Some(receipt) = retirement.receipt.take() {
+                    self.coordinator.append_failure_observation(&format!(
+                        "validated Fence retained as observation only: {}",
+                        fence_observation(&receipt)
+                    ));
+                }
+                retirement.operation = None;
+            }
             self.fence_started = None;
             self.operation_started = None;
             self.startup_started = None;
@@ -820,6 +895,9 @@ impl Service {
                 .coordinator
                 .prove_children_reaped(&mut self.processes.companion, &mut self.processes.daemon)
                 .map_err(|e| io::Error::other(e.message))?;
+            if let Some(diagnostics) = diagnostics {
+                self.coordinator.append_failure_observation(&diagnostics);
+            }
             if let Err(error) = self.release(&permit) {
                 self.fail(error);
                 return Ok(());

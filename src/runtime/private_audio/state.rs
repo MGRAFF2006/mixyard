@@ -195,6 +195,39 @@ impl Coordinator {
         self.status.phase = Phase::FailedHeld;
         self.status.last_error = Some(failure(code, message));
     }
+    pub(crate) fn fail_held_preserving_error(&mut self, code: ErrorCode, message: &str) {
+        self.source_lost_held = false;
+        self.status.phase = Phase::FailedHeld;
+        if self.status.last_error.is_some() {
+            self.append_failure_observation(&format!(
+                "additional retirement failure code={code:?}: {message}"
+            ));
+        } else {
+            self.status.last_error = Some(failure(code, message));
+        }
+    }
+    pub(crate) fn append_failure_observation(&mut self, observation: &str) {
+        const LIMIT: usize = 24 * 1024;
+        const REJECTED: &str = "; rejected oversized retirement observation";
+        let Some(error) = &mut self.status.last_error else {
+            return;
+        };
+        // Reserve room for an explicit rejection marker. Limit JSON expansion
+        // as well, leaving at least 16KiB of the result budget for its envelope
+        // and the scalar status after child reaping.
+        if error.message.len() + observation.len() + 2 + REJECTED.len() <= LIMIT {
+            let candidate = format!("{}; {observation}", error.message);
+            if serde_json::to_vec(&candidate)
+                .is_ok_and(|bytes| bytes.len() + REJECTED.len() <= 48 * 1024)
+            {
+                error.message = candidate;
+                return;
+            }
+        }
+        if !error.message.ends_with(REJECTED) {
+            error.message.push_str(REJECTED);
+        }
+    }
     pub fn source_lost_held(&self) -> bool {
         self.source_lost_held
     }
@@ -522,11 +555,10 @@ impl Coordinator {
                 "processes reaped; native scrub/normal StopComplete unverified; companion={a}; server={b}; forced={}",
                 self.forced
             );
-            if let Some(error) = &mut self.status.last_error {
+            if self.status.last_error.is_some() {
                 // Reaping proves process retirement, not the missing native
                 // fence. Preserve its initiating error for the next repair.
-                error.message.push_str("; ");
-                error.message.push_str(&retirement);
+                self.append_failure_observation(&retirement);
             } else {
                 self.status.last_error = Some(failure(ErrorCode::OwnerFailed, &retirement));
             }

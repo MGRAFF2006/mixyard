@@ -25,17 +25,71 @@ fn nonblocking(fd: RawFd) -> io::Result<()> {
     }
     Ok(())
 }
-// Pipes have bounded kernel storage. One unexpected byte invalidates the run;
-// never accumulate unbounded logs or silently discard an SDK warning.
-fn quiet(stderr: &mut ChildStderr) -> io::Result<()> {
-    let mut byte = [0; 1];
-    match stderr.read(&mut byte) {
-        Ok(0) => Ok(()),
-        Ok(_) => Err(invalid(
-            "owned private child emitted unexpected diagnostics",
-        )),
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(()),
-        Err(error) => Err(error),
+const STDERR_LIMIT: usize = 4096;
+// Retain the first bytes exactly, including binary diagnostics. Reads and
+// storage stay bounded even when a failing child floods its pipe.
+struct Diagnostic {
+    name: &'static str,
+    stderr: ChildStderr,
+    bytes: Vec<u8>,
+    observed: u64,
+    eof: bool,
+    overflow: bool,
+    read_failed: bool,
+}
+impl Diagnostic {
+    fn new(name: &'static str, stderr: ChildStderr) -> io::Result<Self> {
+        nonblocking(stderr.as_raw_fd())?;
+        Ok(Self {
+            name,
+            stderr,
+            bytes: Vec::new(),
+            observed: 0,
+            eof: false,
+            overflow: false,
+            read_failed: false,
+        })
+    }
+    fn capture(&mut self) {
+        if self.eof || self.read_failed {
+            return;
+        }
+        let mut buffer = [0; STDERR_LIMIT];
+        for _ in 0..16 {
+            match self.stderr.read(&mut buffer) {
+                Ok(0) => {
+                    self.eof = true;
+                    break;
+                }
+                Ok(n) => {
+                    self.observed = self.observed.saturating_add(n as u64);
+                    let retained = n.min(STDERR_LIMIT - self.bytes.len());
+                    self.bytes.extend_from_slice(&buffer[..retained]);
+                    self.overflow |= retained < n;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    self.read_failed = true;
+                    break;
+                }
+            }
+        }
+    }
+    fn failed(&self) -> bool {
+        self.observed != 0 || self.read_failed
+    }
+    fn summary(&self) -> String {
+        use std::fmt::Write;
+        let mut hex = String::with_capacity(2 * self.bytes.len());
+        for byte in &self.bytes {
+            write!(&mut hex, "{byte:02x}").expect("writing to String");
+        }
+        format!(
+            "owned stderr {}: observedBytes={} retainedBytes={} eof={} overflow={} incomplete={} readFailed={} rawHex={hex}",
+            self.name, self.observed, self.bytes.len(), self.eof, self.overflow,
+            !self.eof || self.overflow || self.read_failed, self.read_failed,
+        )
     }
 }
 struct Outbound {
@@ -101,7 +155,7 @@ pub struct Processes {
     pub companion: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
-    diagnostics: Vec<ChildStderr>,
+    diagnostics: Vec<Diagnostic>,
     namespace: PathBuf,
     cancel: UnixStream,
     normal: Outbound,
@@ -169,7 +223,7 @@ impl Processes {
     #[cfg(test)]
     pub(super) fn test_owned(
         qualified: Qualified,
-        daemon: Child,
+        mut daemon: Child,
         mut companion: Child,
         cancel: UnixStream,
         observer: fn() -> io::Result<()>,
@@ -179,12 +233,21 @@ impl Processes {
         nonblocking(stdin.as_raw_fd())?;
         nonblocking(stdout.as_raw_fd())?;
         cancel.set_nonblocking(true)?;
+        let mut diagnostics = Vec::new();
+        for (name, stderr) in [
+            ("daemon", daemon.stderr.take()),
+            ("companion", companion.stderr.take()),
+        ] {
+            if let Some(stderr) = stderr {
+                diagnostics.push(Diagnostic::new(name, stderr)?);
+            }
+        }
         Ok(Self {
             daemon,
             companion,
             stdin,
             stdout,
-            diagnostics: Vec::new(), // Explicit test doubles, never SDK evidence.
+            diagnostics, // Explicit test doubles, never SDK evidence.
             namespace: qualified.descriptor.sdk_prefix.clone(),
             cancel,
             normal: Outbound::new(),
@@ -250,17 +313,25 @@ impl Processes {
         let (cancel, child_cancel) = UnixStream::pair()?;
         cancel.set_nonblocking(true)?;
         let mut daemon = server.spawn()?;
-        let mut daemon_stderr = daemon.stderr.take().expect("piped daemon stderr");
-        if let Err(error) = nonblocking(daemon_stderr.as_raw_fd()) {
-            terminate_startup(&mut daemon);
-            return Err(error);
-        }
+        let mut daemon_diagnostic =
+            match Diagnostic::new("daemon", daemon.stderr.take().expect("piped daemon stderr")) {
+                Ok(diagnostic) => diagnostic,
+                Err(error) => {
+                    terminate_startup(&mut daemon);
+                    return Err(error);
+                }
+            };
         // Connect only after this owned core publishes its private socket.
         let ready = Instant::now();
         loop {
-            if let Err(error) = quiet(&mut daemon_stderr) {
+            daemon_diagnostic.capture();
+            if daemon_diagnostic.failed() {
                 terminate_startup(&mut daemon);
-                return Err(error);
+                daemon_diagnostic.capture();
+                return Err(invalid(&format!(
+                    "owned core startup diagnostics; {}",
+                    daemon_diagnostic.summary()
+                )));
             }
             use std::os::unix::fs::{FileTypeExt, MetadataExt};
             if let Ok(metadata) = fs::symlink_metadata(namespace.join("mixyard-private")) {
@@ -308,12 +379,17 @@ impl Processes {
             }
         };
         drop(child_cancel);
-        let companion_stderr = companion.stderr.take().expect("piped companion stderr");
-        if let Err(error) = nonblocking(companion_stderr.as_raw_fd()) {
-            terminate_startup(&mut companion);
-            terminate_startup(&mut daemon);
-            return Err(error);
-        }
+        let companion_diagnostic = match Diagnostic::new(
+            "companion",
+            companion.stderr.take().expect("piped companion stderr"),
+        ) {
+            Ok(diagnostic) => diagnostic,
+            Err(error) => {
+                terminate_startup(&mut companion);
+                terminate_startup(&mut daemon);
+                return Err(error);
+            }
+        };
         let handles = companion.stdin.take().zip(companion.stdout.take());
         let Some((stdin, stdout)) = handles else {
             terminate_startup(&mut companion);
@@ -325,7 +401,7 @@ impl Processes {
             companion,
             stdin,
             stdout,
-            diagnostics: vec![daemon_stderr, companion_stderr],
+            diagnostics: vec![daemon_diagnostic, companion_diagnostic],
             namespace,
             cancel,
             normal: Outbound::new(),
@@ -367,6 +443,7 @@ impl Processes {
     // Failure retirement may retain a final native diagnostic. Never flush a
     // fenced normal frame or treat these observations as control progress.
     pub fn retirement_events(&mut self) -> io::Result<Vec<CompanionReply>> {
+        self.capture_diagnostics();
         self.read_events(true)
     }
     fn read_events(&mut self, allow_eof: bool) -> io::Result<Vec<CompanionReply>> {
@@ -400,10 +477,33 @@ impl Processes {
         Ok(events)
     }
     fn check_diagnostics(&mut self) -> io::Result<()> {
-        for stderr in &mut self.diagnostics {
-            quiet(stderr)?;
+        self.capture_diagnostics();
+        if self.diagnostics.iter().any(Diagnostic::failed) {
+            return Err(invalid(
+                "owned private child emitted unexpected diagnostics",
+            ));
         }
         Ok(())
+    }
+    fn capture_diagnostics(&mut self) {
+        for diagnostic in &mut self.diagnostics {
+            diagnostic.capture();
+        }
+    }
+    // Called after reaping, so a still-open pipe is explicitly incomplete.
+    // At most two 4096-byte prefixes become 16384 hex characters plus labels.
+    pub fn diagnostic_summary(&mut self) -> Option<String> {
+        self.capture_diagnostics();
+        self.diagnostics
+            .iter()
+            .any(|d| d.failed() || !d.eof)
+            .then(|| {
+                self.diagnostics
+                    .iter()
+                    .map(Diagnostic::summary)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
     }
     pub fn observe(&self) -> io::Result<()> {
         #[cfg(test)]
@@ -439,12 +539,25 @@ impl Processes {
             }
             self.daemon_term_sent = true;
         }
-        self.reaped()
+        let reaped = self.reaped()?;
+        self.check_diagnostics()?;
+        if reaped && self.diagnostics.iter().any(|d| !d.eof) {
+            return Err(invalid(
+                "owned private child stderr capture incomplete after reap",
+            ));
+        }
+        Ok(reaped)
     }
     pub fn reaped(&mut self) -> io::Result<bool> {
-        Ok(self.daemon.try_wait()?.is_some() && self.companion.try_wait()?.is_some())
+        self.capture_diagnostics();
+        let reaped = self.daemon.try_wait()?.is_some() && self.companion.try_wait()?.is_some();
+        if reaped {
+            self.capture_diagnostics();
+        }
+        Ok(reaped)
     }
     pub fn begin_forced(&mut self) -> io::Result<()> {
+        self.capture_diagnostics();
         self.forced = true;
         for child in [&mut self.daemon, &mut self.companion] {
             if child.try_wait()?.is_none() {
@@ -456,6 +569,7 @@ impl Processes {
         Ok(())
     }
     pub fn force_kill(&mut self) -> io::Result<()> {
+        self.capture_diagnostics();
         for child in [&mut self.daemon, &mut self.companion] {
             if child.try_wait()?.is_none() {
                 self.forced = true;
@@ -666,10 +780,20 @@ while True:
                 .stderr(Stdio::piped())
                 .spawn()
                 .unwrap();
-            let mut stderr = child.stderr.take().unwrap();
-            nonblocking(stderr.as_raw_fd()).unwrap();
+            let mut diagnostic =
+                Diagnostic::new("companion", child.stderr.take().unwrap()).unwrap();
             assert!(child.wait().unwrap().success());
-            assert_eq!(quiet(&mut stderr).is_ok(), script == "pass");
+            diagnostic.capture();
+            assert_eq!(!diagnostic.failed(), script == "pass");
+            assert!(diagnostic.eof);
+            assert_eq!(
+                diagnostic.bytes,
+                if script == "pass" {
+                    b"".as_slice()
+                } else {
+                    b"warning".as_slice()
+                }
+            );
         }
     }
     /// This is a pipe/cancel transport double, never a native owner proof.

@@ -120,11 +120,11 @@
     "src/runtime/mod.rs": "31f02792e360d03bd8c3777099b97a77dcd0d0c902a08e9ccc969393a1a1b56d",
     "src/runtime/private_audio/client.rs": "80eb15ba7f07470ab18afdefdb41d8d7740bb8ddd67939e0e06df193d5dd004e",
     "src/runtime/private_audio/descriptor.rs": "c9eea9f6cb47e8b756475ec4c2c3f7a6177cf230dd4981604b3a6276c2306050",
-    "src/runtime/private_audio/mod.rs": "dc74dc7f12c24f89628c3e33c077bf673f4b7dbf5442316b82000f8b16ef1d55",
-    "src/runtime/private_audio/process.rs": "b71878247a0739c3d159566eb9a3c0a9c7de6e80e46d7974413b37d38255937a",
+    "src/runtime/private_audio/mod.rs": "b5ab3d36a7a6724e6390414bfcf9195fe135e7af7c244612857628f4173e94a0",
+    "src/runtime/private_audio/process.rs": "23c53995e384e0961d5d35250652bbfff0bcddb5098abef5a3d68084f60d72eb",
     "src/runtime/private_audio/protocol.rs": "c29340dd23d5d9c26e333b0e428dfe4daad3a3b5ed9950dcb66a2640f1cb5b50",
-    "src/runtime/private_audio/service_tests.rs": "ba55b91c8cc035e89ffe523c87b5e7e435e11bfb0e85b5dedb45e7c3e1de1f3a",
-    "src/runtime/private_audio/state.rs": "5c890074524a0c0922e9c6038d40af3f5d8f36f1d685cf087126fe30772d5a75",
+    "src/runtime/private_audio/service_tests.rs": "77bbb195dfc4cb0ded05b14f894009705ae835d663e6808e862bf63601966e5d",
+    "src/runtime/private_audio/state.rs": "6353c7efb7746731ee6db693f8ca08b03ba79f41d1db7eab65dc845ea2c0d8e5",
     "src/runtime/private_audio/state_tests.rs": "c81b6e403bebcf992e0114a847a3242ba6e49522c33ae69c2b5997040097ae02"
   },
   "rootReviewFollowup": {
@@ -418,5 +418,20 @@
     "reviewRepair": "Exact0af independent review found oversized serde parser-error text could exceed64KiB clientresult limit and erase originalfailure. Replace parser-error text>1024bytes with explicitbounded rejection; addactualownedchild malformed70000bytevariant toexistingretirementregression. UNRUN.",
     "durableReceiptCorrection": "Two root-authored GitHub executioncomments initiallycontained literal@filepath due raw gh argument; patchedsamecomments via structuredJSON andGETreadbackverifiedfullbodies. PRbodyalreadycontainedactualevidence; no evidencefilereplacement.",
     "withdrawalReviewRepair": "Exact528 independent review found diagnostic iteration could dereference Port userdata after pw_filter_destroy freesit. fence_detail now skips objects_destroyed generations andnullfilter nodes before touchingPortpointers, reportingwithdrawngenerationcount. This changes onlydiagnostics, never scrub/withdrawal/proof gates. Sourceinferred andfixedbeforeany528execution; currentnativeUNCOMPILED/UNRUN."
+  },
+  "nativeStderrRetentionFollowup": {
+    "previousHead": "9322541a05097da5047940b74d7ce53d51452231",
+    "agent": "mixyard-integration-owner-cad895ac",
+    "implementationAgent": "source_loss_path; T3 Code/Codex/OpenAI gpt-6.1-sol high; /root/source_loss_path",
+    "actualStopProbeReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6584211991",
+    "actual932FullReceipt": "https://github.com/MGRAFF2006/mixyard/pull/116#issuecomment-6583815154",
+    "actualStopProbe": "Exact932 retainednative identitymatched;freshRust/retirement1/source_loss4 passed;actualR1Installed thenexactStopwith4liveconsumers returnedPendingfailed-stopped. Firstcause ownedprivatechildunexpectedstderr, discardedbyte/unknownchild. Bothnativechildrenexit0 butforced=true;runtimecleanupshutdown0/no parentfallback. NoStopComplete/EOF/PCM/R2/restartclaim. ExplicitBoatstopcompleted/nonforced2026-11-02T17:46:12.481Z,snapshotverified17:46:12.423Z.",
+    "privateEvidence": "/dev/shm/mixyard-product-attempt-9322541-stop-probe-root: archive139841B SHA652fe4d097eb98d84590a72747b36d9fb431b0be0b2c6b842dc9bca17301dd6f, manifestverified. Rootactualcapture/exitsnotSDKqualification.",
+    "causeUnknown": "Unexpecteddaemon/companionstderr isconcretefirstfailure. Exactmessage/childwerepreviouslydiscardedbyquiet(). Scrubepochstallunconfirmed;clock13isaseparaterealearlierfailure. Historical#115daemon/graph/recorderstderrwereemptyanddonotidentifythiswarning.",
+    "change": "Retainfirst4096exactstderrbytespernameddaemon/companion,total8192, observed/retainedcounts+EOF/overflow/incomplete/readFailed andrawhex; continuouslydrainboundedduringgraceful/forced/reapedpaths. ANYbyte/readfailure/incompletepostreap stillinvalidatesStopComplete. PreservevalidatedFence scalars/unacceptedboundlateeventkind asdiagnosticsonly, nevercontrolprogress. Originalfailurecode/causeandFailedHeld/SourceLostresetonlaterfatal retained.",
+    "limits": "Retirementobservationappend24KiBrawmessage/48KiBJSONencodedmessage withreservedexplicitoversizedrejection; fullstderrhex<=16384characters+labels. Existinggenericfailure512/nativeparser1024limitsunchanged. Onlyboundedretirementobservationpathuseslargerspace; postreapstatusclearbeforefullstderrappend.",
+    "focusedRegressions": "Existingowner_failure_stop_cannot_rearm_retirement_or_reap_children_twice extendslong768nativeFaultsample,boundStopped/Fenced,actualownednormalexitstderrhandlers(binaryfirstbyte/two4352byteoverflow),strictFailedStopped/guard/reaps/RESULT_LIMIT, laterfataluncertaintyreturnsFailedHeld. Existingactual_success_exit_does_not_hide_owned_child_diagnostics updatedexactbytes. Source_loss4unchanged. ExplicitAPI/transportdoubles, notSDKproof.",
+    "prototype": "ClockfailureCPPprototype preserved /dev/shm/mixyard-clock-failure-9322541-diagnosis/root-preserved.patch, notintegratedorcompiled. CPPremainsbyteidenticalexact932.",
+    "verification": "Source/diff/rustfmt-only. ChangedRust/testsUNCOMPILED/UNRUN; newindependentexactHEADreview +freshcurrentRust/focusedtests/Stopprobe required. Strictnative/helperwillrunifrefreshedfullpacket; no localcompiler/native/targettestexecution."
   }
 }

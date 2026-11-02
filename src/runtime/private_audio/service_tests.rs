@@ -41,11 +41,14 @@ fn python(source: &str) -> Command {
         .arg(source)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     command
 }
 impl Fixture {
     fn new(companion_source: &str) -> Self {
+        Self::with_daemon(companion_source, "import time;time.sleep(60)")
+    }
+    fn with_daemon(companion_source: &str, daemon_source: &str) -> Self {
         let mut entropy = [0; 16];
         getrandom::fill(&mut entropy).unwrap();
         let root = PathBuf::from("/dev/shm").join(format!(
@@ -83,7 +86,7 @@ impl Fixture {
         };
         let qualified = descriptor::Qualified::test_double(descriptor);
         let (cancel, child_cancel) = UnixStream::pair().unwrap();
-        let mut daemon_command = python("import time;time.sleep(60)");
+        let mut daemon_command = python(daemon_source);
         process::parent_death(&mut daemon_command, None);
         let daemon = daemon_command.spawn().unwrap();
         let mut companion_command = python(companion_source);
@@ -1001,18 +1004,36 @@ fn owner_failure_stop_cannot_rearm_retirement_or_reap_children_twice() {
         Phase::FailedStopped
     );
     assert_eq!(fixture.service().coordinator.snapshot().stop_target, target);
+    // A later fatal release/ownership error must return to FailedHeld even
+    // after failed reaping; preserving its first cause cannot preserve phase.
+    fixture.service().fail(failure(
+        ErrorCode::StopIncomplete,
+        "post-reap release uncertainty double",
+    ));
+    let status = fixture.service().coordinator.snapshot();
+    assert_eq!(status.phase, Phase::FailedHeld);
+    let error = status.last_error.unwrap();
+    assert_eq!(error.code, ErrorCode::OwnerFailed);
+    assert!(error
+        .message
+        .starts_with("native fault double; processes reaped;"));
+    assert!(error
+        .message
+        .contains("post-reap release uncertainty double"));
     fixture.service().shutdown().unwrap();
 
     // Explicit signal/transport doubles. A final Stop failure must survive a
     // forced reap, while an unbound message must never acquire proof authority.
-    for case in 0..3 {
+    for case in 0..5 {
         let source = r#"
 import json,signal,sys,time
 def emit(event,nonce='a'*64,epoch=1,op='startup'):
  print(json.dumps({'companionVersion':1,'instanceNonce':nonce,'controlEpoch':epoch,'operationId':op,'event':event}),flush=True)
 def stopped(sig,frame):
- event={'kind':'fault','error':{'code':'stop-incomplete','message':'API_DOUBLE_FENCE_SAMPLE'}}
+ event={'kind':'fault','error':{'code':'stop-incomplete','message':'API_DOUBLE_FENCE_SAMPLE'+'Q'*768}}
  if CASE==2: event={'kind':'X'*70000}
+ if CASE==3: event={'kind':'stopped'}
+ if CASE==4: event={'kind':'fenced','receipt':{'instanceNonce':'a'*64,'controlEpoch':2,'operationId':'fence-2','outcome':'canceled-before-switch','switched':None,'switchEvidence':None,'ownerQuiesced':True,'pendingPcmZero':True,'noLateInstall':True}}
  emit(event,'NONCE'*64,2,'fence-2')
  sys.exit(0)
 signal.signal(signal.SIGTERM,stopped)
@@ -1053,6 +1074,7 @@ while True: time.sleep(60)
         assert_eq!(error.code, ErrorCode::StopIncomplete);
         assert!(error.message.starts_with("native fence deadline double;"));
         assert_eq!(error.message.contains("API_DOUBLE_FENCE_SAMPLE"), case == 0);
+        assert_eq!(error.message.contains(&"Q".repeat(768)), case == 0);
         assert_eq!(
             error.message.contains("rejected unbound/oversized"),
             case == 1
@@ -1065,7 +1087,114 @@ while True: time.sleep(60)
         );
         assert!(error.message.len() < 2048);
         assert!(error.message.contains("forced=true"));
+        if case == 3 || case == 4 {
+            assert!(error
+                .message
+                .contains("unaccepted late native Stop observation only: bound=true"));
+            assert!(error.message.contains(if case == 3 {
+                "event=stopped"
+            } else {
+                "event=fenced"
+            }));
+        }
+        if case == 4 {
+            assert!(error
+                .message
+                .contains("ownerQuiesced=true pendingPcmZero=true noLateInstall=true"));
+        }
         assert!(fixture.service().processes.reaped().unwrap());
         assert!(fixture.service().guard.is_none());
+    }
+
+    // Actual stderr pipes and graceful Stop handlers, still API doubles. A
+    // warning invalidates StopComplete even when both children return zero.
+    for overflow in [false, true] {
+        let companion_bytes = if overflow {
+            "bytes(range(256))*17"
+        } else {
+            "b'warning\\n\\x00\\xfffirst'"
+        };
+        let daemon_bytes = if overflow {
+            "bytes(range(255,-1,-1))*17"
+        } else {
+            "b'\\x80daemon\\x00'"
+        };
+        let companion = COMPANION.replace("import os,json,select,sys", "import os,json,select,sys,signal\nsignal.signal(signal.SIGTERM,lambda *_: sys.exit(0))").replace(
+            "   elif kind=='shutdown': sys.exit(0)",
+            &format!("   elif kind=='shutdown':\n    os.write(2,{companion_bytes})\n    sys.exit(0)"),
+        );
+        let daemon = format!("import os,signal,sys,time\ndef stopped(sig,frame):\n os.write(2,{daemon_bytes})\n sys.exit(0)\nsignal.signal(signal.SIGTERM,stopped)\nprint('READY',flush=True)\nwhile True: time.sleep(60)\n");
+        let mut fixture = Fixture::with_daemon(&companion, &daemon);
+        let stdout = fixture.service().processes.daemon.stdout.as_mut().unwrap();
+        let flags = unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_GETFL) };
+        assert!(flags >= 0);
+        assert_eq!(
+            unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) },
+            0
+        );
+        let start = Instant::now();
+        let mut ready = Vec::new();
+        while !ready.ends_with(b"READY\n") {
+            let mut bytes = [0; 16];
+            match stdout.read(&mut bytes) {
+                Ok(0) => panic!("daemon API-double handler exited before ready"),
+                Ok(n) => ready.extend_from_slice(&bytes[..n]),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("daemon API-double readiness: {error}"),
+            }
+            assert!(ready.len() <= 16 && start.elapsed() < Duration::from_secs(2));
+            std::thread::yield_now();
+        }
+        fixture.staged_install();
+        let expected = fixture.service().coordinator.snapshot().stop_target;
+        let mut stop = fixture.client(Operation::Stop { expected });
+        let response = fixture.reply(&mut stop);
+        assert!(!matches!(
+            response.result,
+            Some(ResultValue::StopComplete { .. })
+        ));
+        let start = Instant::now();
+        while !fixture.service().retired {
+            fixture.service().tick().unwrap();
+            assert!(start.elapsed() < Duration::from_secs(3));
+            std::thread::yield_now();
+        }
+        let status = fixture.service().coordinator.snapshot();
+        assert_eq!(status.phase, Phase::FailedStopped);
+        let message = &status.last_error.as_ref().unwrap().message;
+        assert!(message.contains("validated Fence retained as observation only: event=fenced"));
+        assert!(message.contains("companion=exit status: 0; server=exit status: 0; forced=true"));
+        assert!(
+            message.contains("owned stderr daemon:") && message.contains("owned stderr companion:")
+        );
+        if overflow {
+            assert_eq!(message.matches("observedBytes=4352 retainedBytes=4096 eof=true overflow=true incomplete=true readFailed=false").count(), 2);
+            let companion_hex = (0..=255u8)
+                .cycle()
+                .take(4096)
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>();
+            let daemon_hex = (0..=255u8)
+                .rev()
+                .cycle()
+                .take(4096)
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>();
+            assert!(message.contains(&format!("rawHex={companion_hex}")));
+            assert!(message.contains(&format!("rawHex={daemon_hex}")));
+        } else {
+            assert!(message.contains("observedBytes=15 retainedBytes=15 eof=true overflow=false incomplete=false readFailed=false rawHex=7761726e696e670a00ff6669727374"));
+            assert!(message.contains("observedBytes=8 retainedBytes=8 eof=true overflow=false incomplete=false readFailed=false rawHex=806461656d6f6e00"));
+        }
+        assert!(message.len() <= 24 * 1024);
+        let mut client = fixture.client(Operation::Status {});
+        let status_reply = fixture.reply(&mut client);
+        assert!(matches!(
+            status_reply.result,
+            Some(ResultValue::Status { .. })
+        ));
+        assert!(serde_json::to_vec(&status_reply).unwrap().len() <= RESULT_LIMIT);
+        assert!(fixture.service().guard.is_none());
+        assert!(fixture.service().processes.reaped().unwrap());
     }
 }
