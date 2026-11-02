@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml']
+    paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml', '.github/actions/linux-fixtures/**', '.github/ci/**', '.github/workflows/linux-fixtures.yml']
   pull_request:
-    paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml']
+    paths: ['adapters/windows/inventory/**', 'adapters/windows/CMakeLists.txt', 'adapters/macos/inventory/**', 'docs/platform-native-inventory.md', '.github/workflows/platform-native-inventory.yml', '.github/actions/linux-fixtures/**', '.github/ci/**', '.github/workflows/linux-fixtures.yml']
 
 permissions:
   contents: read
@@ -17,6 +17,8 @@ concurrency:
 
 jobs:
   portable:
+    # Automatic Linux execution belongs to linux-fixtures.yml.
+    if: github.event_name == 'workflow_dispatch'
     name: Portable writer and strict decoder fixtures
     runs-on: boat
     # Keep queued checks while sharing one repository-wide Boat slot.

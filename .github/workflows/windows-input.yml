@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml']
+    paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml', '.github/actions/linux-fixtures/**', '.github/ci/**', '.github/workflows/linux-fixtures.yml']
   pull_request:
-    paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml']
+    paths: ['adapters/windows/virtual-input/**', 'verification/windows-input/**', '.github/workflows/windows-input.yml', '.github/actions/linux-fixtures/**', '.github/ci/**', '.github/workflows/linux-fixtures.yml']
 permissions:
   contents: read
 concurrency:
@@ -34,6 +34,8 @@ jobs:
         shell: pwsh
         run: "'Usermode SDK compile/link and INJECTED operations only. NEVER actual software-device creation, driver open/IOCTL or audio. Native execution and MMDevice/consumer PCM BLOCKED.' >> $env:GITHUB_STEP_SUMMARY"
   transport:
+    # Automatic Linux execution belongs to linux-fixtures.yml.
+    if: github.event_name == 'workflow_dispatch'
     name: Bounded ingress queue model (no kernel or PCM delivery)
     runs-on: boat
     # Keep queued checks while sharing one repository-wide Boat slot.

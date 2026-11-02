@@ -1,0 +1,14 @@
+name: platform-native-inventory
+description: Original Linux fixture payload; isolated checkout and lane deadline are owned by the caller.
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+  - run: |
+      g++ -std=c++17 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -g adapters/windows/inventory/check.cpp -o /tmp/mixyard-inventory-check
+      /tmp/mixyard-inventory-check
+      python3 -B adapters/windows/inventory/test_protocol.py
+      python3 -B adapters/windows/inventory/test_protocol.py --fixture /tmp/mixyard-inventory-check
+    shell: bash

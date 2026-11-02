@@ -5,10 +5,16 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/actions/linux-fixtures/**'
+      - '.github/ci/**'
+      - '.github/workflows/linux-fixtures.yml'
       - 'adapters/macos/**'
       - '.github/workflows/macos-workers.yml'
   pull_request:
     paths:
+      - '.github/actions/linux-fixtures/**'
+      - '.github/ci/**'
+      - '.github/workflows/linux-fixtures.yml'
       - 'adapters/macos/**'
       - '.github/workflows/macos-workers.yml'
 
@@ -25,7 +31,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Preserve the original manual matrix; automatic Linux runs in one fixture job.
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","macos-latest"]' || '["macos-latest"]') }}
     runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && 'boat' || matrix.os }}
     # Only Boat rows share a slot; native rows get unique groups.
     concurrency:

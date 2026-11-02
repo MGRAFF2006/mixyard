@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['adapters/windows/**', '.github/workflows/windows-worker.yml']
+    paths: ['adapters/windows/**', '.github/workflows/windows-worker.yml', '.github/actions/linux-fixtures/**', '.github/ci/**', '.github/workflows/linux-fixtures.yml']
   pull_request:
-    paths: ['adapters/windows/**', '.github/workflows/windows-worker.yml']
+    paths: ['adapters/windows/**', '.github/workflows/windows-worker.yml', '.github/actions/linux-fixtures/**', '.github/ci/**', '.github/workflows/linux-fixtures.yml']
 permissions:
   contents: read
 concurrency:
@@ -14,6 +14,8 @@ concurrency:
 
 jobs:
   portable:
+    # Automatic Linux execution belongs to linux-fixtures.yml.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: boat
     # Keep queued checks while sharing one repository-wide Boat slot.
     concurrency:

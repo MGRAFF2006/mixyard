@@ -1,0 +1,79 @@
+name: Linux fixtures
+'on':
+  pull_request: null
+  push:
+    branches:
+    - main
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: linux-fixtures-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  fixtures:
+    name: Linux fixtures gate
+    runs-on: boat
+    timeout-minutes: 60
+    concurrency:
+      group: boat-ci
+      cancel-in-progress: false
+      queue: max
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Select fixture lanes conservatively
+      id: select
+      run: python3 .github/ci/select_linux_fixtures.py
+    - name: http-upnp
+      id: http_upnp
+      if: ${{ !cancelled() && steps.select.outputs.http_upnp == 'true' }}
+      uses: ./.github/actions/linux-fixtures/http-upnp
+      timeout-minutes: 3
+      continue-on-error: true
+      env:
+        PYTHONDONTWRITEBYTECODE: '1'
+        PYTHONPATH: interoperability
+    - name: native-linux-evidence
+      id: native_linux_evidence
+      if: ${{ !cancelled() && steps.select.outputs.native_linux_evidence == 'true' }}
+      uses: ./.github/actions/linux-fixtures/native-linux-evidence
+      timeout-minutes: 3
+      continue-on-error: true
+    - name: platform-native-inventory
+      id: platform_native_inventory
+      if: ${{ !cancelled() && steps.select.outputs.platform_native_inventory == 'true' }}
+      uses: ./.github/actions/linux-fixtures/platform-native-inventory
+      timeout-minutes: 5
+      continue-on-error: true
+    - name: windows-input
+      id: windows_input
+      if: ${{ !cancelled() && steps.select.outputs.windows_input == 'true' }}
+      uses: ./.github/actions/linux-fixtures/windows-input
+      timeout-minutes: 5
+      continue-on-error: true
+    - name: windows-worker
+      id: windows_worker
+      if: ${{ !cancelled() && steps.select.outputs.windows_worker == 'true' }}
+      uses: ./.github/actions/linux-fixtures/windows-worker
+      timeout-minutes: 5
+      continue-on-error: true
+    - name: macos-workers
+      id: macos_workers
+      if: ${{ !cancelled() && steps.select.outputs.macos_workers == 'true' }}
+      uses: ./.github/actions/linux-fixtures/macos-workers
+      timeout-minutes: 5
+      continue-on-error: true
+    - name: Require every selected lane to pass
+      if: ${{ !cancelled() }}
+      env:
+        HTTP_UPNP: ${{ steps.http_upnp.outcome }}
+        NATIVE_LINUX_EVIDENCE: ${{ steps.native_linux_evidence.outcome }}
+        PLATFORM_NATIVE_INVENTORY: ${{ steps.platform_native_inventory.outcome }}
+        WINDOWS_INPUT: ${{ steps.windows_input.outcome }}
+        WINDOWS_WORKER: ${{ steps.windows_worker.outcome }}
+        MACOS_WORKERS: ${{ steps.macos_workers.outcome }}
+        SELECTED: ${{ toJSON(steps.select.outputs) }}
+      shell: bash
+      run: python3 .github/ci/require_linux_fixtures.py

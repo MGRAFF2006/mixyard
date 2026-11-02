@@ -1,0 +1,42 @@
+{
+  "http-upnp": [
+    "interoperability/mixyard_interop/core.py",
+    "interoperability/mixyard_interop/http_upnp/**",
+    "interoperability/tests/http_upnp/**",
+    "docs/protocol-http-upnp.md",
+    ".github/workflows/http-upnp.yml"
+  ],
+  "native-linux-evidence": [
+    "verification/native-linux/**",
+    ".github/workflows/native-linux-evidence.yml"
+  ],
+  "platform-native-inventory": [
+    "adapters/windows/inventory/**",
+    "adapters/windows/CMakeLists.txt",
+    "adapters/macos/inventory/**",
+    "docs/platform-native-inventory.md",
+    ".github/workflows/platform-native-inventory.yml",
+    ".github/actions/linux-fixtures/**",
+    ".github/ci/**",
+    ".github/workflows/linux-fixtures.yml"
+  ],
+  "windows-input": [
+    "adapters/windows/virtual-input/**",
+    "verification/windows-input/**",
+    ".github/workflows/windows-input.yml",
+    ".github/actions/linux-fixtures/**",
+    ".github/ci/**",
+    ".github/workflows/linux-fixtures.yml"
+  ],
+  "windows-worker": [
+    "adapters/windows/**",
+    ".github/workflows/windows-worker.yml",
+    ".github/actions/linux-fixtures/**",
+    ".github/ci/**",
+    ".github/workflows/linux-fixtures.yml"
+  ],
+  "macos-workers": [
+    "adapters/macos/**",
+    ".github/workflows/macos-workers.yml"
+  ]
+}

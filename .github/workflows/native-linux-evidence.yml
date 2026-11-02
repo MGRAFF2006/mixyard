@@ -1,11 +1,7 @@
 name: Silent Linux evidence harness (fixtures only)
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['verification/native-linux/**', '.github/workflows/native-linux-evidence.yml']
-  pull_request:
-    paths: ['verification/native-linux/**', '.github/workflows/native-linux-evidence.yml']
+
 permissions:
   contents: read
 concurrency:
@@ -14,6 +10,8 @@ concurrency:
 
 jobs:
   fixture-safety:
+    # Automatic Linux execution belongs to linux-fixtures.yml.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: boat
     # Keep queued checks while sharing one repository-wide Boat slot.
     concurrency:

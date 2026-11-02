@@ -1,0 +1,15 @@
+name: windows-input
+description: Original Linux fixture payload; isolated checkout and lane deadline are owned by the caller.
+runs:
+  using: composite
+  steps:
+  - uses: actions/checkout@v4
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+  - name: Compile and run focused sanitizer check
+    run: |
+      g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -g verification/windows-input/transport_check.cpp -o /tmp/mixyard-ingress-check
+      /tmp/mixyard-ingress-check
+      g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -g verification/windows-input/delivery_check.cpp -o /tmp/mixyard-delivery-check
+      /tmp/mixyard-delivery-check
+    shell: bash
