@@ -32,7 +32,7 @@ jobs:
       queue: max
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
     - run: |
@@ -46,7 +46,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
     - run: cmake -S adapters/windows -B build/inventory-windows -A x64
@@ -57,7 +57,7 @@ jobs:
       run: python -B adapters/windows/inventory/test_protocol.py --smoke build/inventory-windows/Release/mixyard-windows-inventory.exe
         windows
     - run: cmake --install build/inventory-windows --config Release --prefix build/inventory-install
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v6
       with:
         name: windows-inventory-unsigned-${{ github.event.pull_request.head.sha || github.sha }}
         path: build/inventory-install/bin/mixyard-windows-inventory.exe
@@ -73,7 +73,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
     - run: bash adapters/macos/inventory/build.sh
@@ -83,7 +83,7 @@ jobs:
     - name: Read properties only; no tap, stream, install or recording prompt
       run: python3 -B adapters/windows/inventory/test_protocol.py --smoke adapters/macos/inventory/build/mixyard-macos-inventory
         macos
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v6
       with:
         name: macos-inventory-unsigned-${{ github.event.pull_request.head.sha || github.sha }}
         path: adapters/macos/inventory/build/mixyard-macos-inventory

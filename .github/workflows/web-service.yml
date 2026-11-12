@@ -54,7 +54,7 @@ jobs:
       if: runner.os == 'Linux'
       with:
         components: rustfmt, clippy
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Formatting
       run: cargo fmt --all --check
     - name: Core and service checks

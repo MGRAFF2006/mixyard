@@ -20,7 +20,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Compile/link production library, exercise injected API boundary
         run: bash adapters/macos/output-only/check.sh
       - name: Record qualification limits

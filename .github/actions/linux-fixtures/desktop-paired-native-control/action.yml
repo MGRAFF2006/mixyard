@@ -10,7 +10,7 @@ runs:
     with:
       ref: b3731ce51af02cfbcd0ad6fb7080694f08b6a0bd
       path: qualification-service
-  - uses: actions/setup-python@v5
+  - uses: actions/setup-python@v6
     with:
       python-version: '3.13'
   - uses: dtolnay/rust-toolchain@stable
@@ -119,7 +119,7 @@ runs:
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
   - name: Upload nonsecret results and reviewable lockfiles only
     if: always()
-    uses: actions/upload-artifact@v4
+    uses: actions/upload-artifact@v6
     with:
       name: desktop-paired-ubuntu-24.04-${{ github.sha }}
       path: evidence/

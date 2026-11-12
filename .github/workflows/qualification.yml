@@ -21,8 +21,8 @@ jobs:
       windows_present: ${{ steps.inventory.outputs.windows_present }}
       macos_present: ${{ steps.inventory.outputs.macos_present }}
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.13'
     - name: Check qualification scenarios and native evidence placeholders
@@ -102,8 +102,8 @@ jobs:
       if: runner.os == 'Linux'
       with:
         components: rustfmt, clippy
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.13'
     - name: Disk prerequisite (at least 10 GiB)
@@ -136,8 +136,8 @@ jobs:
       queue: max
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.13'
     - name: Native Linux CLI imports and help only
@@ -151,7 +151,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Disk prerequisite (at least 10 GiB)
       shell: python
       run: |
@@ -171,6 +171,6 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Compile Core Audio probe with SDK/disk preflight
       run: bash adapters/macos/build.sh

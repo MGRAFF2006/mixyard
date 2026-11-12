@@ -25,7 +25,7 @@ jobs:
       queue: max
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Compile and exercise production portable boundary with sanitizers
       run: |
         g++ -std=c++17 -Wall -Wextra -Werror -pedantic -O1 -g0 -pthread -fsanitize=address,undefined adapters/windows/worker_queue.cpp adapters/windows/wasapi_worker.cpp adapters/windows/worker_check.cpp -o /tmp/mixyard-worker-check
@@ -35,7 +35,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Require existing SDK worker disk reserve
       shell: python
       run: |

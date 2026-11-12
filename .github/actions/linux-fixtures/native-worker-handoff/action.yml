@@ -7,7 +7,7 @@ runs:
     if: runner.os == 'Linux'
     with:
       components: rustfmt, clippy
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v5
   - run: cargo test --locked --test runtime_worker --test native_pipeline
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
   - if: runner.os == 'Linux'

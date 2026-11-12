@@ -56,7 +56,7 @@ jobs:
         shell: bash
     steps:
     - uses: actions/checkout@v7
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.13'
     - name: Disk prerequisite and initial host inventory
@@ -168,7 +168,7 @@ jobs:
         } >> "$GITHUB_STEP_SUMMARY"
     - name: Labelled release binary
       if: always() && steps.build.outcome == 'success'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: desktop-release-${{ matrix.os }}-${{ runner.arch }}-${{ github.sha }}
         path: apps/desktop/src-tauri/target/release/${{ matrix.binary }}
@@ -176,7 +176,7 @@ jobs:
         retention-days: 7
     - name: Unsigned installers for manual qualification
       if: steps.bundle.outcome == 'success'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: desktop-unsigned-installers-${{ matrix.os }}-${{ runner.arch }}-${{ github.sha }}
         path: apps/desktop/src-tauri/target/release/bundle/
@@ -184,7 +184,7 @@ jobs:
         retention-days: 7
     - name: Exact host/SDK, executed steps and native evidence (including failures)
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: desktop-evidence-${{ matrix.os }}-${{ runner.arch }}-${{ github.sha }}
         path: evidence/
