@@ -7,7 +7,7 @@ runs:
     if: runner.os == 'Linux'
     with:
       components: rustfmt, clippy
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v5
   - name: Actual processor PCM oracles and callback heap checks
     run: cargo test --locked --test audio_core --test audio_precision --test audio_allocations --test audio_clock
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

@@ -3,7 +3,7 @@ description: Explicit Linux payload from .github/workflows/macos-workers.yml / w
 runs:
   using: composite
   steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v5
   - name: Portable SPSC/PCM and Apple ABI synthetic ingress
     run: bash adapters/macos/worker-check.sh
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}

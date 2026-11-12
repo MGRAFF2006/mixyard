@@ -3,11 +3,11 @@ description: Explicit Linux payload from .github/workflows/network-codecs.yml / 
 runs:
   using: composite
   steps:
-  - uses: actions/setup-python@v5
+  - uses: actions/setup-python@v6
     if: runner.os == 'Linux'
     with:
       python-version: '3.13'
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v5
   - name: Allocate private hosted build and dependency paths before acquisition
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
     run: |
@@ -56,7 +56,7 @@ runs:
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
   - name: Upload logs, versions, link evidence and upstream notices
     if: always()
-    uses: actions/upload-artifact@v4
+    uses: actions/upload-artifact@v6
     with:
       name: codec-evidence-ubuntu-latest-static
       path: ${{ env.CARGO_TARGET_DIR }}/evidence
