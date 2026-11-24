@@ -30,7 +30,7 @@ jobs:
       queue: max
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Check approved-base ancestry and exact source/artifact binding
       run: python3 -B verification/macos-input/test_evidence.py -v
     if: github.event_name == 'workflow_dispatch'
@@ -47,7 +47,7 @@ jobs:
       MIXYARD_TARGET_BASE_REF: ${{ format('refs/remotes/origin/{0}', github.event.pull_request.base.ref || 'main')
         }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         fetch-depth: 0
     - name: Fetch the configured target branch independently of the test merge
@@ -69,7 +69,7 @@ jobs:
     - name: Preserve source and partial artifact hashes on every outcome
       if: always()
       run: python3 verification/macos-input/evidence.py verification/macos-input/build '${{ job.status }}'
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v6
       if: always()
       with:
         name: macos-input-artifact-${{ github.sha }}

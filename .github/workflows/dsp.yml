@@ -58,13 +58,13 @@ jobs:
       if: runner.os == 'Linux'
       with:
         components: rustfmt, clippy
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Filter, dynamics, channel selection/matrix, reset, precision and allocation oracles
       run: cargo test --locked --test dsp_core --test dsp_allocations --test dsp_live --test latency
     - name: Render complete slow FIR and report measured block budgets
       shell: bash
       run: cargo run --locked --release --example dsp_render -- "$RUNNER_TEMP/dsp-render"
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v6
       with:
         name: dsp-offline-${{ matrix.os }}
         path: ${{ runner.temp }}/dsp-render/

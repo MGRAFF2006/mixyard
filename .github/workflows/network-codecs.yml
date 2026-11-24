@@ -43,11 +43,11 @@ jobs:
       queue: max
     timeout-minutes: 10
     steps:
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v6
       if: runner.os == 'Linux'
       with:
         python-version: '3.13'
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Set private target and require 10 GiB free
       shell: python
       run: |
@@ -98,11 +98,11 @@ jobs:
       HOMEBREW_NO_ANALYTICS: '1'
       HOMEBREW_MAKE_JOBS: '2'
     steps:
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v6
       if: runner.os == 'Linux'
       with:
         python-version: '3.13'
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Allocate private hosted build and dependency paths before acquisition
       shell: python
       run: |
@@ -204,7 +204,7 @@ jobs:
       run: python network/codecs/ci/qualify.py
     - name: Upload logs, versions, link evidence and upstream notices
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: codec-evidence-${{ matrix.os }}-${{ matrix.link }}
         path: ${{ env.CARGO_TARGET_DIR }}/evidence

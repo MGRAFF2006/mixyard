@@ -3,8 +3,8 @@ description: Explicit Linux payload from .github/workflows/qualification.yml / l
 runs:
   using: composite
   steps:
-  - uses: actions/checkout@v4
-  - uses: actions/setup-python@v5
+  - uses: actions/checkout@v5
+  - uses: actions/setup-python@v6
     with:
       python-version: '3.13'
   - name: Native Linux CLI imports and help only

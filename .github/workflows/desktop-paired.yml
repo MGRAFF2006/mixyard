@@ -48,7 +48,7 @@ jobs:
       with:
         ref: b3731ce51af02cfbcd0ad6fb7080694f08b6a0bd
         path: qualification-service
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.13'
     - uses: dtolnay/rust-toolchain@stable
@@ -142,7 +142,7 @@ jobs:
           --assets apps/web/dist --output evidence/native-paired.json "$@"
     - name: Upload nonsecret results and reviewable lockfiles only
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: desktop-paired-${{ matrix.os }}-${{ github.sha }}
         path: evidence/

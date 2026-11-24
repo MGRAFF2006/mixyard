@@ -32,7 +32,7 @@ jobs:
       queue: max
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Portable SPSC/PCM and Apple ABI synthetic ingress
       run: bash adapters/macos/worker-check.sh
     - name: Compile actual process tap path (never execute capture/render)

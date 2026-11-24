@@ -3,7 +3,7 @@ description: Explicit Linux payload from .github/workflows/windows-worker.yml / 
 runs:
   using: composite
   steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v5
   - name: Compile and exercise production portable boundary with sanitizers
     run: |
       g++ -std=c++17 -Wall -Wextra -Werror -pedantic -O1 -g0 -pthread -fsanitize=address,undefined adapters/windows/worker_queue.cpp adapters/windows/wasapi_worker.cpp adapters/windows/worker_check.cpp -o /tmp/mixyard-worker-check

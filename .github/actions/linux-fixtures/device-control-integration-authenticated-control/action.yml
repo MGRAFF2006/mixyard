@@ -3,7 +3,7 @@ description: Explicit Linux payload from .github/workflows/device-control-integr
 runs:
   using: composite
   steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v5
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
   - uses: dtolnay/rust-toolchain@stable
@@ -72,7 +72,7 @@ runs:
       }, null, 2))
       JS
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell bash {0}
-  - uses: actions/upload-artifact@v4
+  - uses: actions/upload-artifact@v6
     with:
       name: device-control-evidence
       path: evidence/device-control.json

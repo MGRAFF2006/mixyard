@@ -3,11 +3,11 @@ description: Explicit Linux payload from .github/workflows/network-audio.yml / s
 runs:
   using: composite
   steps:
-  - uses: actions/setup-python@v5
+  - uses: actions/setup-python@v6
     if: runner.os == 'Linux'
     with:
       python-version: '3.13'
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v5
   - name: Set isolated Cargo target directory
     shell: python3 ${{ github.workspace }}/.github/ci/lane_boundary.py shell python {0}
     run: |

@@ -28,8 +28,8 @@ jobs:
       queue: max
     timeout-minutes: 2
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
         node-version: '24'
     - name: Execute bounded mocked SDK contracts and owned loopback signaling
