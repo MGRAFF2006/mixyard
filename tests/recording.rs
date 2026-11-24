@@ -543,15 +543,24 @@ fn partial_os_write_failure_is_terminal_and_salvageable() {
     // Confine the file-size limit and signal disposition to an owned child.
     // This induces a genuine short file write without filling any filesystem.
     if std::env::var_os("MIXYARD_RECORDING_RLIMIT_CHILD").is_none() {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        // Capture the child's output through pipes: RLIMIT_FSIZE also applies
+        // to an inherited stdout/stderr that is a regular file (for example
+        // `cargo test > log`), which would fail the harness's own writes.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "partial_os_write_failure_is_terminal_and_salvageable",
             ])
             .env("MIXYARD_RECORDING_RLIMIT_CHILD", "1")
-            .status()
+            .output()
             .unwrap();
-        assert!(status.success());
+        assert!(
+            output.status.success(),
+            "rlimit child failed: {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         return;
     }
     #[repr(C)]
