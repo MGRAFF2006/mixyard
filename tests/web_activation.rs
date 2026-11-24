@@ -440,10 +440,17 @@ fn failed_store_attempt_has_cooldown_no_hold_and_retries_after_recovery() {
     let failed = until(&s, |v| v["decision"]["kind"] == "write-failed");
     assert_eq!(failed["lastAppliedAtMs"], Value::Null);
     assert_eq!(failed["storeRevision"], 3);
-    fs::remove_file(f.root.join("store/write.lock")).unwrap();
-    let waiting = until(&s, |v| v["decision"]["kind"] == "waiting");
+    // Observe the post-failure wait while the lock still blocks writes: each
+    // failed retry restarts the cooldown, so this state recurs until recovery.
+    // After the lock is removed, the remaining cooldown can be arbitrarily short.
+    let waiting = until(&s, |v| {
+        v["decision"]["kind"] == "waiting"
+            && v["decision"]["cooldownRemainingMs"].as_u64() > Some(0)
+    });
     assert_eq!(waiting["decision"]["holdRemainingMs"], 0);
-    assert!(waiting["decision"]["cooldownRemainingMs"].as_u64().unwrap() > 0);
+    assert_eq!(waiting["lastAppliedAtMs"], Value::Null);
+    assert_eq!(waiting["storeRevision"], 3);
+    fs::remove_file(f.root.join("store/write.lock")).unwrap();
     until(&s, |v| v["storeRevision"] == 4);
 }
 #[test]
