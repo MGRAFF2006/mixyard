@@ -210,12 +210,18 @@ impl Fake {
             assert_eq!(request["command"], command);
             assert_eq!(request["ipcVersion"], IPC_VERSION);
             assert_eq!(request.as_object().unwrap().len(), 3);
+            let response = reply(request["requestId"].as_str().unwrap());
             #[cfg(unix)]
             if command == "inventory" {
                 use std::os::fd::AsRawFd;
-                // Exercise short OS reads/backpressure, as seen on macOS,
-                // without introducing artificial inter-chunk writer delays.
-                let size: libc::c_int = 2048;
+                // Valid large replies still exercise short OS reads/backpressure.
+                // The oversized fixture tests the size guard, not whether a
+                // 2 KiB send buffer can deliver >1 MiB before the total deadline.
+                let size: libc::c_int = if response.len() > runtime::MAX_INVENTORY_FRAME {
+                    64 * 1024
+                } else {
+                    2048
+                };
                 assert_eq!(
                     unsafe {
                         libc::setsockopt(
@@ -231,7 +237,7 @@ impl Fake {
                 stream.set_write_timeout(Some(LIMIT)).unwrap();
                 stream.set_nonblocking(false).unwrap();
             }
-            if let Err(error) = write(&mut stream, &reply(request["requestId"].as_str().unwrap())) {
+            if let Err(error) = write(&mut stream, &response) {
                 // Only explicitly hostile oversized fixtures expect the reader
                 // to close before the entire response has been written.
                 assert!(
