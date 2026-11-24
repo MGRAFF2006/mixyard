@@ -1,0 +1,1 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"><instrumentation android:name="org.mixyard.mobile.ConfirmationInstrumentation" android:targetPackage="org.mixyard.mobile" android:label="Owned confirmation qualification" /></manifest>
