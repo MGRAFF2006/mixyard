@@ -638,12 +638,11 @@ impl<S: Sample> TypedProcessor<S> {
         if inputs.len() != self.sources.len() {
             return Err(RenderError::SourceCount);
         }
-        for source in 0..inputs.len() {
-            let input = inputs.get(source);
-            let Some(input) = input else {
+        for (source, format) in self.sources.iter().enumerate() {
+            let Some(input) = inputs.get(source) else {
                 continue;
             };
-            let format = self.sources[source].ok_or(RenderError::DisconnectedSource { source })?;
+            let format = format.ok_or(RenderError::DisconnectedSource { source })?;
             if input.format != format {
                 return Err(RenderError::FormatMismatch { source });
             }
